@@ -684,11 +684,12 @@ test("preserves controls and world context at 320 CSS pixels", async ({
   await expect(activityDialog).toHaveCount(0);
   await expect(activity).toBeFocused();
   await page.getByRole("button", { name: "Open world details" }).click();
+  const details = page.getByRole("dialog", { name: "World details" });
   await expect(
-    page
-      .getByRole("dialog", { name: "World details" })
-      .getByText(/individual tiles do not carry proofs/),
-  ).toBeVisible();
+    details.getByText("Dimensions", { exact: true }),
+  ).not.toBeVisible();
+  await details.locator("summary").click();
+  await expect(details.getByText("Dimensions", { exact: true })).toBeVisible();
 });
 
 test("keeps world controls and details usable on a tablet", async ({

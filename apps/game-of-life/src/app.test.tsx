@@ -81,7 +81,7 @@ describe("World instrument surfaces", () => {
     expect(screen.queryByText(/Ready/)).not.toBeInTheDocument();
   });
 
-  test("states complete-world and tile verification boundaries", () => {
+  test("starts world details collapsed without explanatory content", () => {
     render(
       <DetailsContent
         state={state}
@@ -92,15 +92,12 @@ describe("World instrument surfaces", () => {
         }
       />,
     );
+    expect(screen.getByText("World details")).toBeVisible();
+    expect(screen.getByText("Dimensions")).not.toBeVisible();
+    expect(screen.queryByText("Immutable snapshot")).not.toBeInTheDocument();
     expect(
-      screen.getByText(/reads, computes, and commits the exact next state/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/individual tiles do not carry proofs/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/derives visualization artifacts from committed state/),
-    ).toBeInTheDocument();
+      screen.queryByText(/One Thruput contract invocation/),
+    ).not.toBeInTheDocument();
   });
 
   test("stale health does not remove verified static snapshot state", () => {

@@ -365,7 +365,7 @@ function TopBar({
         <div className="min-w-0">
           <h1 className="truncate text-base font-semibold">Chain of Life</h1>
           <p className="truncate font-mono text-xs text-muted-foreground sm:text-sm">
-            100,000,000 cells · Conway B3/S23
+            100,000,000 cells
           </p>
         </div>
       </div>
@@ -578,53 +578,35 @@ export function DetailsContent({
   const manifest = snapshot?.manifest;
   const provenance = snapshot?.provenance;
   return (
-    <section className="flex flex-col gap-4 p-4" aria-labelledby={title}>
-      <div>
-        <p
+    <section aria-labelledby={title}>
+      <details>
+        <summary
           id={title}
-          className="text-xs font-medium tracking-widest text-muted-foreground uppercase"
+          className="cursor-pointer p-4 text-xs font-medium tracking-widest text-muted-foreground uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           World details
-        </p>
-        <h2 className="mt-1 text-lg font-medium">
-          {state.visualized
-            ? "Immutable snapshot"
-            : state.candidate
-              ? "Verified snapshot metadata"
-              : "Snapshot metadata"}
-        </h2>
-      </div>
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
-        <Detail label="Generation" value={manifest?.generation} />
-        <Detail label="Population" value={manifest?.population} />
-        <Detail
-          label="Dimensions"
-          value={
-            manifest ? `${manifest.width} × ${manifest.height}` : undefined
-          }
-        />
-        <Detail label="Seed" value={manifest?.seed} />
-        <Detail label="Digest" value={manifest?.stateDigest} mono />
-        <Detail
-          label="Contract"
-          value={manifest?.contractAddress ?? config.contractAddress}
-          mono
-        />
-        <Detail label="Source block" value={provenance?.sourceBlockHeight} />
-        <Detail label="Block hash" value={provenance?.sourceBlockHash} mono />
-        <Detail label="Provenance" value={provenance?.evidenceKind} />
-      </dl>
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-background/45 p-3 text-base text-muted-foreground lg:text-sm">
-        <p>
-          One Thruput contract invocation reads, computes, and commits the exact
-          next state of a persistent 100-million-cell Conway world atomically.
-        </p>
-        <p>The indexer derives visualization artifacts from committed state.</p>
-        <p>
-          Snapshot verified by indexer against the complete on-chain digest;
-          individual tiles do not carry proofs.
-        </p>
-      </div>
+        </summary>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 pb-4 text-sm">
+          <Detail label="Generation" value={manifest?.generation} />
+          <Detail label="Population" value={manifest?.population} />
+          <Detail
+            label="Dimensions"
+            value={
+              manifest ? `${manifest.width} × ${manifest.height}` : undefined
+            }
+          />
+          <Detail label="Seed" value={manifest?.seed} />
+          <Detail label="Digest" value={manifest?.stateDigest} mono />
+          <Detail
+            label="Contract"
+            value={manifest?.contractAddress ?? config.contractAddress}
+            mono
+          />
+          <Detail label="Source block" value={provenance?.sourceBlockHeight} />
+          <Detail label="Block hash" value={provenance?.sourceBlockHash} mono />
+          <Detail label="Provenance" value={provenance?.evidenceKind} />
+        </dl>
+      </details>
     </section>
   );
 }
