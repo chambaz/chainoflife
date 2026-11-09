@@ -10,6 +10,40 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(({ page }) => expect(browserErrors.get(page) ?? []).toEqual([]));
 
+test("funds one visitor wallet and shares it across reloads and tabs", async ({
+  page,
+  context,
+}) => {
+  const methods: string[] = [];
+  context.on("request", (request) => {
+    if (request.url().endsWith("/thruput-rpc"))
+      methods.push(request.postDataJSON().method);
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Advance 100,000,000 cells" }),
+  ).toBeEnabled();
+  const address = await page.getByLabel("Your wallet").getAttribute("title");
+  const other = await context.newPage();
+  await other.goto(page.url());
+  await expect(other.getByLabel("Your wallet")).toHaveAttribute(
+    "title",
+    address!,
+  );
+  await page.reload();
+  await expect(page.getByLabel("Your wallet")).toHaveAttribute(
+    "title",
+    address!,
+  );
+  expect(
+    methods.filter((method) => method === "faucet_requestAirdrop"),
+  ).toHaveLength(1);
+  expect(methods).not.toContain("sendTransaction");
+  await expect(page.getByRole("combobox")).toHaveCount(0);
+  await expect(page.locator("header a")).toHaveCount(1);
+  await other.close();
+});
+
 test("renders one immutable generation with accessible controls", async ({
   page,
 }) => {
@@ -43,17 +77,17 @@ test("renders one immutable generation with accessible controls", async ({
   expect(writes).toEqual([]);
 });
 
-test("keeps accepted requests account-scoped across persona switches", async ({
+test("keeps the visitor wallet and accepted requests across reloads", async ({
   page,
+  browser,
 }) => {
   await page.goto("/");
-  const { createPubkeyAccount, Ed25519Signer, fromHex0x, toHex0x } =
-    await import("@thruputchain/client");
-  const caller = toHex0x(
-    createPubkeyAccount({
-      signer: Ed25519Signer.fromSeed(fromHex0x(`0x${"1".padStart(64, "0")}`)),
-    }).address,
-  );
+  await expect(
+    page.getByRole("button", { name: "Advance 100,000,000 cells" }),
+  ).toBeEnabled();
+  const address = await page.getByLabel("Your wallet").getAttribute("title");
+  const { parseAddress, toHex0x } = await import("@thruputchain/client");
+  const caller = toHex0x(parseAddress(address!));
   const key = [
     "thruput-life:requests:v1",
     "aa".repeat(32),
@@ -69,7 +103,7 @@ test("keeps accepted requests account-scoped across persona switches", async ({
           requests: [
             {
               schemaVersion: 1,
-              localId: "accepted-alice",
+              localId: "accepted-request",
               requester: caller,
               status: "accepted",
               transactionHash: `0x${"44".repeat(32)}`,
@@ -92,10 +126,24 @@ test("keeps accepted requests account-scoped across persona switches", async ({
   );
   await page.reload();
   await expect(page.getByText("accepted", { exact: true })).toBeVisible();
-  await page.getByLabel("Development persona").selectOption("bob");
-  await expect(page.getByText("No local request")).toBeVisible();
-  await page.getByLabel("Development persona").selectOption("alice");
-  await expect(page.getByText("accepted", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Your wallet")).toHaveAttribute(
+    "title",
+    address!,
+  );
+  const other = await browser.newPage();
+  try {
+    await other.goto(page.url());
+    await expect(
+      other.getByRole("button", { name: "Advance 100,000,000 cells" }),
+    ).toBeEnabled();
+    await expect(other.getByLabel("Your wallet")).not.toHaveAttribute(
+      "title",
+      address!,
+    );
+    await expect(other.getByText("No local request")).toBeVisible();
+  } finally {
+    await other.close();
+  }
   await expect(
     page.getByRole("button", { name: "Advance 100,000,000 cells" }),
   ).toBeEnabled();
@@ -268,8 +316,14 @@ test("decodes density and exact cells for retained CPU inspection", async ({
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await expect(page.getByText(/alive · \d+\.\d%$/)).toBeVisible();
   const zoomIn = page.getByRole("button", { name: "Zoom in" });
-  for (let count = 0; count < 24 && (await zoomIn.isEnabled()); count += 1)
+  for (let count = 0; count < 24; count += 1) {
+    const previousZoom = new URL(page.url()).searchParams.get("z");
+    if (previousZoom === "4.000") break;
     await zoomIn.click();
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("z"))
+      .not.toBe(previousZoom);
+  }
   await expect
     .poll(() => new URL(page.url()).searchParams.get("z"))
     .toBe("4.000");
@@ -307,8 +361,6 @@ test("supports tab focus and keyboard center inspection", async ({ page }) => {
   });
   await expect(world).toHaveAccessibleDescription(/Enter to inspect/);
   await expect(canvas).toHaveAttribute("tabindex", "-1");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   await expect(world).toBeFocused();
@@ -765,7 +817,7 @@ test("stale status degrades health without invalidating static artifacts", async
 }) => {
   await page.request.get("/__life-fixture?stale=1");
   await page.goto("/");
-  await expect(page.getByText("Indexer status stale").first()).toBeVisible();
+  await expect(page.getByText(/Indexer (status|idle)/)).toHaveCount(0);
   await expect(
     page.getByLabel("Pan and zoom the 10,000 by 10,000 cell world"),
   ).toBeVisible();
@@ -777,9 +829,7 @@ test("an unavailable status endpoint preserves the verified world", async ({
 }) => {
   await page.request.get("/__life-fixture?status=unavailable");
   await page.goto("/");
-  await expect(
-    page.getByText("Indexer status unavailable").first(),
-  ).toBeVisible();
+  await expect(page.getByText(/Indexer (status|idle)/)).toHaveCount(0);
   await expect(page.getByText("Ready · generation 0")).toBeVisible();
   await expect(
     page.getByLabel("Pan and zoom the 10,000 by 10,000 cell world"),
@@ -825,10 +875,7 @@ test("a malformed status remains distinct from endpoint unavailability", async (
 }) => {
   await page.request.get("/__life-fixture?status=malformed");
   await page.goto("/");
-  await expect(
-    page.getByText("Indexer status malformed").first(),
-  ).toBeVisible();
-  await expect(page.getByText("Indexer status unavailable")).toHaveCount(0);
+  await expect(page.getByText(/Indexer (status|idle)/)).toHaveCount(0);
   await expect(page.getByText("Ready · generation 0")).toBeVisible();
 });
 

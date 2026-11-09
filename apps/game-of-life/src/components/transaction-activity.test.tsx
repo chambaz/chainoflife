@@ -1,14 +1,8 @@
-import {
-  fromHex0x,
-  Ed25519Signer,
-  createPubkeyAccount,
-  toHex0x,
-  type ThruputClient,
-} from "@thruputchain/client";
+import type { ThruputClient } from "@thruputchain/client";
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AppConfig } from "@/config";
-import { parseDevelopmentPersonas } from "@/development-personas";
+import { walletFromSeed } from "@/wallet/visitor-wallet";
 import { observeCompletions } from "@/transactions/observer";
 import {
   requestStorageKey,
@@ -41,17 +35,17 @@ const config = {
     },
   },
 } as Readonly<AppConfig>;
+const wallet = walletFromSeed(`0x${"01".repeat(32)}`);
 
 describe("transaction activity", () => {
   test("preserves the read surface and reports malformed durable storage", () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
+    const scope = transactionScope(config, wallet.addressHex);
     localStorage.setItem(requestStorageKey(scope), "malformed");
     render(
       <TransactionActivity
         config={config}
         profiles={config.transactionProfiles!}
-        persona={persona}
+        wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
       />,
@@ -64,9 +58,8 @@ describe("transaction activity", () => {
   });
 
   test("clears an observer error after a successful no-op scan", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
-    saveRequests(scope, [acceptedRequest(persona.expectedCallerHex)]);
+    const scope = transactionScope(config, wallet.addressHex);
+    saveRequests(scope, [acceptedRequest(wallet.addressHex)]);
     vi.mocked(observeCompletions)
       .mockRejectedValueOnce(new Error("observer unavailable"))
       .mockResolvedValueOnce({
@@ -84,7 +77,7 @@ describe("transaction activity", () => {
       <TransactionActivity
         config={config}
         profiles={config.transactionProfiles!}
-        persona={persona}
+        wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
       />,
@@ -102,9 +95,8 @@ describe("transaction activity", () => {
   });
 
   test("does not clear a newer storage error when an older scan succeeds", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
-    saveRequests(scope, [acceptedRequest(persona.expectedCallerHex)]);
+    const scope = transactionScope(config, wallet.addressHex);
+    saveRequests(scope, [acceptedRequest(wallet.addressHex)]);
     let resolveObservation!: (
       value: Awaited<ReturnType<typeof observeCompletions>>,
     ) => void;
@@ -116,7 +108,7 @@ describe("transaction activity", () => {
       <TransactionActivity
         config={config}
         profiles={config.transactionProfiles!}
-        persona={persona}
+        wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
       />,
@@ -146,24 +138,6 @@ afterEach(() => {
   vi.mocked(observeCompletions).mockReset();
   vi.restoreAllMocks();
 });
-
-function personas() {
-  return (["alice", "bob", "carol"] as const).map((id, index) => {
-    const privateKey = `0x${(index + 1).toString(16).padStart(64, "0")}`;
-    const signer = Ed25519Signer.fromSeed(fromHex0x(privateKey));
-    const walletRoot = toHex0x(createPubkeyAccount({ signer }).address);
-    return {
-      id,
-      label: id,
-      privateKey,
-      signerPublicKey: toHex0x(signer.publicKey.ed25519),
-      walletRoot,
-      walletEntrypoint: "0x19846d750fad81d6",
-      expectedCaller: walletRoot,
-      callerVerified: true,
-    };
-  });
-}
 
 function acceptedRequest(requester: string): TickRequestRecord {
   return {

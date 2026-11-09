@@ -12,6 +12,11 @@ export function rpcDiscovery(method: string) {
           "getChainTip",
           "simulateInvocation",
           "getEvents",
+          "getBalance",
+          "faucet_requestAirdrop",
+          "sendTransaction",
+          "getTransactionReceipt",
+          "getTransactionStatus",
         ],
       };
     case "getNetworkInfo":

@@ -1,7 +1,5 @@
 import {
-  createPubkeyAccount,
   createWalletClient,
-  Ed25519Signer,
   fromHex0x,
   hashFromHex,
   toHex0x,
@@ -18,7 +16,7 @@ import {
   type Invocation,
 } from "@thruputchain/protocol";
 import type { AppConfig, TransactionPolicy } from "@/config";
-import type { DevelopmentPersona } from "@/development-personas";
+import type { VisitorWallet } from "@/wallet/visitor-wallet";
 
 export type WriteResult =
   | {
@@ -48,16 +46,12 @@ export interface WriteBoundary {
   observe(hash: string, timeoutMs?: number): Promise<WriteResult>;
 }
 
-export function createLocalWriteBoundary(
+export function createWriteBoundary(
   config: Pick<AppConfig, "networkId">,
-  persona: DevelopmentPersona,
+  visitor: VisitorWallet,
   connection: CoreThruputClient | Promise<CoreThruputClient>,
 ): WriteBoundary {
-  const account = createPubkeyAccount({
-    signer: Ed25519Signer.fromSeed(fromHex0x(persona.privateKeyHex)),
-  });
-  if (toHex0x(account.address) !== persona.expectedCallerHex)
-    throw new Error("Development account does not match the verified caller");
+  const { account } = visitor;
 
   function committed(receipt: TransactionReceipt, hash: string): WriteResult {
     if (receipt.execution instanceof UnsupportedRpcValue)
@@ -90,7 +84,7 @@ export function createLocalWriteBoundary(
             JSON.stringify({
               hash,
               networkId: config.networkId,
-              account: persona.expectedCallerHex,
+              account: visitor.address,
               signedTransaction: toHex0x(evidence.signedTransaction),
             }),
           );

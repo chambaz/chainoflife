@@ -50,9 +50,17 @@ and Vite; the node runs separately. Indexer data defaults to
 `GAME_OF_LIFE_INDEXER_DB`. The app uses same-origin `/thruput-rpc` and
 `/thruput-indexer` proxies.
 
-Development personas and write RPCs are enabled only for loopback development.
-Production builds contain no local credentials. Production hosts must serve
-`index.html` for `/xray` and `/xray/` and provide read-only proxies.
+Each browser creates a random wallet, saves it in local storage, and requests
+funding once for ten times the transaction budget plus a small storage reserve.
+Local setup supplies the public faucet address, and the browser uses the
+official `dev_fundAccount` RPC. Networks without this local setting use one
+standard airdrop. Reloads and tabs share that wallet. Deployment keys are never sent
+to the browser. Funding failures keep the wallet and pending funding evidence;
+**Check funding** observes the original attempt without requesting another.
+
+The local development and preview proxies allow reads, signed transaction
+submission, and faucet requests. A hosted deployment needs equivalent RPC
+routing and a faucet-enabled network.
 
 ## Data boundaries
 
@@ -60,11 +68,6 @@ The chain owns canonical state. The indexer verifies a complete download's
 population and digest before publishing immutable tiles. Tiles do not carry
 independent proofs. The browser keeps the previous verified generation visible
 until the next viewport has complete render coverage.
-
-The read-only `/xray` route explains storage, Conway rules, and atomic updates.
-It loads exact tiles only on request and keeps browser predictions separate
-from chain evidence. A build check excludes signing, transaction, and world
-renderer modules from its bundle.
 
 Transaction records distinguish submission, queue admission, and execution.
 Signed evidence is saved before broadcast. Uncertain transactions are observed

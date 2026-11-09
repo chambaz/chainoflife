@@ -3,7 +3,7 @@ import { ChevronRight, LoaderCircle, RotateCcw, Zap } from "lucide-react";
 import type { CoreThruputClient } from "@thruputchain/client";
 import type { AppConfig, LifeTransactionProfiles } from "@/config";
 import { Button } from "@/components/ui/button";
-import type { DevelopmentPersona } from "@/development-personas";
+import type { VisitorWallet } from "@/wallet/visitor-wallet";
 import {
   observeCompletions,
   applyCompletionBatch,
@@ -20,7 +20,7 @@ import {
   type CrankRecord,
   type TickRequestRecord,
 } from "@/transactions/records";
-import { createLocalWriteBoundary } from "@/transactions/write-boundary";
+import { createWriteBoundary } from "@/transactions/write-boundary";
 import {
   abandonUnsignedCrank,
   abandonUnsignedRequest,
@@ -34,19 +34,19 @@ import {
 export function TransactionActivity({
   config,
   profiles,
-  persona,
+  wallet,
   client,
   onCrankCommitted,
 }: {
   readonly config: Readonly<AppConfig>;
   readonly profiles: LifeTransactionProfiles;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly client: CoreThruputClient | Promise<CoreThruputClient>;
   readonly onCrankCommitted: () => void;
 }) {
-  const scope = transactionScope(config, persona.expectedCallerHex);
+  const scope = transactionScope(config, wallet.addressHex);
   const [boundary] = useState(() =>
-    createLocalWriteBoundary(config, persona, client),
+    createWriteBoundary(config, wallet, client),
   );
   const [initial] = useState(() => initialRecords(scope));
   const [requests, setRequests] = useState<readonly TickRequestRecord[]>(
@@ -140,7 +140,7 @@ export function TransactionActivity({
       setBusy(false);
     }
   };
-  const common = { config, profiles, persona, boundary };
+  const common = { config, profiles, wallet, boundary };
   const latestRequest = requests.at(-1);
   const latestCrank = cranks.at(-1);
   const recoverableRequests = requests.filter(
@@ -167,7 +167,13 @@ export function TransactionActivity({
           <p className="text-xs font-medium tracking-widest text-muted-foreground uppercase">
             Evolution control
           </p>
-          <p className="mt-0.5 text-sm">Signed as {persona.label}</p>
+          <p
+            aria-label="Your wallet"
+            title={wallet.address}
+            className="mt-0.5 text-sm"
+          >
+            Wallet {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+          </p>
         </div>
         <label className="pointer-events-auto flex items-center gap-2 text-xs text-muted-foreground">
           <input
@@ -247,7 +253,7 @@ export function TransactionActivity({
             run(() =>
               abandonUnsignedRequest({
                 config,
-                persona,
+                wallet,
                 localId: record.localId,
               }),
             )
@@ -263,7 +269,7 @@ export function TransactionActivity({
             run(() =>
               abandonUnsignedCrank({
                 config,
-                persona,
+                wallet,
                 localId: record.localId,
               }),
             )

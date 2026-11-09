@@ -32,11 +32,9 @@ export async function localAccounts(create = false) {
     !seeds.every((s) => /^0x[0-9a-f]{64}$/.test(s))
   )
     throw new Error("Invalid local account file");
-  return seeds.map((seed, index) => {
+  return seeds.map((seed) => {
     const signer = Ed25519Signer.fromSeed(fromHex0x(seed));
     return {
-      id: ["alice", "bob", "carol"][index]!,
-      seed,
       signer,
       account: createPubkeyAccount({ signer }),
     };

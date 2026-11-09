@@ -105,7 +105,7 @@ describe("World instrument surfaces", () => {
 
   test("stale health does not remove verified static snapshot state", () => {
     render(<ActivityContent state={state} />);
-    expect(screen.getByText("Indexer status unavailable")).toBeInTheDocument();
+    expect(screen.queryByText(/Indexer (status|idle)/)).not.toBeInTheDocument();
     expect(screen.getByText("Generation 3")).toBeInTheDocument();
   });
 

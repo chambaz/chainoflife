@@ -1,10 +1,7 @@
 import { createRoot } from "react-dom/client";
-import {
-  ConfigurationError,
-  loadReadAppConfig,
-  type Environment,
-} from "./config";
+import { ConfigurationError, loadAppConfig, type Environment } from "./config";
 import "./styles.css";
+import { App } from "./app";
 
 const container = document.getElementById("root");
 if (!container) throw new Error("Application root is missing");
@@ -16,14 +13,7 @@ async function renderRoute(pathname: string, environment: Environment) {
   try {
     switch (normalizePath(pathname)) {
       case "/": {
-        const { createWorldPage } = await import("./world-bootstrap");
-        root.render(createWorldPage(environment));
-        return;
-      }
-      case "/xray": {
-        const config = loadReadAppConfig(environment);
-        const { XrayPage } = await import("./xray/xray-page");
-        root.render(<XrayPage config={config} />);
+        root.render(<App config={loadAppConfig(environment)} />);
         return;
       }
       default:
@@ -55,8 +45,7 @@ function NotFoundPage() {
           This observation point does not exist.
         </h1>
         <p className="max-w-[52ch] text-pretty text-base text-muted-foreground sm:text-sm">
-          Return to the live world or inspect how one generation moves through
-          storage.
+          Return to the live world to explore its latest generation.
         </p>
         <nav aria-label="Available pages" className="flex flex-wrap gap-4">
           <a
@@ -64,12 +53,6 @@ function NotFoundPage() {
             className="text-base text-foreground underline decoration-border underline-offset-4 outline-none hover:decoration-primary focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
           >
             Explore world
-          </a>
-          <a
-            href="/xray"
-            className="text-base text-foreground underline decoration-border underline-offset-4 outline-none hover:decoration-primary focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
-          >
-            Transaction X-Ray
           </a>
         </nav>
       </section>

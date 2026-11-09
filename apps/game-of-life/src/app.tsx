@@ -9,7 +9,7 @@ import {
   Radio,
 } from "lucide-react";
 import type { AppConfig } from "@/config";
-import { createReadClient } from "@/chain/client";
+import { createAppClient } from "@/chain/client";
 import { createLifeReadAdapter } from "@/chain/game-of-life";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -22,12 +22,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { WorldViewport } from "@/components/world-viewport";
-import { TransactionActivity } from "@/components/transaction-activity";
-import type {
-  DevelopmentPersona,
-  DevelopmentPersonaId,
-  PublicDevelopmentPersona,
-} from "@/development-personas";
+import { VisitorControls } from "@/components/visitor-controls";
 import { IndexerClient, type ImmutableSnapshot } from "@/indexer/client";
 import { assertSnapshotEligible, SchemaError } from "@/indexer/schema";
 import { createVisiblePoller, type Poller } from "@/polling";
@@ -41,19 +36,8 @@ import {
 } from "@/synchronization";
 
 const REQUEST_TIMEOUT = 8_000;
-interface TransactionRuntime {
-  readonly active: DevelopmentPersona;
-  readonly personas: readonly PublicDevelopmentPersona[];
-  readonly switchPersona: (id: DevelopmentPersonaId) => Promise<void>;
-}
 
-export function App({
-  config,
-  transaction = null,
-}: {
-  readonly config: Readonly<AppConfig>;
-  readonly transaction?: TransactionRuntime | null;
-}) {
+export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   const [state, dispatch] = useReducer(
     synchronizationReducer,
     INITIAL_SYNCHRONIZATION_STATE,
@@ -68,7 +52,7 @@ export function App({
   const [statusClock, setStatusClock] = useState(Date.now());
   const lastAnnouncement = useRef("");
   const [indexer] = useState(() => new IndexerClient(config));
-  const [rpcClient] = useState(() => createReadClient(config));
+  const [rpcClient] = useState(() => createAppClient(config));
   const [chain] = useState(() =>
     createLifeReadAdapter({
       client: rpcClient,
@@ -298,11 +282,7 @@ export function App({
   void statusClock;
   return (
     <main className="flex h-dvh min-w-80 flex-col overflow-hidden bg-background text-foreground">
-      <TopBar
-        state={state}
-        rendererAvailability={rendererAvailability}
-        transaction={transaction}
-      />
+      <TopBar state={state} rendererAvailability={rendererAvailability} />
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">
           {rendererSnapshot ? (
@@ -332,12 +312,11 @@ export function App({
             config={config}
             rendererAvailability={rendererAvailability}
           />
-          {transaction && config.transactionProfiles ? (
-            <TransactionActivity
-              key={`${config.networkId}:${transaction.active.expectedCallerHex}:${config.contractAddress}`}
+          {config.transactionProfiles ? (
+            <VisitorControls
+              key={`${config.networkId}:${config.contractAddress}`}
               config={config}
               profiles={config.transactionProfiles}
-              persona={transaction.active}
               client={rpcClient}
               onCrankCommitted={() => chainRefresh.current?.()}
             />
@@ -368,15 +347,13 @@ export function App({
 function TopBar({
   state,
   rendererAvailability,
-  transaction,
 }: {
   readonly state: SynchronizationState;
   readonly rendererAvailability: RendererAvailability;
-  readonly transaction: TransactionRuntime | null;
 }) {
   const identity = state.visualized?.manifest;
   return (
-    <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border bg-panel/95 pt-[max(.5rem,var(--safe-top))] pr-[max(.75rem,var(--safe-right))] pb-2 pl-[max(.75rem,var(--safe-left))] sm:pr-[max(1rem,var(--safe-right))] sm:pl-[max(1rem,var(--safe-left))] lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+    <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border bg-panel/95 pt-[max(.5rem,var(--safe-top))] pr-[max(.75rem,var(--safe-right))] pb-2 pl-[max(.75rem,var(--safe-left))] sm:pr-[max(1rem,var(--safe-right))] sm:pl-[max(1rem,var(--safe-left))]">
       <div className="flex min-w-0 items-center gap-2.5">
         <a
           href="/"
@@ -414,37 +391,6 @@ function TopBar({
           value={identity ? abbreviate(identity.stateDigest) : "—"}
           mono
         />
-      </div>
-      <div className="flex items-center gap-2">
-        <a
-          href="/xray"
-          className="inline-flex h-12 items-center rounded-md px-2.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-9 [@media(pointer:coarse)]:h-12"
-        >
-          X-Ray
-        </a>
-        {transaction ? (
-          <label className="sr-only sm:not-sr-only sm:flex sm:items-center sm:gap-2 sm:text-xs sm:text-muted-foreground">
-            <span>Persona</span>
-            <select
-              data-development-wallet-trigger
-              aria-label="Development persona"
-              value={transaction.active.id}
-              onChange={(event) =>
-                void transaction.switchPersona(
-                  event.target.value as DevelopmentPersonaId,
-                )
-              }
-              className="h-9 rounded-md border border-border bg-background px-2 font-mono text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {transaction.personas.map((persona) => (
-                <option key={persona.id} value={persona.id}>
-                  {persona.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <IndexerHealth state={state} />
       </div>
     </header>
   );
@@ -616,31 +562,6 @@ export function ActivityContent({
                       : "Nothing has renderer ownership"
         }
       />
-      <div className="rounded-md border border-border bg-background/45 p-3 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">
-          {statusHealthLabel(state)}
-        </p>
-        {freshStatus?.preparing ? (
-          <p className="mt-1">
-            {freshStatus.preparing.completedUnits.toLocaleString()} /{" "}
-            {freshStatus.preparing.totalUnits.toLocaleString()}{" "}
-            {freshStatus.preparing.unit}
-          </p>
-        ) : null}
-        {freshStatus?.errorCode ? (
-          <p className="mt-1">Error {freshStatus.errorCode}</p>
-        ) : null}
-        {freshStatus?.retry ? (
-          <p className="mt-1">
-            Retry {freshStatus.retry.attempt} at{" "}
-            {formatDate(freshStatus.retry.nextAt)}
-          </p>
-        ) : null}
-        {stale ? (
-          <p className="mt-1">Last-reported status heartbeat is stale.</p>
-        ) : null}
-        {state.statusError ? <p className="mt-1">{state.statusError}</p> : null}
-      </div>
     </section>
   );
 }
@@ -750,23 +671,6 @@ function PipelineRow({
   );
 }
 
-function IndexerHealth({ state }: { readonly state: SynchronizationState }) {
-  const healthy =
-    state.statusEndpoint === "fresh" && !isStatusStale(state.status);
-  return (
-    <div className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground sm:text-sm">
-      {!healthy ? (
-        <CircleAlert className="text-warning" />
-      ) : (
-        <Activity className="text-primary" />
-      )}
-      <span>
-        {healthy ? `Indexer ${state.status?.state}` : statusHealthLabel(state)}
-      </span>
-    </div>
-  );
-}
-
 function Metric({
   label,
   value,
@@ -828,14 +732,6 @@ function preparationDetail(state: SynchronizationState): string {
   return "Static artifacts are polled independently";
 }
 
-function statusHealthLabel(state: SynchronizationState): string {
-  if (state.statusEndpoint === "malformed") return "Indexer status malformed";
-  if (state.statusEndpoint === "unavailable")
-    return "Indexer status unavailable";
-  if (isStatusStale(state.status)) return "Indexer status stale";
-  return `Indexer ${state.status?.state ?? "unavailable"}`;
-}
-
 function emptyVisualizationMessage(state: SynchronizationState): string {
   if (state.artifactState === "awaiting-chain")
     return "Snapshot artifacts loaded; awaiting chain verification.";
@@ -861,13 +757,6 @@ function isBehind(state: SynchronizationState): boolean {
 
 function abbreviate(value: string): string {
   return `${value.slice(0, 10)}…${value.slice(-6)}`;
-}
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function message(reason: unknown): string {

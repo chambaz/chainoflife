@@ -30,6 +30,9 @@ test("advances, indexes, visualizes, and recovers one complete world", async ({
   const firstVisibleTileMs = firstReadyVisualizationMs;
 
   const desktopFrameP95Ms = await measureInteractionFrames(page, world);
+  await expect(
+    page.getByRole("button", { name: "Advance 100,000,000 cells" }),
+  ).toBeEnabled({ timeout: 180_000 });
   await startJsHeapSampling(page);
   const switchStarted = performance.now();
   await page.getByRole("button", { name: "Advance 100,000,000 cells" }).click();

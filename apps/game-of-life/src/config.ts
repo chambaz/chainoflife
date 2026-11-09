@@ -2,16 +2,14 @@ import { normalizeNetworkId } from "./config-values";
 
 const HEX32_PATTERN = /^0x[0-9a-f]{64}$/;
 
-export interface ReadAppConfig {
+export interface AppConfig {
   readonly rpcUrl: URL;
+  readonly localFaucetAddress?: string | undefined;
   readonly rpcProxyPath: "/thruput-rpc";
   readonly networkId: string;
   readonly contractAddress: string;
   readonly indexerUrl: URL;
   readonly indexerProxyPath: "/thruput-indexer/";
-}
-
-export interface AppConfig extends ReadAppConfig {
   readonly transactionProfiles: LifeTransactionProfiles | null;
 }
 
@@ -39,15 +37,6 @@ export class ConfigurationError extends Error {
 }
 
 export function loadAppConfig(environment: Environment): Readonly<AppConfig> {
-  return Object.freeze({
-    ...loadReadAppConfig(environment),
-    transactionProfiles: transactionProfiles(environment),
-  });
-}
-
-export function loadReadAppConfig(
-  environment: Environment,
-): Readonly<ReadAppConfig> {
   const networkInput = required(environment, "VITE_THRUPUT_NETWORK_ID");
   let networkId: string;
   try {
@@ -73,6 +62,10 @@ export function loadReadAppConfig(
       "VITE_THRUPUT_RPC_URL",
     ),
     rpcProxyPath: "/thruput-rpc",
+    localFaucetAddress:
+      typeof environment.VITE_THRUPUT_LOCAL_FAUCET_ADDRESS === "string"
+        ? environment.VITE_THRUPUT_LOCAL_FAUCET_ADDRESS || undefined
+        : undefined,
     networkId,
     contractAddress,
     indexerUrl: rootHttpUrl(
@@ -80,6 +73,7 @@ export function loadReadAppConfig(
       "VITE_GAME_OF_LIFE_INDEXER_URL",
     ),
     indexerProxyPath: "/thruput-indexer/",
+    transactionProfiles: transactionProfiles(environment),
   });
 }
 
@@ -170,12 +164,6 @@ function rootHttpUrl(value: string, key: string): URL {
       `${key} must use the origin root without a path, query, or hash`,
     );
   return url;
-}
-
-export function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
-  );
 }
 
 function required(environment: Environment, key: string): string {

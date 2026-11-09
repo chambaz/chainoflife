@@ -11,7 +11,7 @@ import { spec as lifeSpec } from "./src/contracts/generated/game-of-life";
 import { rpcDiscovery } from "./src/test/rpc-discovery";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const READ_RPC_METHODS = new Set([
+const RPC_METHODS = new Set([
   "getVersionInfo",
   "getNetworkInfo",
   "getChainConfig",
@@ -19,11 +19,12 @@ const READ_RPC_METHODS = new Set([
   "getChainTip",
   "getEvents",
   "simulateInvocation",
-]);
-const WRITE_RPC_METHODS = new Set([
+  "getBalance",
   "sendTransaction",
   "getTransactionReceipt",
   "getTransactionStatus",
+  "faucet_requestAirdrop",
+  "dev_fundAccount",
 ]);
 const MAX_BODY = 1_000_000;
 const MAX_INDEXER_JSON = 1_000_000;
@@ -35,7 +36,7 @@ const SECURITY_HEADERS = {
 
 export default defineConfig(({ command, mode }) => {
   const environment = loadEnv(mode, root, "");
-  const target = environment.VITE_THRUPUT_RPC_URL ?? "http://127.0.0.1:9545";
+  const target = environment.VITE_THRUPUT_RPC_URL ?? "http://127.0.0.1:9547";
   const indexerTarget =
     environment.VITE_GAME_OF_LIFE_INDEXER_URL ?? "http://127.0.0.1:8787";
   const { networkId, contractAddress } = indexerProxyScope(
@@ -51,14 +52,10 @@ export default defineConfig(({ command, mode }) => {
   );
   validateRpcTarget(target);
   validateIndexerTarget(indexerTarget);
-  const developmentPersonas = developmentPersonaDefinition(
-    command,
-    environment,
-  );
-  const writesEnabled = developmentPersonas !== undefined;
   return {
     envPrefix: [
       "VITE_THRUPUT_RPC_URL",
+      "VITE_THRUPUT_LOCAL_FAUCET_ADDRESS",
       "VITE_THRUPUT_NETWORK_ID",
       "VITE_GAME_OF_LIFE_CONTRACT_ADDRESS",
       "VITE_GAME_OF_LIFE_INDEXER_URL",
@@ -71,18 +68,10 @@ export default defineConfig(({ command, mode }) => {
       "VITE_GAME_OF_LIFE_CRANK_EXPIRY_BLOCKS",
       "VITE_GAME_OF_LIFE_CRANK_TIMEOUT_MS",
     ],
-    define: {
-      "import.meta.env.THRUPUT_DEV_PERSONAS":
-        developmentPersonas === undefined
-          ? "undefined"
-          : JSON.stringify(developmentPersonas),
-    },
     plugins: [
-      ...(writesEnabled ? [credentialRequestGuard()] : []),
       react(),
       tailwindcss(),
-      xrayBundleBoundary(),
-      localRpcProxy(target, writesEnabled),
+      localRpcProxy(target),
       readOnlyIndexerProxy(indexerTarget, networkId, contractAddress),
       ...(mode === "e2e" ? [fixtureArtifacts(networkId, contractAddress)] : []),
     ],
@@ -117,97 +106,6 @@ export function validateRpcTarget(input: string): void {
   }
 }
 
-function xrayBundleBoundary(): Plugin {
-  const forbidden = [
-    "/src/world-bootstrap.tsx",
-    "/src/development-personas.ts",
-    "/src/transactions/",
-    "/src/components/world-viewport.tsx",
-    "/node_modules/@deck.gl/",
-    "/node_modules/@luma.gl/",
-    "/node_modules/@thruputchain/client/dist/transaction.",
-    "/node_modules/@thruputchain/client/dist/signers",
-    "/node_modules/@thruputchain/client/dist/local-dev",
-  ] as const;
-  const forbiddenSymbols = [
-    "serializeSignedTransaction",
-    "createWalletClient",
-    "defaultWalletAdapter",
-    "devWalletAdapter",
-  ] as const;
-  return {
-    name: "xray-bundle-boundary",
-    generateBundle(_, bundle) {
-      const chunks = Object.values(bundle).filter(
-        (output) => output.type === "chunk",
-      );
-      const entry = chunks.find((chunk) =>
-        normalizeModuleId(chunk.facadeModuleId).endsWith(
-          "/src/xray/xray-page.tsx",
-        ),
-      );
-      if (!entry)
-        throw new Error("X-Ray production entry chunk was not emitted");
-
-      const byFile = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
-      const worldEntry = chunks.find((chunk) =>
-        normalizeModuleId(chunk.facadeModuleId).endsWith(
-          "/src/world-bootstrap.tsx",
-        ),
-      );
-      const reachable = new Set<string>();
-      const pending = [entry.fileName];
-      while (pending.length > 0) {
-        const fileName = pending.pop()!;
-        if (reachable.has(fileName)) continue;
-        reachable.add(fileName);
-        const chunk = byFile.get(fileName);
-        if (!chunk) continue;
-        const isRouteDispatcher = Object.keys(chunk.modules).some((moduleId) =>
-          normalizeModuleId(moduleId).endsWith("/src/main.tsx"),
-        );
-        const dynamicImports = isRouteDispatcher
-          ? chunk.dynamicImports.filter(
-              (dependency) => dependency !== worldEntry?.fileName,
-            )
-          : chunk.dynamicImports;
-        for (const dependency of [...chunk.imports, ...dynamicImports])
-          pending.push(dependency);
-      }
-
-      const violations = chunks
-        .filter((chunk) => reachable.has(chunk.fileName))
-        .flatMap((chunk) => Object.keys(chunk.modules))
-        .map(normalizeModuleId)
-        .filter(
-          (moduleId) =>
-            forbidden.some((value) => moduleId.includes(value)) ||
-            (moduleId.includes("/src/renderer/") &&
-              !moduleId.endsWith("/src/renderer/pyramid.ts")),
-        );
-      if (violations.length > 0)
-        throw new Error(
-          `X-Ray bundle includes forbidden modules:\n${violations.join("\n")}`,
-        );
-      const symbolViolations = chunks
-        .filter((chunk) => reachable.has(chunk.fileName))
-        .flatMap((chunk) =>
-          forbiddenSymbols
-            .filter((symbol) => chunk.code.includes(symbol))
-            .map((symbol) => `${chunk.fileName}: ${symbol}`),
-        );
-      if (symbolViolations.length > 0)
-        throw new Error(
-          `X-Ray bundle includes transaction or wallet symbols:\n${symbolViolations.join("\n")}`,
-        );
-    },
-  };
-}
-
-function normalizeModuleId(value: string | null): string {
-  return (value ?? "").replaceAll("\\", "/");
-}
-
 export function validateIndexerTarget(input: string): void {
   try {
     validateRpcTarget(input);
@@ -237,10 +135,7 @@ export function indexerProxyScope(
   return { networkId, contractAddress };
 }
 
-export function isAllowedRpcRequest(
-  input: unknown,
-  allowWrites = false,
-): boolean {
+export function isAllowedRpcRequest(input: unknown): boolean {
   if (typeof input !== "object" || input === null || Array.isArray(input))
     return false;
   const value = input as Record<string, unknown>;
@@ -248,62 +143,11 @@ export function isAllowedRpcRequest(
     value.jsonrpc === "2.0" &&
     (typeof value.id === "string" || typeof value.id === "number") &&
     typeof value.method === "string" &&
-    (READ_RPC_METHODS.has(value.method) ||
-      (allowWrites && WRITE_RPC_METHODS.has(value.method))) &&
+    RPC_METHODS.has(value.method) &&
     Object.keys(value).every((key) =>
       ["jsonrpc", "id", "method", "params"].includes(key),
     )
   );
-}
-
-export function developmentPersonaDefinition(
-  command: "build" | "serve",
-  environment: Record<string, string | undefined>,
-): string | undefined {
-  const serialized = environment.THRUPUT_DEV_PERSONAS;
-  if (command !== "serve" || !serialized?.trim()) return undefined;
-  const profileKeys = [
-    "VITE_GAME_OF_LIFE_REQUEST_TRANSACTION_GAS_LIMIT",
-    "VITE_GAME_OF_LIFE_REQUEST_TARGET_GAS_LIMIT",
-    "VITE_GAME_OF_LIFE_REQUEST_EXPIRY_BLOCKS",
-    "VITE_GAME_OF_LIFE_REQUEST_TIMEOUT_MS",
-    "VITE_GAME_OF_LIFE_CRANK_TRANSACTION_GAS_LIMIT",
-    "VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT",
-    "VITE_GAME_OF_LIFE_CRANK_EXPIRY_BLOCKS",
-    "VITE_GAME_OF_LIFE_CRANK_TIMEOUT_MS",
-  ];
-  if (profileKeys.some((key) => !environment[key]?.trim()))
-    throw new Error(
-      "Development credentials require complete transaction profiles",
-    );
-  return serialized;
-}
-
-export function isSafeCredentialRequest(
-  headers: IncomingMessage["headers"],
-  remoteAddress: string | undefined,
-): boolean {
-  if (
-    !isLoopbackRemoteAddress(remoteAddress) ||
-    !headers.host ||
-    headers["sec-fetch-site"] === "cross-site"
-  )
-    return false;
-  let host: URL;
-  try {
-    host = new URL(`http://${headers.host}`);
-  } catch {
-    return false;
-  }
-  if (!isLoopback(host.hostname)) return false;
-  const source = headers.origin ?? headers.referer;
-  if (!source) return true;
-  try {
-    const url = new URL(source);
-    return isLoopback(url.hostname) && url.host === headers.host;
-  } catch {
-    return false;
-  }
 }
 
 export function isSameOriginLoopback(
@@ -371,103 +215,67 @@ export function allowedIndexerRoute(
   };
 }
 
-function localRpcProxy(target: string, writesEnabled: boolean): Plugin {
+function localRpcProxy(target: string): Plugin {
   const targetUrl = new URL(target);
-  const middleware =
-    (allowWrites: boolean) =>
-    async (request: IncomingMessage, response: ServerResponse) => {
-      if (request.method !== "POST")
-        return error(response, 405, "POST is required");
-      if (!isSameOriginLoopback(request.headers))
-        return error(response, 403, "Same-origin loopback request required");
+  const middleware = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) => {
+    if (request.method !== "POST")
+      return error(response, 405, "POST is required");
+    if (!isSameOriginLoopback(request.headers))
+      return error(response, 403, "Same-origin loopback request required");
+    if (
+      request.headers["content-type"]?.split(";", 1)[0]?.toLowerCase() !==
+      "application/json"
+    )
+      return error(response, 415, "application/json is required");
+    try {
+      const body = await readBody(request);
+      const envelope: unknown = JSON.parse(body);
+      if (!isAllowedRpcRequest(envelope))
+        return error(
+          response,
+          403,
+          "RPC method is not available through this local proxy",
+        );
+      const upstream = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
       if (
-        request.headers["content-type"]?.split(";", 1)[0]?.toLowerCase() !==
-        "application/json"
+        mediaType(upstream.headers.get("content-type")) !== "application/json"
       )
-        return error(response, 415, "application/json is required");
-      try {
-        const body = await readBody(request);
-        const envelope: unknown = JSON.parse(body);
-        if (!isAllowedRpcRequest(envelope, allowWrites))
-          return error(
-            response,
-            403,
-            "RPC method is not available through this local proxy",
-          );
-        const upstream = await fetch(targetUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-          redirect: "error",
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (
-          mediaType(upstream.headers.get("content-type")) !== "application/json"
-        )
-          return error(
-            response,
-            502,
-            "RPC upstream returned an unsafe content type",
-          );
-        const bytes = await readBoundedResponse(upstream, MAX_BODY);
-        response.statusCode = upstream.status;
-        response.setHeader("content-type", "application/json");
-        response.setHeader("content-length", bytes.length);
-        response.end(bytes);
-      } catch (cause) {
         return error(
           response,
           502,
-          cause instanceof Error ? cause.message : "RPC proxy failed",
+          "RPC upstream returned an unsafe content type",
         );
-      }
-    };
+      const bytes = await readBoundedResponse(upstream, MAX_BODY);
+      response.statusCode = upstream.status;
+      response.setHeader("content-type", "application/json");
+      response.setHeader("content-length", bytes.length);
+      response.end(bytes);
+    } catch (cause) {
+      return error(
+        response,
+        502,
+        cause instanceof Error ? cause.message : "RPC proxy failed",
+      );
+    }
+  };
   return {
     name: "thruput-local-rpc",
     configureServer(server) {
-      server.middlewares.use("/thruput-rpc", middleware(writesEnabled));
+      server.middlewares.use("/thruput-rpc", middleware);
     },
     configurePreviewServer(server) {
-      server.middlewares.use("/thruput-rpc", middleware(false));
+      server.middlewares.use("/thruput-rpc", middleware);
     },
   };
-}
-
-function credentialRequestGuard(): Plugin {
-  return {
-    name: "thruput-credential-request-guard",
-    enforce: "pre",
-    configureServer(server) {
-      validateCredentialServerHost(server.config.server.host);
-      server.middlewares.use((request, response, next) => {
-        if (
-          !isSafeCredentialRequest(
-            request.headers,
-            request.socket.remoteAddress,
-          )
-        )
-          return error(response, 403, "Loopback same-origin request required");
-        next();
-      });
-    },
-  };
-}
-
-export function validateCredentialServerHost(
-  host: string | boolean | undefined,
-): void {
-  if (typeof host !== "string" || !isLoopback(host))
-    throw new Error(
-      "Development credentials require Vite to listen on a loopback host",
-    );
-}
-
-function isLoopbackRemoteAddress(address: string | undefined): boolean {
-  return (
-    address === "127.0.0.1" ||
-    address === "::1" ||
-    address === "::ffff:127.0.0.1"
-  );
 }
 
 function readOnlyIndexerProxy(
@@ -615,6 +423,7 @@ function isLoopback(host: string): boolean {
 }
 
 function fixtureArtifacts(network: string, contract: string): Plugin {
+  const fundedAccounts = new Set<string>();
   const digests = [
     `0x${"aa".repeat(32)}`,
     `0x${"dd".repeat(32)}`,
@@ -785,6 +594,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
         if (request.method === "GET" && pathname === "/__life-fixture") {
           const url = new URL(request.url!, "http://127.0.0.1");
           if (url.searchParams.has("reset")) {
+            fundedAccounts.clear();
             fixture.chainGeneration = 0;
             fixture.publishedGeneration = 0;
             fixture.status = "idle";
@@ -869,6 +679,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
           const envelope = JSON.parse(await readBody(request)) as {
             readonly id: string | number;
             readonly method: string;
+            readonly params?: { address?: string; recipient?: string };
           };
           if (fixture.rpcState === "malformed-envelope") {
             response.statusCode = 200;
@@ -876,10 +687,31 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
             response.end("not-json");
             return;
           }
+          let walletResult: unknown;
+          if (envelope.method === "getBalance") {
+            const address = envelope.params!.address!;
+            walletResult = {
+              address,
+              stateBlockHeight: "9",
+              rawBalance: fundedAccounts.has(address) ? "20000000000" : "0",
+            };
+          } else if (envelope.method === "faucet_requestAirdrop") {
+            const recipient = envelope.params!.recipient!;
+            fundedAccounts.add(recipient);
+            walletResult = {
+              attemptStatus: "succeeded",
+              recipient,
+              rawAmount: "20000000000",
+              transactionHash: "11111111111111111111111111111111",
+              blockHeight: "9",
+              execution: { result: "return", returnData: "0x0100" },
+            };
+          }
           const body = JSON.stringify({
             jsonrpc: "2.0",
             id: envelope.id,
             result:
+              walletResult ??
               rpcDiscovery(envelope.method) ??
               (envelope.method === "getEvents"
                 ? {

@@ -25,13 +25,14 @@ npm run dev
 ```
 
 Open **http://127.0.0.1:5173**. Use **Advance 100,000,000 cells** to request
-and process a generation. `/xray` explains the contract's storage and update.
+and process a generation. Each visitor gets a browser wallet funded by an
+airdrop. The wallet is saved in that browser for future visits.
 
 The local node uses port 9547 and a 60-billion-gas transaction cap. A full-world
 tick needs about 9.1 billion gas, above the default 1-billion cap; this experiment
 requires the supplied local configuration.
 
-Setup creates local accounts and checks the deployed world before writing
+Setup creates deployment accounts and checks the world before writing
 `.env.local`. Keys, transactions, and ledger data stay in ignored `tmp/`.
 To restart, run `node` and `dev` without setup. To finish interrupted setup,
 run `npm run setup:local -- --resume`. Set `THRUPUT_CLI=/path/to/thruput` if

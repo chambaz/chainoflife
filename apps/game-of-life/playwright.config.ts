@@ -1,26 +1,4 @@
 import { defineConfig } from "@playwright/test";
-import {
-  fromHex0x,
-  Ed25519Signer,
-  toHex0x,
-  createPubkeyAccount,
-} from "@thruputchain/client";
-
-const personas = (["alice", "bob", "carol"] as const).map((id, index) => {
-  const privateKey = `0x${(index + 1).toString(16).padStart(64, "0")}`;
-  const signer = Ed25519Signer.fromSeed(fromHex0x(privateKey));
-  const walletRoot = toHex0x(createPubkeyAccount({ signer }).address);
-  return {
-    id,
-    label: id[0]!.toUpperCase() + id.slice(1),
-    privateKey,
-    signerPublicKey: toHex0x(signer.publicKey.ed25519),
-    walletRoot,
-    walletEntrypoint: "0xa0fff94c64fbaf3c",
-    expectedCaller: walletRoot,
-    callerVerified: true,
-  };
-});
 export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: false,
@@ -41,6 +19,7 @@ export default defineConfig({
     reuseExistingServer: false,
     env: {
       VITE_THRUPUT_RPC_URL: "http://127.0.0.1:4176",
+      VITE_THRUPUT_LOCAL_FAUCET_ADDRESS: "",
       VITE_THRUPUT_NETWORK_ID: `0x${"AA".repeat(32)}`,
       VITE_GAME_OF_LIFE_CONTRACT_ADDRESS: `0x${"22".repeat(32)}`,
       VITE_GAME_OF_LIFE_INDEXER_URL: "http://127.0.0.1:4176",
@@ -52,7 +31,6 @@ export default defineConfig({
       VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT: "10000000000",
       VITE_GAME_OF_LIFE_CRANK_EXPIRY_BLOCKS: "2",
       VITE_GAME_OF_LIFE_CRANK_TIMEOUT_MS: "300000",
-      THRUPUT_DEV_PERSONAS: JSON.stringify(personas),
     },
   },
 });

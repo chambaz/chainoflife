@@ -5,7 +5,7 @@
 - `contracts/game-of-life`: atomic world contract.
 - `helpers/game-of-life-core`: simulation, initialization, and digest.
 - `helpers/game-of-life-indexer`: verified snapshots, tiles, SQLite state, HTTP.
-- `apps/game-of-life`: React explorer, read-only X-Ray, setup, and live tests.
+- `apps/game-of-life`: React explorer, visitor wallets, setup, and live tests.
 - `apps/game-of-life-renderer-fixture`: isolated renderer regression tests.
 - `sim-fixtures/life-storage-admission`: contract storage workload fixture.
 
@@ -22,7 +22,9 @@
   require new reference vectors and a new deployment.
 - Distinguish submission, queue admission, and committed execution. Save signed
   evidence before broadcast; observe uncertain transactions by their original hash.
-- Keep local credentials and write proxies out of production builds and `/xray`.
+- Generate visitor keys in the browser; never inject deployment keys into the app.
+  Preserve the wallet across reloads and tabs. Persist funding attempts before
+  requesting an airdrop and never repeat an uncertain attempt automatically.
 - Keep canonical indexer snapshots distinct from browser-derived predictions.
 - Never commit environment files, keys, ledgers, indexer databases or tiles,
   test output, or build output. Use ignored `.tmp/` for local notes and reports.

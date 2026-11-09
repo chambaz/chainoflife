@@ -28,7 +28,6 @@
     "@deck.gl/layers": "9.3.10",
     "@luma.gl/core": "9.3.6",
     "@luma.gl/engine": "9.3.6",
-    "@noble/hashes": "2.2.0",
     "@radix-ui/react-dialog": "1.1.15",
     "@thruputchain/client": "0.25.0",
     "@thruputchain/contract-spec": "0.19.1",

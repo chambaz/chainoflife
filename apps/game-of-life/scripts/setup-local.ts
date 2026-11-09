@@ -231,16 +231,20 @@ assert.equal(
   null,
 );
 
-const personas = accounts.map(({ id, seed, signer, account }) => ({
-  id,
-  label: id[0]!.toUpperCase() + id.slice(1),
-  privateKey: seed,
-  signerPublicKey: toHex0x(signer.publicKey.ed25519),
-  walletRoot: toHex0x(account.address),
-  expectedCaller: toHex0x(account.address),
-  callerVerified: true,
-}));
+const runtime = JSON.parse(
+  await readFile(
+    resolve(localRoot, "atomic-node/runtime/runtime-manifest.json"),
+    "utf8",
+  ),
+);
+const faucets = runtime.bootstrapAccounts.filter(
+  (account: { role: string }) => account.role === "faucet",
+);
+assert.equal(faucets.length, 1, "The local runtime must have one faucet");
 const env = {
+  VITE_THRUPUT_LOCAL_FAUCET_ADDRESS: toBase58(
+    parseAddress(faucets[0].walletAddress),
+  ),
   VITE_THRUPUT_RPC_URL: rpcUrl,
   VITE_THRUPUT_NETWORK_ID: network,
   VITE_GAME_OF_LIFE_CONTRACT_ADDRESS: toHex0x(address),
@@ -254,7 +258,6 @@ const env = {
   VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT: "10000000000",
   VITE_GAME_OF_LIFE_CRANK_EXPIRY_BLOCKS: "64",
   VITE_GAME_OF_LIFE_CRANK_TIMEOUT_MS: "300000",
-  THRUPUT_DEV_PERSONAS: JSON.stringify(personas),
 };
 await writeFile(
   ".env.local",

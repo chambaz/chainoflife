@@ -13,7 +13,7 @@ import {
   GenerationAdvanced,
   TickRequested,
 } from "@/contracts/game-of-life";
-import type { DevelopmentPersona } from "@/development-personas";
+import type { VisitorWallet } from "@/wallet/visitor-wallet";
 import {
   hasBlockingCrank,
   loadCranks,
@@ -36,14 +36,11 @@ export interface WorkflowResult {
 export async function requestTick(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
   readonly profiles: LifeTransactionProfiles;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
   readonly automaticCrank: boolean;
 }): Promise<WorkflowResult> {
-  const scope = transactionScope(
-    params.config,
-    params.persona.expectedCallerHex,
-  );
+  const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     let requests: readonly TickRequestRecord[] = loadRequests(scope);
     let cranks: readonly CrankRecord[] = loadCranks(scope);
@@ -51,7 +48,7 @@ export async function requestTick(params: {
     let record: TickRequestRecord = {
       schemaVersion: 1,
       localId: crypto.randomUUID(),
-      requester: params.persona.expectedCallerHex,
+      requester: params.wallet.addressHex,
       status: "signing",
       transactionHash: null,
       requestId: null,
@@ -84,7 +81,7 @@ export async function requestTick(params: {
       record,
       result,
       params.config.contractAddress,
-      params.persona,
+      params.wallet,
     );
     requests = saveRequests(scope, upsert(loadRequests(scope), record));
     if (record.status === "accepted" && params.automaticCrank) {
@@ -99,13 +96,10 @@ export async function requestTick(params: {
 export async function processOneTick(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
   readonly profiles: LifeTransactionProfiles;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
 }): Promise<WorkflowResult> {
-  const scope = transactionScope(
-    params.config,
-    params.persona.expectedCallerHex,
-  );
+  const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () =>
     crankWhileLocked({ ...params, scope }),
   );
@@ -114,14 +108,11 @@ export async function processOneTick(params: {
 export async function recoverRequest(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
   readonly profiles: LifeTransactionProfiles;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
   readonly localId: string;
 }): Promise<WorkflowResult> {
-  const scope = transactionScope(
-    params.config,
-    params.persona.expectedCallerHex,
-  );
+  const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     let requests = loadRequests(scope);
     const record = requests.find(({ localId }) => localId === params.localId);
@@ -144,7 +135,7 @@ export async function recoverRequest(params: {
             record,
             result,
             params.config.contractAddress,
-            params.persona,
+            params.wallet,
           );
     requests = saveRequests(scope, upsert(requests, recovered));
     return { requests, cranks: loadCranks(scope) };
@@ -154,14 +145,11 @@ export async function recoverRequest(params: {
 export async function recoverCrank(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
   readonly profiles: LifeTransactionProfiles;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
   readonly localId: string;
 }): Promise<WorkflowResult> {
-  const scope = transactionScope(
-    params.config,
-    params.persona.expectedCallerHex,
-  );
+  const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     const requests = loadRequests(scope);
     let cranks = loadCranks(scope);
@@ -186,13 +174,10 @@ export async function recoverCrank(params: {
 
 export async function abandonUnsignedRequest(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly localId: string;
 }): Promise<WorkflowResult> {
-  const scope = transactionScope(
-    params.config,
-    params.persona.expectedCallerHex,
-  );
+  const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     let requests = loadRequests(scope);
     const record = requests.find(({ localId }) => localId === params.localId);
@@ -218,13 +203,10 @@ export async function abandonUnsignedRequest(params: {
 
 export async function abandonUnsignedCrank(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly localId: string;
 }): Promise<WorkflowResult> {
-  const scope = transactionScope(
-    params.config,
-    params.persona.expectedCallerHex,
-  );
+  const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     const requests = loadRequests(scope);
     let cranks = loadCranks(scope);
@@ -249,7 +231,7 @@ export async function abandonUnsignedCrank(params: {
 async function crankWhileLocked(params: {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
   readonly profiles: LifeTransactionProfiles;
-  readonly persona: DevelopmentPersona;
+  readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
   readonly scope: ReturnType<typeof transactionScope>;
 }): Promise<WorkflowResult> {
@@ -262,7 +244,7 @@ async function crankWhileLocked(params: {
   let crank: CrankRecord = {
     schemaVersion: 1,
     localId: crypto.randomUUID(),
-    submittedBy: params.persona.expectedCallerHex,
+    submittedBy: params.wallet.addressHex,
     status: "signing",
     transactionHash: null,
     submittedAt: new Date().toISOString(),
@@ -306,7 +288,7 @@ function admissionRecord(
   record: TickRequestRecord,
   result: WriteResult,
   contractAddress: string,
-  persona: DevelopmentPersona,
+  wallet: VisitorWallet,
 ): TickRequestRecord {
   const classified = writeFailure(record, result);
   if (classified) return classified;
@@ -316,7 +298,7 @@ function admissionRecord(
   const events = TickRequested.allFromReceipt(receipt, {
     address: addressFromHex(contractAddress),
   }).filter(({ topics }) =>
-    bytesEqual(topics.requested_by, persona.expectedCaller),
+    bytesEqual(topics.requested_by, wallet.account.address),
   );
   const common = {
     ...record,

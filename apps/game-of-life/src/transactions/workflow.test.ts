@@ -1,7 +1,6 @@
-import { fromHex0x, Ed25519Signer, toHex0x } from "@thruputchain/client";
 import { describe, expect, test, vi } from "vitest";
 import type { LifeTransactionProfiles } from "@/config";
-import { parseDevelopmentPersonas } from "@/development-personas";
+import { walletFromSeed } from "@/wallet/visitor-wallet";
 import {
   loadCranks,
   loadRequests,
@@ -25,6 +24,7 @@ const config = {
   networkId: "11".repeat(32),
   contractAddress: `0x${"22".repeat(32)}`,
 };
+const wallet = walletFromSeed(`0x${"01".repeat(32)}`);
 const profiles: LifeTransactionProfiles = {
   request: {
     transactionGasLimit: 100_000n,
@@ -42,7 +42,6 @@ const profiles: LifeTransactionProfiles = {
 
 describe("request and crank workflow", () => {
   test("persists the canonical hash and never auto-cranks an indeterminate request", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
     const execute = vi.fn<WriteBoundary["execute"]>(
       async (_target, _policy, observer) => {
         const hash = `0x${"44".repeat(32)}`;
@@ -53,7 +52,7 @@ describe("request and crank workflow", () => {
     const result = await requestTick({
       config,
       profiles,
-      persona,
+      wallet,
       boundary: { execute, observe: vi.fn() },
       automaticCrank: true,
     });
@@ -66,24 +65,22 @@ describe("request and crank workflow", () => {
   });
 
   test("refuses a duplicate local crank while an outcome is indeterminate", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
-    saveCranks(scope, [crank(persona.expectedCallerHex)]);
+    const scope = transactionScope(config, wallet.addressHex);
+    saveCranks(scope, [crank(wallet.addressHex)]);
     const boundary: WriteBoundary = {
       execute: vi.fn(),
       observe: vi.fn(),
     };
     await expect(
-      processOneTick({ config, profiles, persona, boundary }),
+      processOneTick({ config, profiles, wallet, boundary }),
     ).rejects.toThrow(/existing crank/);
     expect(boundary.execute).not.toHaveBeenCalled();
   });
 
   test("requires explicit confirmation before abandoning hashless signing", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
-    saveRequests(scope, [unsigned(persona.expectedCallerHex)]);
-    await abandonUnsignedRequest({ config, persona, localId: "unsigned" });
+    const scope = transactionScope(config, wallet.addressHex);
+    saveRequests(scope, [unsigned(wallet.addressHex)]);
+    await abandonUnsignedRequest({ config, wallet, localId: "unsigned" });
     expect(loadRequests(scope)[0]).toMatchObject({
       status: "failed",
       diagnostic: "User confirmed that signing did not complete",
@@ -92,16 +89,15 @@ describe("request and crank workflow", () => {
   });
 
   test("recovers signed request and crank records after reload", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
+    const scope = transactionScope(config, wallet.addressHex);
     const requestRecord = {
-      ...unsigned(persona.expectedCallerHex),
+      ...unsigned(wallet.addressHex),
       transactionHash: `0x${"77".repeat(32)}`,
     };
     saveRequests(scope, [requestRecord]);
     saveCranks(scope, [
       {
-        ...crank(persona.expectedCallerHex),
+        ...crank(wallet.addressHex),
         status: "signing",
         transactionHash: `0x${"88".repeat(32)}`,
         diagnostic: null,
@@ -118,14 +114,14 @@ describe("request and crank workflow", () => {
     await recoverRequest({
       config,
       profiles,
-      persona,
+      wallet,
       boundary,
       localId: "unsigned",
     });
     await recoverCrank({
       config,
       profiles,
-      persona,
+      wallet,
       boundary,
       localId: "crank",
     });
@@ -134,41 +130,22 @@ describe("request and crank workflow", () => {
   });
 
   test("requires explicit confirmation before abandoning a hashless crank", async () => {
-    const persona = parseDevelopmentPersonas(JSON.stringify(personas()))![0]!;
-    const scope = transactionScope(config, persona.expectedCallerHex);
+    const scope = transactionScope(config, wallet.addressHex);
     saveCranks(scope, [
       {
-        ...crank(persona.expectedCallerHex),
+        ...crank(wallet.addressHex),
         status: "signing",
         transactionHash: null,
         diagnostic: null,
       },
     ]);
-    await abandonUnsignedCrank({ config, persona, localId: "crank" });
+    await abandonUnsignedCrank({ config, wallet, localId: "crank" });
     expect(loadCranks(scope)[0]).toMatchObject({
       status: "failed",
       diagnostic: "User confirmed that signing did not complete",
     });
   });
 });
-
-function personas() {
-  return (["alice", "bob", "carol"] as const).map((id, index) => {
-    const privateKey = `0x${(index + 1).toString(16).padStart(64, "0")}`;
-    const signer = Ed25519Signer.fromSeed(fromHex0x(privateKey));
-    const walletRoot = `0x${(index + 10).toString(16).padStart(64, "0")}`;
-    return {
-      id,
-      label: id,
-      privateKey,
-      signerPublicKey: toHex0x(signer.publicKey.ed25519),
-      walletRoot,
-      walletEntrypoint: "0x19846d750fad81d6",
-      expectedCaller: walletRoot,
-      callerVerified: true,
-    };
-  });
-}
 
 function crank(caller: string): CrankRecord {
   return {
