@@ -6,8 +6,22 @@ pub fn compute_next_row<const N: usize>(
     output: &mut [u8; N],
 ) -> u32 {
     assert!(N > 0, "a Life row must contain at least one byte");
+    compute_next_row_width(previous, current, next, output, N * 8)
+}
+
+/// Compute a toroidal row, excluding padding bits beyond `width`.
+pub fn compute_next_row_width(
+    previous: &[u8],
+    current: &[u8],
+    next: &[u8],
+    output: &mut [u8],
+    width: usize,
+) -> u32 {
+    assert!(width > 0);
+    let bytes = width.div_ceil(8);
+    assert!(previous.len() >= bytes && current.len() >= bytes && next.len() >= bytes);
+    assert!(output.len() >= bytes);
     output.fill(0);
-    let width = N * 8;
     let mut population = 0;
 
     for x in 0..width {
@@ -32,6 +46,6 @@ pub fn compute_next_row<const N: usize>(
 }
 
 #[inline]
-fn bit<const N: usize>(row: &[u8; N], x: usize) -> u8 {
+fn bit(row: &[u8], x: usize) -> u8 {
     (row[x / 8] >> (x % 8)) & 1
 }

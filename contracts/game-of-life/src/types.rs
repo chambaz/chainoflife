@@ -5,6 +5,8 @@ pub type RequestId = SHA256Hash;
 #[contract_type]
 #[cfg_attr(feature = "dev", derive(Debug, PartialEq, Eq))]
 pub struct WorldState {
+    pub size: u32,
+    pub epoch: u64,
     pub generation: u64,
     pub active_bank: u32,
     pub seed: u64,
@@ -16,6 +18,7 @@ pub struct WorldState {
 #[contract_type]
 #[cfg_attr(feature = "dev", derive(Debug, PartialEq, Eq))]
 pub struct WorldMetadata {
+    pub epoch: u64,
     pub width: u32,
     pub height: u32,
     pub generation: u64,
@@ -30,6 +33,7 @@ pub struct WorldMetadata {
 #[contract_type]
 #[cfg_attr(feature = "dev", derive(Debug, PartialEq, Eq))]
 pub struct TickRequest {
+    pub epoch: u64,
     pub request_id: RequestId,
     pub requested_by: ContractAddress,
 }
@@ -51,10 +55,15 @@ pub enum GameOfLifeError {
     GenerationOverflow = 5,
     InvalidStoredState = 6,
     InvalidQueueCapacity = 7,
+    InvalidWorldSize = 8,
+    PendingRequests = 9,
+    EpochOverflow = 10,
 }
 
 #[derive(Event, Clone, Debug)]
 pub struct WorldInitialized {
+    pub epoch: u64,
+    pub size: u32,
     pub seed: u64,
     pub max_queue_len: u32,
     pub population: u64,
@@ -63,6 +72,7 @@ pub struct WorldInitialized {
 
 #[derive(Event, Clone, Debug)]
 pub struct TickRequested<'a> {
+    pub epoch: u64,
     #[topic]
     pub request_id: &'a RequestId,
     #[topic]
@@ -71,6 +81,7 @@ pub struct TickRequested<'a> {
 
 #[derive(Event, Clone, Debug)]
 pub struct GenerationAdvanced<'a> {
+    pub epoch: u64,
     #[topic]
     pub request_id: &'a RequestId,
     pub generation: u64,

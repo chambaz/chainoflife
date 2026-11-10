@@ -7,6 +7,19 @@ pub struct WorldDigest {
 }
 
 impl WorldDigest {
+    /// Bind reset identity as well as dimensions and generation to the digest.
+    pub fn for_epoch(width: u32, height: u32, epoch: u64, generation: u64) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"chain-of-life/world/v2");
+        hash.update(width.to_be_bytes());
+        hash.update(height.to_be_bytes());
+        hash.update(epoch.to_be_bytes());
+        hash.update(generation.to_be_bytes());
+        Self {
+            accumulator: hash.finalize().into(),
+        }
+    }
+
     pub fn new(width: u32, height: u32, generation: u64) -> Self {
         let mut hash = Sha256::new();
         hash.update(DOMAIN);

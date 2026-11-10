@@ -18,7 +18,7 @@
   `npm run generate:contracts` from the app; never edit generated files.
 - Keep one full-world update atomic. Queue consumption, bank writes, metadata,
   and events must roll back together on failure.
-- The digest domain is `chain-of-life/world/v1`. Changes to it or the encoding
+- The digest domain is `chain-of-life/world/v2`, including the reset epoch. Changes to it or the encoding
   require new reference vectors and a new deployment.
 - Distinguish submission, queue admission, and committed execution. Save signed
   evidence before broadcast; observe uncertain transactions by their original hash.

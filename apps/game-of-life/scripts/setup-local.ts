@@ -26,7 +26,10 @@ import { localAccounts, localRoot, rpcUrl } from "./local-accounts";
 const client = await createThruputClient({ cluster: localnet({ rpcUrl }) });
 const accounts = await localAccounts();
 const network = toHex0x(client.network.networkHash).slice(2);
-const journal = resolve(localRoot, "deployment.json");
+const journal = resolve(
+  localRoot,
+  process.env.GAME_OF_LIFE_DEPLOYMENT_JOURNAL ?? "deployment.json",
+);
 interface SetupJournal {
   networkHash: string;
   address: string;
@@ -129,7 +132,8 @@ const costs = config.execution?.storageCosts;
 if (!costs) throw new Error("The node did not publish its storage cost model");
 const funding =
   40_004n * costs.baseDataItemCost +
-  25_001_024n * costs.bytestringCostPerByte +
+  // Resizes retain old slots. Reserve every slot at the maximum chunk length.
+  (40_000n * 1_024n + 1_024n) * costs.bytestringCostPerByte +
   64n * costs.rcqCostPerEntry +
   costs.baseContractDeploymentCost +
   BigInt(artifact.length) * costs.contractDeploymentCostPerByte +
@@ -157,7 +161,7 @@ if (!state.initializedVerified) {
   assert.equal(initialized.value.population, 49_999_272n);
   assert.equal(
     toHex0x(initialized.value.state_digest),
-    "0x18b9622140df6f9f0a03cbce4c18838f41e0a395f206f6290fb1e3182ede1623",
+    "0x5bc29c418cd47f0d7b3d479a7b70d70ed66521c3881a2610f3d0c5652d7e1927",
   );
   state.initializedVerified = true;
   await saveJournal();
@@ -186,9 +190,9 @@ for (const [index, wallet] of wallets.entries()) {
       {
         invocation: GameOfLife.v0_1.processNextTick.invocation(
           address,
-          gasAmount(10_000_000_000n),
+          gasAmount(59_000_000_000n),
         ),
-        gasLimit: gasAmount(10_010_000_000n),
+        gasLimit: gasAmount(60_000_000_000n),
         expiryBlocks: 64n,
       },
       { timeoutMs: 1_200_000 },
@@ -204,7 +208,7 @@ for (const [index, wallet] of wallets.entries()) {
     assert.equal(event.fields.population, 27_336_807n);
     assert.equal(
       toHex0x(event.fields.state_digest),
-      "0xe7a33dc03fc5ee1456056f0ffec5a589d32c048a8382acb8d4797a00ef2c4ff2",
+      "0xe2d4fa05fcd2d12e661c7d4487748d3b31705b329026209b0cb9f1c7135b0613",
     );
   }
   console.log(

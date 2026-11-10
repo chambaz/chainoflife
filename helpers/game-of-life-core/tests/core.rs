@@ -1,5 +1,84 @@
 use game_of_life_core::digest::WorldDigest;
-use game_of_life_core::kernel::compute_next_row;
+use game_of_life_core::kernel::{compute_next_row, compute_next_row_width};
+
+#[test]
+fn epoch_digest_matches_independent_sha256_vectors() {
+    // Python hashlib + struct.pack('>IIQQ') reference, with two length-tagged leaves.
+    for (epoch, expected) in [
+        (
+            0,
+            "517d74c452c185937306cbcfccf9af0535fecc34a10ea60e8e85a92576e1c63e",
+        ),
+        (
+            1,
+            "fad7aa53de3e6b509b7222b6b2065c128b859efea47788e49040949cb07d5bbc",
+        ),
+        (
+            0x0102_0304_0506_0708,
+            "a0b7dccb1dae4be8d9c3d9de17e2ccd32f26ddd42517f4a06eebcd8d5b8114eb",
+        ),
+    ] {
+        let mut digest = WorldDigest::for_epoch(100, 100, epoch, 7);
+        digest.update(0, &[1, 2, 3]);
+        digest.update(1, &[4, 5]);
+        let actual: String = digest
+            .finish()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn padded_rows_match_scalar_toroidal_reference() {
+    for width in [100usize, 200, 300, 1_000] {
+        let height = 7;
+        let bytes = width.div_ceil(8);
+        let mut rng = SplitMix64::new(42);
+        let mut world = vec![vec![0u8; bytes]; height];
+        for row in &mut world {
+            rng.fill_bytes(row);
+        }
+        // Deliberately leave padding set. It must never become a neighbor.
+        for y in 0..height {
+            let mut output = vec![255; bytes];
+            let population = compute_next_row_width(
+                &world[(y + height - 1) % height],
+                &world[y],
+                &world[(y + 1) % height],
+                &mut output,
+                width,
+            );
+            let mut expected_population = 0;
+            for x in 0..width {
+                let mut neighbors = 0;
+                for dy in [-1isize, 0, 1] {
+                    for dx in [-1isize, 0, 1] {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let nx = (x as isize + dx).rem_euclid(width as isize) as usize;
+                        let ny = (y as isize + dy).rem_euclid(height as isize) as usize;
+                        neighbors += (world[ny][nx / 8] >> (nx % 8)) & 1;
+                    }
+                }
+                let alive = ((world[y][x / 8] >> (x % 8)) & 1) == 1;
+                let expected = neighbors == 3 || (alive && neighbors == 2);
+                assert_eq!(
+                    ((output[x / 8] >> (x % 8)) & 1) == 1,
+                    expected,
+                    "{width}: {x},{y}"
+                );
+                expected_population += u32::from(expected);
+            }
+            assert_eq!(population, expected_population);
+            if !width.is_multiple_of(8) {
+                assert_eq!(output[bytes - 1] >> (width % 8), 0);
+            }
+        }
+    }
+}
 use game_of_life_core::prng::SplitMix64;
 
 #[test]
@@ -76,6 +155,7 @@ fn full_scale_generation_one_vector() {
     }
 
     let mut digest = WorldDigest::new(10_000, 10_000, 1);
+    let mut epoch_digest = WorldDigest::for_epoch(10_000, 10_000, 0, 1);
     let mut population = 0u64;
     let mut output = [0u8; 1_250];
     for y in 0..10_000 {
@@ -88,7 +168,18 @@ fn full_scale_generation_one_vector() {
         let key = (y as u32) * 2;
         digest.update(key, &output[..1_000]);
         digest.update(key + 1, &output[1_000..]);
+        epoch_digest.update(key, &output[..1_000]);
+        epoch_digest.update(key + 1, &output[1_000..]);
     }
+    let epoch_hex: String = epoch_digest
+        .finish()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        epoch_hex,
+        "e2d4fa05fcd2d12e661c7d4487748d3b31705b329026209b0cb9f1c7135b0613"
+    );
     assert_eq!(
         (population, digest.finish()),
         (

@@ -29,6 +29,9 @@ const __gh_entrypoints = {
       requestTick: __gh_protocol.contractEntrypointID(
         __gh_protocol_utils.fromHex("abf7742c292ca352"),
       ),
+      resize: __gh_protocol.contractEntrypointID(
+        __gh_protocol_utils.fromHex("ef212934cbb78d6d"),
+      ),
     },
   },
 } as const;
@@ -36,7 +39,8 @@ const __gh_entrypoints = {
 export namespace game_of_life {
   export namespace v0_1 {
     export namespace types {
-      export type GameOfLifeError = 1n | 2n | 3n | 4n | 5n | 6n | 7n;
+      export type GameOfLifeError =
+        1n | 2n | 3n | 4n | 5n | 6n | 7n | 8n | 9n | 10n;
 
       export interface TickResult {
         request_id: __gh_client_contract.FixedBytes<32>;
@@ -45,6 +49,7 @@ export namespace game_of_life {
       }
 
       export interface WorldMetadata {
+        epoch: bigint;
         width: bigint;
         height: bigint;
         generation: bigint;
@@ -60,6 +65,7 @@ export namespace game_of_life {
         "GenerationAdvanced",
         { request_id: __gh_client_contract.FixedBytes<32> },
         {
+          epoch: bigint;
           generation: bigint;
           requested_by: __gh_protocol.ContractAddress;
           population: bigint;
@@ -79,7 +85,7 @@ export namespace game_of_life {
           request_id: __gh_client_contract.FixedBytes<32>;
           requested_by: __gh_protocol.ContractAddress;
         },
-        {}
+        { epoch: bigint }
       > {}
 
       export interface TickRequestedFilter {
@@ -93,6 +99,8 @@ export namespace game_of_life {
         "WorldInitialized",
         {},
         {
+          epoch: bigint;
+          size: bigint;
           seed: bigint;
           max_queue_len: bigint;
           population: bigint;
@@ -136,6 +144,12 @@ export namespace GameOfLife {
 
     export type RequestTickArgs = void;
     export type RequestTickResult = __gh_client_contract.FixedBytes<32>;
+
+    export interface ResizeArgs {
+      size: bigint;
+    }
+    export type ResizeResult =
+      __gh_codegen.game_of_life$v0_1$types$WorldMetadata;
 
     export type DeclaredException = {
       kind: "declared";
@@ -270,6 +284,25 @@ export const spec: __gh_client_contract.ContractSpec = {
           },
           effect: null,
         },
+        {
+          name: __gh_s("resize"),
+          args: [
+            {
+              name: __gh_s("size"),
+              ty: { v: __gh_contract_spec.ContractTypeKind.U32 },
+            },
+          ],
+          return_type: {
+            v: __gh_contract_spec.ContractTypeKind.Named,
+            named: {
+              crate_name: __gh_s("game-of-life"),
+              major: __gh_s("0.1"),
+              module_path: __gh_s("game_of_life::types"),
+              declared: __gh_s("WorldMetadata"),
+            },
+          },
+          effect: null,
+        },
       ],
     },
   ],
@@ -291,6 +324,9 @@ export const spec: __gh_client_contract.ContractSpec = {
           { name: __gh_s("GenerationOverflow"), value: 5n },
           { name: __gh_s("InvalidStoredState"), value: 6n },
           { name: __gh_s("InvalidQueueCapacity"), value: 7n },
+          { name: __gh_s("InvalidWorldSize"), value: 8n },
+          { name: __gh_s("PendingRequests"), value: 9n },
+          { name: __gh_s("EpochOverflow"), value: 10n },
         ],
       },
     },
@@ -343,6 +379,10 @@ export const spec: __gh_client_contract.ContractSpec = {
           declared: __gh_s("WorldMetadata"),
         },
         fields: [
+          {
+            name: __gh_s("epoch"),
+            ty: { v: __gh_contract_spec.ContractTypeKind.U64 },
+          },
           {
             name: __gh_s("width"),
             ty: { v: __gh_contract_spec.ContractTypeKind.U32 },
@@ -416,6 +456,10 @@ export const spec: __gh_client_contract.ContractSpec = {
       ],
       fields: [
         {
+          name: __gh_s("epoch"),
+          ty: { v: __gh_contract_spec.ContractTypeKind.U64 },
+        },
+        {
           name: __gh_s("generation"),
           ty: { v: __gh_contract_spec.ContractTypeKind.U64 },
         },
@@ -467,7 +511,12 @@ export const spec: __gh_client_contract.ContractSpec = {
           ty: { v: __gh_contract_spec.ContractTypeKind.Address },
         },
       ],
-      fields: [],
+      fields: [
+        {
+          name: __gh_s("epoch"),
+          ty: { v: __gh_contract_spec.ContractTypeKind.U64 },
+        },
+      ],
     },
     {
       name: {
@@ -483,6 +532,14 @@ export const spec: __gh_client_contract.ContractSpec = {
       ),
       topics: [],
       fields: [
+        {
+          name: __gh_s("epoch"),
+          ty: { v: __gh_contract_spec.ContractTypeKind.U64 },
+        },
+        {
+          name: __gh_s("size"),
+          ty: { v: __gh_contract_spec.ContractTypeKind.U32 },
+        },
         {
           name: __gh_s("seed"),
           ty: { v: __gh_contract_spec.ContractTypeKind.U64 },
@@ -681,6 +738,34 @@ export const GameOfLife = {
       ],
       codecs: __gh_codecs,
     }),
+    resize: __gh_client_contract.defineContractMethod<
+      GameOfLife.v0_1.ResizeArgs,
+      GameOfLife.v0_1.ResizeResult,
+      GameOfLife.v0_1.DeclaredException
+    >({
+      interfaceName: "GameOfLife",
+      interfaceVersion: "0.1.0",
+      abiName: "resize",
+      publicName: "resize",
+      entrypoint: __gh_entrypoints.GameOfLife.v0_1.resize,
+      effect: spec.interfaces[0]!.methods[6]!.effect,
+      args: [
+        {
+          abiName: "size",
+          publicName: "size",
+          type: spec.interfaces[0]!.methods[6]!.args[0]!.ty,
+        },
+      ],
+      returnType: spec.interfaces[0]!.methods[6]!.return_type,
+      throws: [
+        {
+          selector: 0x63bf848a696f21bfn,
+          name: "GameOfLifeError",
+          type: spec.interfaces[0]!.throws[0]!.ty,
+        },
+      ],
+      codecs: __gh_codecs,
+    }),
   },
 } as const;
 
@@ -695,6 +780,9 @@ export const game_of_life = {
         GenerationOverflow: 5n,
         InvalidStoredState: 6n,
         InvalidQueueCapacity: 7n,
+        InvalidWorldSize: 8n,
+        PendingRequests: 9n,
+        EpochOverflow: 10n,
       },
       GenerationAdvanced: __gh_client_contract.defineContractEvent<
         "GenerationAdvanced",
@@ -712,10 +800,11 @@ export const game_of_life = {
           },
         ],
         fields: [
-          { name: "generation", type: spec.events[0]!.fields[0]!.ty },
-          { name: "requested_by", type: spec.events[0]!.fields[1]!.ty },
-          { name: "population", type: spec.events[0]!.fields[2]!.ty },
-          { name: "state_digest", type: spec.events[0]!.fields[3]!.ty },
+          { name: "epoch", type: spec.events[0]!.fields[0]!.ty },
+          { name: "generation", type: spec.events[0]!.fields[1]!.ty },
+          { name: "requested_by", type: spec.events[0]!.fields[2]!.ty },
+          { name: "population", type: spec.events[0]!.fields[3]!.ty },
+          { name: "state_digest", type: spec.events[0]!.fields[4]!.ty },
         ],
         codecs: __gh_codecs,
       }),
@@ -739,7 +828,7 @@ export const game_of_life = {
             representation: "address",
           },
         ],
-        fields: [],
+        fields: [{ name: "epoch", type: spec.events[1]!.fields[0]!.ty }],
         codecs: __gh_codecs,
       }),
       WorldInitialized: __gh_client_contract.defineContractEvent<
@@ -752,10 +841,12 @@ export const game_of_life = {
         signature: spec.events[2]!.signature,
         topics: [],
         fields: [
-          { name: "seed", type: spec.events[2]!.fields[0]!.ty },
-          { name: "max_queue_len", type: spec.events[2]!.fields[1]!.ty },
-          { name: "population", type: spec.events[2]!.fields[2]!.ty },
-          { name: "state_digest", type: spec.events[2]!.fields[3]!.ty },
+          { name: "epoch", type: spec.events[2]!.fields[0]!.ty },
+          { name: "size", type: spec.events[2]!.fields[1]!.ty },
+          { name: "seed", type: spec.events[2]!.fields[2]!.ty },
+          { name: "max_queue_len", type: spec.events[2]!.fields[3]!.ty },
+          { name: "population", type: spec.events[2]!.fields[4]!.ty },
+          { name: "state_digest", type: spec.events[2]!.fields[5]!.ty },
         ],
         codecs: __gh_codecs,
       }),
