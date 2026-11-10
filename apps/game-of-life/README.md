@@ -89,3 +89,47 @@ Transaction records distinguish submission, queue admission, and execution.
 Signed evidence is saved before broadcast. Uncertain transactions are observed
 by their original hash and never resubmitted automatically. Request and crank
 histories are scoped to network, caller, and contract.
+
+## Ports and local state
+
+| Service | Default | Override |
+| --- | --- | --- |
+| Node RPC | `127.0.0.1:9547` | `THRUPUT_RPC_URL` for both `node` and `setup:local` |
+| Indexer | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during setup |
+| App | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` when running `dev` |
+
+Keep all three on loopback. Setup writes public connection settings to
+`.env.local`; `dev` reads that file. Changing the app port changes the browser
+origin, so it creates a separate visitor wallet.
+
+Deployment accounts, the deployment journal, and the ledger live under
+`tmp/chain-of-life` at the repository root. `CHAIN_OF_LIFE_LOCAL_DIR` overrides
+that location for both `node` and `setup:local`. Use an absolute path for overrides.
+Indexer state is separate; its defaults are documented above.
+
+### Start a separate fresh demo
+
+The simplest option is a separate clone outside this repository, with fresh
+dependencies and local data. Stop the previous services or choose different
+ports using the table above. Use a fresh browser profile or clear site data for
+the demo origin. Local nodes can reuse the same network ID, so old browser
+funding records must not be reused for a new ledger.
+
+Do not copy `.env.local`, deployment journals, keys, indexer databases, or tiles
+from the previous run. Keep the old clone if you want to resume its world later.
+Cloning inside another Cargo workspace can merge parent Cargo configuration;
+use a separate directory instead.
+
+### Setup still times out with `--resume`
+
+Resume observes saved transaction hashes. It does not replace a transaction that
+expired without committing. For this disposable local experiment, start a fresh
+demo as described above rather than deleting individual journal entries and
+guessing which steps ran. Keep the old ledger and journal if you need to inspect
+the original transaction.
+
+### UI components
+
+The shadcn components are checked-in source under `src/components/ui`. The CLI
+is not needed to install, build, or run the app. If adding components, invoke the
+CLI explicitly with `npx shadcn@4.16.1`; review the generated diff before keeping it.

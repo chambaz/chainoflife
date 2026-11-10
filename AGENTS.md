@@ -1,5 +1,9 @@
 # Chain of Life development
 
+This is a local Thruput developer experiment. Keep solutions small and specific
+to the showcase. Avoid new frameworks, hosted-service features, or contribution
+infrastructure unless explicitly requested.
+
 ## Structure
 
 - `contracts/game-of-life`: atomic world contract.
@@ -22,6 +26,10 @@
   require new reference vectors and a new deployment.
 - Distinguish submission, queue admission, and committed execution. Save signed
   evidence before broadcast; observe uncertain transactions by their original hash.
+- Recover interrupted resets under the cross-tab write lock and reload the record
+  after acquiring it. A pending reset without a hash can become a retryable failure:
+  the SDK awaits the hash-saving callback before broadcast. Never automatically
+  resubmit a signed reset. Timing storage must not affect transaction outcomes.
 - Generate visitor keys in the browser; never inject deployment keys into the app.
   Preserve the wallet across reloads and tabs. Persist funding attempts before
   requesting an airdrop and never repeat an uncertain attempt automatically.
