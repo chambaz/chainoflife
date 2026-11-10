@@ -87,6 +87,8 @@ Open **http://127.0.0.1:5173**. Setup deploys and verifies a full-size world;
 `dev` builds the Rust indexer and starts it with Vite. First-time Rust compilation
 can take several minutes. Wait for the services-ready message and the board's
 **Ready** indicator before interacting.
+On the [reference machine](docs/validation.md), setup took about a minute with
+cached contract compilation, and the first indexer release build took 71 seconds.
 
 Use **Advance** to request and process one generation. Drag the board-size slider
 and release it to reset. Each browser creates its own locally funded wallet;

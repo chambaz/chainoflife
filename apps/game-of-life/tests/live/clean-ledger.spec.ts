@@ -54,10 +54,11 @@ test("advances, indexes, visualizes, and recovers one complete world", async ({
   ).toBeVisible({
     timeout: 60_000,
   });
-  await page
-    .locator("summary")
-    .filter({ hasText: /^Activity$/ })
-    .click();
+  await expect(
+    page.locator("details").filter({
+      has: page.locator("summary").filter({ hasText: /^Activity$/ }),
+    }),
+  ).toHaveAttribute("open");
   await expect(
     page
       .getByRole("button", {

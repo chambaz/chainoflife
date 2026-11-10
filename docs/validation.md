@@ -43,11 +43,37 @@ another caller can complete it.
 The first three 10,000 × 10,000 advances used 9,560,453,763; 9,569,091,249; and
 9,567,190,815 root gas. Gas is a computation budget, not elapsed time or a token fee.
 
+### Fresh local startup and browser checks
+
+In the separate checkout, `npm ci`, `npm run node`, `npm run setup:local`, and
+`npm run dev` succeeded with the release changes applied. To avoid the existing
+demo, RPC, indexer, and app ports were changed to 9558, 8798, and 5188.
+No deployment keys, environment file, or database were copied from the existing demo.
+
+Setup took 57 seconds with cached contract compilation. The first indexer release
+build took 71 seconds. These exclude installing Rust and the CLI. Allow several
+minutes for a first run with empty compiler caches.
+
+Both live Chromium tests passed in 135 seconds. They cover a full-world advance,
+indexing and rendering, reload recovery, mobile controls, copyable hashes,
+resizing through 100, 1,000, 10,000, and 100 cells per side, and shared wallet state
+across tabs. The final test returned the isolated board to 100 × 100.
+
+One observed advance at each size:
+
+| Board side | Root gas | Recorded crank start to confirmation | Recorded crank start to visible board |
+| --- | ---: | ---: | ---: |
+| 100 | 6,993,322 | 0.79 s | 9.23 s |
+| 1,000 | 146,911,037 | 1.31 s | 9.40 s |
+| 10,000 | 9,560,453,763 | 16.90 s | 24.46 s |
+
+These are single-run observations, not averages or service-level promises.
+
 ### Timing interpretation
 
 The live resize test saves measurements under `test-results/live/`. Each record
 separates submission, receipt confirmation, and board readiness. Confirmation
-includes scheduling and observation; it is not a measurement of executor CPU time.
+includes signing, scheduling, and observation; it is not a measurement of executor CPU time.
 Board readiness also includes indexer work, polling, tile loading, and rendering.
 SwiftShader interaction timings are not hardware-GPU benchmarks.
 
@@ -75,7 +101,8 @@ from the two loader advisories and their parent packages. `cargo audit` reports
 the one SQLite advisory and no remaining informational warnings. These commands
 still exit nonzero. No exploit was demonstrated in the demo's current input paths.
 
-Recheck with `npm audit` in both app directories and `cargo audit` at the root.
+Recheck with `npm audit` in both app directories and `cargo audit` at the root
+(install the latter with `cargo install cargo-audit --locked`).
 Avoid `npm audit fix --force`: its suggested renderer downgrade changes the
 tested renderer stack.
 
