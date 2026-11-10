@@ -19,11 +19,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let contract = parse_address(&contract_text)?;
     let root = PathBuf::from(
         std::env::var("GAME_OF_LIFE_ARTIFACT_ROOT")
-            .unwrap_or_else(|_| "tmp/game-of-life-indexer/artifacts".into()),
+            .unwrap_or_else(|_| "tmp/game-of-life-indexer-v2/artifacts".into()),
     );
     let database = PathBuf::from(
         std::env::var("GAME_OF_LIFE_INDEXER_DB")
-            .unwrap_or_else(|_| "tmp/game-of-life-indexer/indexer.sqlite3".into()),
+            .unwrap_or_else(|_| "tmp/game-of-life-indexer-v2/indexer.sqlite3".into()),
     );
     if let Some(parent) = database.parent() {
         std::fs::create_dir_all(parent)?;
