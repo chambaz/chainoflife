@@ -5,7 +5,6 @@ import {
   createPubkeyAccount,
   Ed25519Signer,
   fromHex0x,
-  toBase58,
   toHex0x,
 } from "@thruputchain/client";
 
@@ -39,19 +38,4 @@ export async function localAccounts(create = false) {
       account: createPubkeyAccount({ signer }),
     };
   });
-}
-
-export async function writeAllocations() {
-  const accounts = await localAccounts(true);
-  const path = resolve(localRoot, "allocations.json");
-  await writeFile(
-    path,
-    JSON.stringify(
-      accounts.map(({ signer }) => ({
-        publicKey: toBase58(signer.publicKey.ed25519),
-        initialStorageTokens: "10000000000000",
-      })),
-    ),
-  );
-  return path;
 }

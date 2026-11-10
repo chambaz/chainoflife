@@ -3,6 +3,8 @@ import { readFile, writeFile, rename } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   createThruputClient,
+  createRpcClient,
+  HttpTransport,
   createWalletClient,
   gasAmount,
   localnet,
@@ -11,6 +13,7 @@ import {
   toHex0x,
   parseAddress,
   hashFromBase58,
+  fromHex0x,
   defaultWalletAdapter,
   UnsupportedRpcValue,
   type SubmissionEvidence,
@@ -22,9 +25,15 @@ import {
   TickRequested,
 } from "../src/contracts/game-of-life";
 import { localAccounts, localRoot, rpcUrl } from "./local-accounts";
+import { fundSetupAccount, type FundingRecord } from "./setup-funding";
 
 const client = await createThruputClient({ cluster: localnet({ rpcUrl }) });
-const accounts = await localAccounts();
+const config = await client.getChainConfig({});
+assert(
+  config.stated.maxTxGas !== undefined &&
+    config.stated.maxTxGas >= 60_000_000_000n,
+  "Start thruput node with --network-config max_tx_gas=60000000000 before setup.",
+);
 const network = toHex0x(client.network.networkHash).slice(2);
 const journal = resolve(
   localRoot,
@@ -35,6 +44,8 @@ interface SetupJournal {
   address: string;
   steps: Record<string, string>;
   initializedVerified: boolean;
+  funding?: Record<string, FundingRecord>;
+  deploymentNonce?: string;
 }
 let state: SetupJournal;
 let activeStep: string;
@@ -59,9 +70,6 @@ const persist = async (evidence: SubmissionEvidence) => {
   await saveJournal();
   console.log(`Signed transaction: ${hash}`);
 };
-const wallets = accounts.map(({ account }) =>
-  createWalletClient({ client, account, onSigned: persist }),
-);
 const existing = await readFile(journal, "utf8").catch(
   (error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
@@ -72,19 +80,32 @@ if (existing && !process.argv.includes("--resume"))
   throw new Error(
     `Deployment evidence exists at ${journal}. Use --resume to observe its saved transactions and complete setup.`,
   );
+const accounts = await localAccounts(existing === null);
+const wallets = accounts.map(({ account }) =>
+  createWalletClient({ client, account, onSigned: persist }),
+);
 
 const artifact = await readFile(
   resolve("../../target/thruput/game_of_life.rv32a"),
 );
+const saved: SetupJournal | null = existing ? JSON.parse(existing) : null;
+assert(
+  !saved || saved.deploymentNonce || saved.steps?.deploy,
+  "No deployment nonce or signed deployment is recorded. Inspect the journal before continuing.",
+);
 const deployment = prepareContractDeployment({
   deployer: accounts[0]!.account.address,
   contract: artifact,
+  deploymentNonce: saved?.deploymentNonce
+    ? fromHex0x(saved.deploymentNonce)
+    : undefined,
 });
-state = existing
-  ? JSON.parse(existing)
+state = saved
+  ? saved
   : {
       networkHash: toBase58(client.network.networkHash),
       address: toBase58(deployment.address),
+      deploymentNonce: toHex0x(deployment.deploymentNonce),
       steps: {},
       initializedVerified: false,
     };
@@ -97,12 +118,47 @@ assert(
   state.steps && typeof state.steps === "object",
   "Deployment journal has no transaction steps",
 );
-assert(
-  !existing || state.steps.deploy,
-  "No signed deployment is recorded. Inspect the journal before starting a new deployment.",
-);
+// Older journals have signed deployment evidence but no saved nonce.
+// Their deployment step is observed by hash and is never submitted again.
+if (state.deploymentNonce) {
+  assert.equal(
+    state.address,
+    toBase58(deployment.address),
+    "Saved deployment does not match the setup accounts and contract artifact",
+  );
+}
 const address = parseAddress(state.address);
+const manifestPath =
+  process.env.THRUPUT_RUNTIME_MANIFEST ??
+  resolve(localRoot, "atomic-node/runtime/runtime-manifest.json");
+const runtime = JSON.parse(await readFile(manifestPath, "utf8"));
+assert.equal(
+  runtime.networkHash,
+  state.networkHash,
+  "Runtime manifest belongs to another network",
+);
+const faucets = runtime.bootstrapAccounts.filter(
+  (account: { role: string }) => account.role === "faucet",
+);
+assert.equal(faucets.length, 1, "The local runtime must have one faucet");
+const faucet = parseAddress(faucets[0].walletAddress);
+state.funding ??= {};
+assert(
+  typeof state.funding === "object" && !Array.isArray(state.funding),
+  "Invalid saved funding records",
+);
 await saveJournal();
+const rpc = await createRpcClient({ transport: new HttpTransport(rpcUrl) });
+for (const { account } of accounts) {
+  await fundSetupAccount({
+    client,
+    rpc,
+    recipient: account.address,
+    faucet,
+    records: state.funding,
+    save: saveJournal,
+  });
+}
 async function step(
   name: string,
   run: () => Promise<{ receipt: TransactionReceipt }>,
@@ -127,7 +183,6 @@ async function step(
   );
   return result;
 }
-const config = await client.getChainConfig({});
 const costs = config.execution?.storageCosts;
 if (!costs) throw new Error("The node did not publish its storage cost model");
 const funding =
@@ -235,20 +290,8 @@ assert.equal(
   null,
 );
 
-const runtime = JSON.parse(
-  await readFile(
-    resolve(localRoot, "atomic-node/runtime/runtime-manifest.json"),
-    "utf8",
-  ),
-);
-const faucets = runtime.bootstrapAccounts.filter(
-  (account: { role: string }) => account.role === "faucet",
-);
-assert.equal(faucets.length, 1, "The local runtime must have one faucet");
 const env = {
-  VITE_THRUPUT_LOCAL_FAUCET_ADDRESS: toBase58(
-    parseAddress(faucets[0].walletAddress),
-  ),
+  VITE_THRUPUT_LOCAL_FAUCET_ADDRESS: toBase58(faucet),
   VITE_THRUPUT_RPC_URL: rpcUrl,
   VITE_THRUPUT_NETWORK_ID: network,
   VITE_GAME_OF_LIFE_CONTRACT_ADDRESS: toHex0x(address),

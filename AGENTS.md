@@ -16,6 +16,10 @@ infrastructure unless explicitly requested.
 ## Conventions
 
 - Read the relevant READMEs before changing setup or runtime behavior.
+- Start local chains with the documented `thruput node` command. Setup creates
+  and funds its accounts through the local faucet; it does not need bootstrap
+  allocations. Persist funding intent before the RPC and reuse its nonce and
+  amount only on explicit setup resume; observe known hashes without a new grant.
 - Use npm with each app's lockfile, the pinned Rust toolchain, and public registries.
   Preserve package versions unless an upgrade is requested.
 - Use official Thruput RPC and wallet APIs. Regenerate contract bindings with

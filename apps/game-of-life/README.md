@@ -94,7 +94,7 @@ histories are scoped to network, caller, and contract.
 
 | Service | Default | Override |
 | --- | --- | --- |
-| Node RPC | `127.0.0.1:9547` | `THRUPUT_RPC_URL` for both `node` and `setup:local` |
+| Node RPC | `127.0.0.1:9547` | `thruput node --port` and matching `THRUPUT_RPC_URL` for setup |
 | Indexer | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during setup |
 | App | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` when running `dev` |
 
@@ -102,10 +102,25 @@ Keep all three on loopback. Setup writes public connection settings to
 `.env.local`; `dev` reads that file. Changing the app port changes the browser
 origin, so it creates a separate visitor wallet.
 
-Deployment accounts, the deployment journal, and the ledger live under
-`tmp/chain-of-life` at the repository root. `CHAIN_OF_LIFE_LOCAL_DIR` overrides
-that location for both `node` and `setup:local`. Use an absolute path for overrides.
-Indexer state is separate; its defaults are documented above.
+Setup creates three local accounts and funds them through `dev_fundAccount`,
+the same local faucet API used by browser wallets. The amount covers contract
+storage and the larger gas reservation. It saves the funding nonce and amount
+before the request, then saves the returned hash and signed bytes. Explicit
+`setup:local -- --resume` reuses a hashless request's nonce and amount; once a hash
+is known, it only observes that transaction. The journal also saves the deployment
+nonce, so setup can resume during funding without changing the contract address.
+
+Deployment keys and the journal live under `tmp/chain-of-life` at the repository
+root. `CHAIN_OF_LIFE_LOCAL_DIR` changes that setup directory. It does not start
+or configure a node. The node's ledger location is selected by `thruput node
+--data-dir`.
+
+Setup reads the node's runtime manifest to find its public faucet address and
+check the network ID. By default it reads
+`tmp/chain-of-life/atomic-node/runtime/runtime-manifest.json`. Set
+`THRUPUT_RUNTIME_MANIFEST` to an absolute path when using another node directory
+or a separate setup directory. Faucet signing keys stay in the node; setup sends
+funding requests over RPC. Indexer state is separate, as documented above.
 
 ### Start a separate fresh demo
 

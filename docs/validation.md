@@ -28,7 +28,7 @@ npm run test:chromium
 npm run check:contracts
 ```
 
-The main app has 212 passing unit tests and 29 passing Chromium tests. The renderer
+The main app has 218 passing unit tests and 29 passing Chromium tests. The renderer
 fixture has 14 passing unit tests and 5 passing Chromium tests. Rust formatting,
 60 core/indexer tests, and workspace Clippy pass. The contract builds and generated
 TypeScript bindings match it. Live tests are separate from these fixture checks.
@@ -36,7 +36,10 @@ TypeScript bindings match it. Live tests are separate from these fixture checks.
 ### Isolated contract execution
 
 `npm run test:clean-ledger` passed in a separate checkout with fresh accounts and
-ledger data. Setup verified three full-world advances. The integration test
+ledger data. The node started directly with the CLI, without setup-account
+allocations. Setup funded all three accounts through the local faucet, verified
+three full-world advances, and completed a second run with `--resume` using the
+saved transaction hashes. The integration test
 confirmed that a failed crank preserves the world and admitted request, and
 another caller can complete it.
 
@@ -45,14 +48,22 @@ The first three 10,000 × 10,000 advances used 9,560,453,763; 9,569,091,249; and
 
 ### Fresh local startup and browser checks
 
-In the separate checkout, `npm ci`, `npm run node`, `npm run setup:local`, and
-`npm run dev` succeeded with the release changes applied. To avoid the existing
+The direct-CLI startup and faucet-funded setup passed in a second isolated run
+on ports 9559, 8798, and 5188. Setup was stopped after saving its first funding
+request, before deployment. `--resume` completed setup in 60 seconds and retained
+the saved contract address and deployment nonce. A second resume completed in
+2 seconds. Both live Chromium tests passed in 131 seconds, including full-world
+advancement, resizing, rendering, and shared browser wallet state.
+
+In the initial release checkout, `npm ci`, the former node wrapper,
+`npm run setup:local`, and `npm run dev` succeeded. To avoid the existing
 demo, RPC, indexer, and app ports were changed to 9558, 8798, and 5188.
 No deployment keys, environment file, or database were copied from the existing demo.
 
 Setup took 57 seconds with cached contract compilation. The first indexer release
 build took 71 seconds. These exclude installing Rust and the CLI. Allow several
-minutes for a first run with empty compiler caches.
+minutes for a first run with empty compiler caches. These initial measurements
+predate moving setup account funding from startup allocations to faucet requests.
 
 Both live Chromium tests passed in 135 seconds. They cover a full-world advance,
 indexing and rendering, reload recovery, mobile controls, copyable hashes,
