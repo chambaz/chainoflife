@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useState } from "react";
+import { abbreviate } from "@/lib/format-identifier";
 import { ChevronRight, LoaderCircle, RotateCcw, Zap } from "lucide-react";
 import type { CoreThruputClient } from "@thruputchain/client";
 import type { AppConfig, LifeTransactionProfiles } from "@/config";
@@ -173,7 +174,7 @@ export function TransactionActivity({
             title={wallet.address}
             className="mt-0.5 text-sm"
           >
-            Wallet {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+            Wallet {abbreviate(wallet.address)}
           </p>
         </div>
       </div>
@@ -307,8 +308,4 @@ function initialRecords(scope: ReturnType<typeof transactionScope>): {
   } catch (cause) {
     return { requests: [], cranks: [], error: message(cause) };
   }
-}
-
-function abbreviate(value: string): string {
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { abbreviate } from "@/lib/format-identifier";
 import type { LifeChainEvent, LifeReadAdapter } from "@/chain/game-of-life";
 
 type GenerationEvent = Exclude<LifeChainEvent, { kind: "TickRequested" }>;
@@ -154,7 +155,7 @@ function GenerationActivityItem({
       </p>
       <div className="flex items-center gap-2">
         <p className="min-w-0 font-mono text-xs" title={hash}>
-          {hash.slice(0, 10)}…{hash.slice(-6)}
+          {abbreviate(hash)}
         </p>
         <Button
           type="button"

@@ -10,6 +10,7 @@ import type { VisitorWallet } from "@/wallet/visitor-wallet";
 import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { BoardSizeControl } from "@/components/board-size-control";
 import { WorldActivity } from "@/components/world-activity";
+import { abbreviate } from "@/lib/format-identifier";
 import {
   markBoardReady,
   subscribeMeasurements,
@@ -559,7 +560,11 @@ export function DetailsContent({
               manifest ? `${manifest.width} × ${manifest.height}` : undefined
             }
           />
-          <Detail label="State digest" value={manifest?.stateDigest} identifier />
+          <Detail
+            label="State digest"
+            value={manifest?.stateDigest}
+            identifier
+          />
           <Detail
             label="Contract"
             value={manifest?.contractAddress ?? config.contractAddress}
@@ -636,10 +641,7 @@ function Detail({
   return (
     <>
       <dt className="text-muted-foreground">{label}</dt>
-      <dd
-        title={fullValue}
-        className="min-w-0 text-right font-mono text-xs"
-      >
+      <dd title={fullValue} className="min-w-0 text-right font-mono text-xs">
         {identifier && fullValue ? abbreviate(fullValue) : (fullValue ?? "—")}
       </dd>
     </>
@@ -666,10 +668,6 @@ function isBehind(state: SynchronizationState): boolean {
     state.visualized &&
     compareWorldVersion(state.chain, state.visualized.manifest) > 0,
   );
-}
-
-function abbreviate(value: string): string {
-  return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
 function message(reason: unknown): string {

@@ -94,7 +94,7 @@ describe("World instrument surfaces", () => {
     for (const hex of [digest, snapshot.manifest.contractAddress]) {
       const full = toBase58(hashFromHex(hex));
       expect(screen.getByTitle(full)).toHaveTextContent(
-        `${full.slice(0, 10)}…${full.slice(-6)}`,
+        `${full.slice(0, 4)}...${full.slice(-4)}`,
       );
       expect(screen.queryByText(hex)).not.toBeInTheDocument();
     }
