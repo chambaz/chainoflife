@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,27 @@ export function WorldActivity({
 }: {
   readonly reader: LifeReadAdapter;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [entries, setEntries] = useState<GenerationEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const listRef = useRef<HTMLOListElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !open) return;
+    const update = () =>
+      setMoreBelow(list.scrollHeight - list.scrollTop - list.clientHeight > 1);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(list);
+    list.addEventListener("scroll", update, { passive: true });
+    return () => {
+      observer.disconnect();
+      list.removeEventListener("scroll", update);
+    };
+  }, [entries, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -62,13 +79,14 @@ export function WorldActivity({
 
   return (
     <details
-      className="border-t border-border"
+      open={open}
+      className="flex min-h-0 flex-col border-t border-border open:flex-1 [&::details-content]:min-h-0 [&::details-content]:flex-1 [&[open]::details-content]:flex [&[open]::details-content]:flex-col"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="cursor-pointer p-4 text-xs font-medium tracking-widest text-muted-foreground uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         Activity
       </summary>
-      <div className="px-4 pb-4">
+      <div className="relative flex min-h-0 flex-1 flex-col px-4 pb-4">
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -84,11 +102,22 @@ export function WorldActivity({
             No generation transactions yet.
           </p>
         ) : null}
-        <ol role="list" className="grid max-h-96 gap-3 overflow-y-auto">
+        <ol
+          ref={listRef}
+          role="list"
+          aria-label="Generation transactions"
+          className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto"
+        >
           {entries.map((entry) => (
             <GenerationActivityItem key={entry.transactionHash} entry={entry} />
           ))}
         </ol>
+        {moreBelow ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute right-4 bottom-4 left-4 h-10 bg-gradient-to-t from-panel to-transparent"
+          />
+        ) : null}
       </div>
     </details>
   );

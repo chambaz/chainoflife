@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { hashFromHex, toBase58 } from "@thruputchain/client";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { LifeChainEvent, LifeReadAdapter } from "@/chain/game-of-life";
 import { WorldActivity } from "./world-activity";
 
@@ -29,7 +29,17 @@ function openActivity() {
   fireEvent(details, new Event("toggle"));
 }
 
-afterEach(() => Reflect.deleteProperty(navigator, "clipboard"));
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    disconnect() {}
+  });
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(navigator, "clipboard");
+  vi.unstubAllGlobals();
+});
 
 test("loads generations newest first and copies full hashes without explorer links", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
@@ -64,8 +74,9 @@ test("loads generations newest first and copies full hashes without explorer lin
     .fn()
     .mockResolvedValue([first, second, requested, reset, second]);
   render(<WorldActivity reader={{ events } as unknown as LifeReadAdapter} />);
-  expect(events).not.toHaveBeenCalled();
-  openActivity();
+  expect(screen.getByText("Activity").closest("details")).toHaveAttribute(
+    "open",
+  );
   await screen.findByRole("button", { name: /generation 0, epoch 3/ });
   const buttons = screen.getAllByRole("button");
   expect(buttons).toHaveLength(3);
@@ -95,7 +106,6 @@ test("shows an empty state and recovers after reopening a failed lookup", async 
     .mockRejectedValueOnce(new Error("RPC unavailable"))
     .mockResolvedValue([]);
   render(<WorldActivity reader={{ events } as unknown as LifeReadAdapter} />);
-  openActivity();
   expect(await screen.findByRole("alert")).toHaveTextContent("RPC unavailable");
   const details = screen.getByText("Activity").closest("details")!;
   details.open = false;

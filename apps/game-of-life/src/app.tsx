@@ -7,21 +7,14 @@ import {
   type ReactNode,
 } from "react";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
+import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { BoardSizeControl } from "@/components/board-size-control";
 import { WorldActivity } from "@/components/world-activity";
 import {
   markBoardReady,
   subscribeMeasurements,
 } from "@/transactions/measurements";
-import {
-  Activity,
-  CircleAlert,
-  CircleCheck,
-  Database,
-  Dna,
-  Info,
-  Radio,
-} from "lucide-react";
+import { Activity, CircleAlert, CircleCheck, Dna, Info } from "lucide-react";
 import type { AppConfig } from "@/config";
 import { createAppClient } from "@/chain/client";
 import {
@@ -49,7 +42,6 @@ import {
 import { createVisiblePoller, type Poller } from "@/polling";
 import {
   INITIAL_SYNCHRONIZATION_STATE,
-  isStatusStale,
   synchronizationReducer,
   type RendererAvailability,
   type SynchronizationAction,
@@ -355,12 +347,7 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
             state={state}
             rendererAvailability={rendererAvailability}
           />
-          <MobileSheets
-            reader={chain}
-            state={state}
-            config={config}
-            rendererAvailability={rendererAvailability}
-          />
+          <MobileSheets reader={chain} state={state} config={config} />
           {config.transactionProfiles ? (
             <VisitorControls
               resetting={resetting}
@@ -374,14 +361,8 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
             />
           ) : null}
         </div>
-        <aside className="hidden w-80 shrink-0 overflow-y-auto border-l border-border bg-panel/95 lg:block">
-          <ActivityContent
-            state={state}
-            rendererAvailability={rendererAvailability}
-          />
-          <div className="border-t border-border">
-            <DetailsContent state={state} config={config} />
-          </div>
+        <aside className="hidden min-h-0 w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-panel/95 lg:flex">
+          <DetailsContent state={state} config={config} />
           <WorldActivity reader={chain} />
         </aside>
       </div>
@@ -444,7 +425,11 @@ function TopBar({
         />
         <Metric
           label="Digest"
-          value={identity ? abbreviate(identity.stateDigest) : "—"}
+          value={
+            identity
+              ? abbreviate(toBase58(hashFromHex(identity.stateDigest)))
+              : "—"
+          }
           mono
         />
       </div>
@@ -488,12 +473,10 @@ function MobileSheets({
   state,
   config,
   reader,
-  rendererAvailability,
 }: {
   readonly state: SynchronizationState;
   readonly config: Readonly<AppConfig>;
   readonly reader: LifeReadAdapter;
-  readonly rendererAvailability: RendererAvailability;
 }) {
   return (
     <div className="absolute top-[max(.75rem,var(--safe-top))] right-[max(.75rem,var(--safe-right))] flex gap-2 lg:hidden">
@@ -512,14 +495,10 @@ function MobileSheets({
           <SheetHeader>
             <SheetTitle>Generation activity</SheetTitle>
             <SheetDescription>
-              Independent chain, indexer preparation, and visualization state.
+              Generation and reset transactions.
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 overflow-y-auto">
-            <ActivityContent
-              state={state}
-              rendererAvailability={rendererAvailability}
-            />
             <WorldActivity reader={reader} />
           </div>
         </SheetContent>
@@ -539,7 +518,7 @@ function MobileSheets({
           <SheetHeader>
             <SheetTitle>World details</SheetTitle>
             <SheetDescription>
-              Snapshot identity, scope, and verification boundary.
+              Board statistics and on-chain identity.
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 overflow-y-auto">
@@ -548,80 +527,6 @@ function MobileSheets({
         </SheetContent>
       </Sheet>
     </div>
-  );
-}
-
-export function ActivityContent({
-  state,
-  rendererAvailability = "available",
-}: {
-  readonly state: SynchronizationState;
-  readonly rendererAvailability?: RendererAvailability;
-}) {
-  const title = useId();
-  const status = state.status;
-  const stale = state.statusEndpoint === "fresh" && isStatusStale(status);
-  const freshStatus =
-    state.statusEndpoint === "fresh" && !stale ? status : null;
-  return (
-    <section className="flex flex-col gap-4 p-4" aria-labelledby={title}>
-      <div>
-        <p
-          id={title}
-          className="text-xs font-medium tracking-widest text-muted-foreground uppercase"
-        >
-          Activity
-        </p>
-        <h2 className="mt-1 text-lg font-medium">Generation pipeline</h2>
-      </div>
-      <PipelineRow
-        icon={Radio}
-        label="On-chain"
-        value={
-          state.chain ? `Generation ${state.chain.generation}` : "Unavailable"
-        }
-        detail={state.chainError ?? "Authoritative contract metadata"}
-      />
-      <PipelineRow
-        icon={Database}
-        label="Preparing visualization"
-        value={
-          freshStatus?.preparing
-            ? `Generation ${freshStatus.preparing.generation}`
-            : state.candidate
-              ? `Generation ${state.candidate.manifest.generation}`
-              : "No pending generation"
-        }
-        detail={preparationDetail(state)}
-      />
-      <PipelineRow
-        icon={CircleCheck}
-        label="Visualization"
-        value={
-          rendererAvailability === "unavailable" ||
-          rendererAvailability === "context-lost"
-            ? "Unavailable"
-            : state.visualized
-              ? `Generation ${state.visualized.manifest.generation}`
-              : "No active visualization"
-        }
-        detail={
-          rendererAvailability === "context-lost"
-            ? "WebGL context lost; verified metadata retained"
-            : rendererAvailability === "unavailable"
-              ? "Renderer unavailable; verified metadata retained"
-              : !state.visualized && state.candidate
-                ? "Verified snapshot is loading renderer coverage"
-                : state.chainVerification === "integrity"
-                  ? "Retained during chain identity conflict"
-                  : isBehind(state)
-                    ? "Displaying older generation"
-                    : state.visualized
-                      ? "Actively displayed"
-                      : "Nothing has renderer ownership"
-        }
-      />
-    </section>
   );
 }
 
@@ -638,7 +543,7 @@ export function DetailsContent({
   const provenance = snapshot?.provenance;
   return (
     <section aria-labelledby={title}>
-      <details>
+      <details open>
         <summary
           id={title}
           className="cursor-pointer p-4 text-xs font-medium tracking-widest text-muted-foreground uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -654,17 +559,19 @@ export function DetailsContent({
               manifest ? `${manifest.width} × ${manifest.height}` : undefined
             }
           />
-          <Detail label="Seed" value={manifest?.seed} />
-          <Detail label="Digest" value={manifest?.stateDigest} mono />
+          <Detail label="State digest" value={manifest?.stateDigest} identifier />
           <Detail
             label="Contract"
             value={manifest?.contractAddress ?? config.contractAddress}
-            mono
+            identifier
           />
           <Detail label="Source block" value={provenance?.sourceBlockHeight} />
-          <Detail label="Block hash" value={provenance?.sourceBlockHash} mono />
-          <Detail label="Provenance" value={provenance?.evidenceKind} />
         </dl>
+        {state.chainError || state.artifactError ? (
+          <p role="status" className="px-4 pb-4 text-xs text-warning">
+            {state.chainError ?? state.artifactError}
+          </p>
+        ) : null}
       </details>
     </section>
   );
@@ -686,29 +593,6 @@ function EmptyWorld({ state }: { readonly state: SynchronizationState }) {
         ) : null}
       </div>
     </section>
-  );
-}
-
-function PipelineRow({
-  icon: Icon,
-  label,
-  value,
-  detail,
-}: {
-  readonly icon: typeof Activity;
-  readonly label: string;
-  readonly value: string;
-  readonly detail: string;
-}) {
-  return (
-    <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-2">
-      <Icon className="mt-0.5 text-primary" />
-      <div className="min-w-0">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-medium">{value}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
-      </div>
-    </div>
   );
 }
 
@@ -742,35 +626,24 @@ function Metric({
 function Detail({
   label,
   value,
-  mono = false,
+  identifier = false,
 }: {
   readonly label: string;
   readonly value: string | undefined;
-  readonly mono?: boolean;
+  readonly identifier?: boolean;
 }) {
+  const fullValue = identifier && value ? toBase58(hashFromHex(value)) : value;
   return (
     <>
       <dt className="text-muted-foreground">{label}</dt>
       <dd
-        className={`${mono ? "break-all font-mono text-xs" : ""} min-w-0 text-right`}
+        title={fullValue}
+        className="min-w-0 text-right font-mono text-xs"
       >
-        {value ?? "—"}
+        {identifier && fullValue ? abbreviate(fullValue) : (fullValue ?? "—")}
       </dd>
     </>
   );
-}
-
-function preparationDetail(state: SynchronizationState): string {
-  if (state.artifactError) return state.artifactError;
-  if (state.artifactState === "awaiting-chain")
-    return "Artifacts loaded; awaiting chain verification";
-  if (state.artifactState === "unavailable")
-    return "Visualization updates unavailable";
-  if (state.artifactState === "malformed") return "Indexer artifacts malformed";
-  if (state.transition === "crossfading") return "Visible coverage ready";
-  if (state.transition === "staging")
-    return "Loading required visible coverage";
-  return "Static artifacts are polled independently";
 }
 
 function emptyVisualizationMessage(state: SynchronizationState): string {

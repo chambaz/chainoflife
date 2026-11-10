@@ -166,7 +166,12 @@ test("does not claim initial ownership until visible GPU coverage renders", asyn
   await page.goto("/");
   await expect(page.getByText("No ready visualization").first()).toBeVisible();
   await expect(page.getByText(/Ready · generation/)).toHaveCount(0);
-  await expect(page.getByText(/Generation 0/).first()).toBeVisible();
+  await expect(
+    page
+      .locator("aside")
+      .getByText("Generation", { exact: true })
+      .locator("+ dd"),
+  ).toHaveText("0");
   release();
   await expect(page.getByText("Ready · generation 0")).toBeVisible();
   await expect(page.getByText("Visualized generation 0.")).toBeAttached();
@@ -628,12 +633,8 @@ test("keeps metadata usable when WebGL2 is unavailable", async ({ page }) => {
     page.getByText(/metadata and provenance remain available/i),
   ).toBeVisible();
   await expect(page.getByText(/Ready · generation/)).toHaveCount(0);
-  await expect(page.getByText("Visualization", { exact: true })).toBeVisible();
-  await expect(
-    page
-      .getByRole("region", { name: "Activity", exact: true })
-      .getByText("Unavailable", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Dimensions", { exact: true })).toBeVisible();
+  await expect(page.getByText("Generation pipeline")).toHaveCount(0);
   await expect(page.locator("main > p[aria-live]")).toHaveText(
     "Visualization unavailable.",
   );
@@ -696,11 +697,7 @@ test("preserves controls and world context at 320 CSS pixels", async ({
   await expect(
     page.getByRole("heading", { name: "Generation activity" }),
   ).toBeVisible();
-  await expect(
-    page
-      .getByRole("dialog", { name: "Generation activity" })
-      .getByText("On-chain", { exact: true }),
-  ).toBeVisible();
+  await expect(activityDialog.getByText("Generation pipeline")).toHaveCount(0);
   await expect(
     activityDialog.locator("summary").filter({ hasText: /^Activity$/ }),
   ).toBeFocused();
@@ -723,10 +720,6 @@ test("preserves controls and world context at 320 CSS pixels", async ({
   await expect(activity).toBeFocused();
   await page.getByRole("button", { name: "Open world details" }).click();
   const details = page.getByRole("dialog", { name: "World details" });
-  await expect(
-    details.getByText("Dimensions", { exact: true }),
-  ).not.toBeVisible();
-  await details.locator("summary").click();
   await expect(details.getByText("Dimensions", { exact: true })).toBeVisible();
 });
 
@@ -784,7 +777,12 @@ test("keeps the old digest visible until newer viewport coverage is ready", asyn
   });
   await page.waitForTimeout(200);
   expect(await worldPixelsHash(canvas)).toBe(oldPixels);
-  await expect(page.locator("aside").getByText("Generation 0")).toBeVisible();
+  await expect(
+    page
+      .locator("aside")
+      .getByText("Generation", { exact: true })
+      .locator("+ dd"),
+  ).toHaveText("0");
   await expect(page.getByText("Displaying older generation 0")).toHaveCount(0);
   const candidateRequests = page.waitForResponse(
     (response) =>
@@ -818,8 +816,11 @@ test("invalidates metadata-observation candidate when chain advances while stagi
     document.dispatchEvent(new Event("visibilitychange")),
   );
   await expect(
-    page.locator("aside").getByText("Generation 2", { exact: true }),
-  ).toBeVisible({ timeout: 20_000 });
+    page
+      .locator("header")
+      .getByText("On-chain", { exact: true })
+      .locator("+ dd"),
+  ).toHaveText("2", { timeout: 20_000 });
   await expect(
     page
       .getByText(/metadata observation does not describe current chain state/i)
@@ -829,7 +830,12 @@ test("invalidates metadata-observation candidate when chain advances while stagi
   await page.request.get("/__life-fixture?releaseCandidate=1");
   await page.waitForTimeout(500);
   await expect(page.getByText(/Ready · generation 1/)).toHaveCount(0);
-  await expect(page.locator("aside").getByText("Generation 0")).toBeVisible();
+  await expect(
+    page
+      .locator("aside")
+      .getByText("Generation", { exact: true })
+      .locator("+ dd"),
+  ).toHaveText("0");
 });
 
 test("publishes a candidate tile level selected across a hysteresis boundary", async ({
@@ -903,10 +909,10 @@ test("RPC loss retains the last verified chain and visualization", async ({
   await expect(page.getByText("Ready · generation 0")).toBeVisible();
   await expect(
     page
-      .getByRole("region", { name: "Activity", exact: true })
-      .getByText("Generation 0", { exact: true })
-      .first(),
-  ).toBeVisible();
+      .getByRole("region", { name: "World details", exact: true })
+      .getByText("Generation", { exact: true })
+      .locator("+ dd"),
+  ).toHaveText("0");
 });
 
 test("a malformed status remains distinct from endpoint unavailability", async ({

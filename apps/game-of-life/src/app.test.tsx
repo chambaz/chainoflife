@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
-import { ActivityContent, DetailsContent, GenerationReadout } from "./app";
+import { DetailsContent, GenerationReadout } from "./app";
+import { hashFromHex, toBase58 } from "@thruputchain/client";
 import type { ImmutableSnapshot } from "./indexer/client";
 import {
   INITIAL_SYNCHRONIZATION_STATE,
@@ -53,14 +54,6 @@ const state = {
 afterEach(cleanup);
 
 describe("World instrument surfaces", () => {
-  test("keeps chain, preparing, and visualized generations distinct", () => {
-    render(<ActivityContent state={state} />);
-    expect(screen.getByText("Generation 5")).toBeInTheDocument();
-    expect(screen.getByText("Generation 4")).toBeInTheDocument();
-    expect(screen.getByText("Generation 3")).toBeInTheDocument();
-    expect(screen.getByText("Displaying older generation")).toBeInTheDocument();
-  });
-
   test("labels the retained visualization honestly while staging", () => {
     render(<GenerationReadout state={state} />);
     expect(screen.getByText("Preparing visualization 4")).toBeInTheDocument();
@@ -83,7 +76,7 @@ describe("World instrument surfaces", () => {
     expect(screen.queryByText(/Ready/)).not.toBeInTheDocument();
   });
 
-  test("starts world details collapsed without explanatory content", () => {
+  test("opens world details with shortened base58 identities and useful snapshot data", () => {
     render(
       <DetailsContent
         state={state}
@@ -95,43 +88,31 @@ describe("World instrument surfaces", () => {
       />,
     );
     expect(screen.getByText("World details")).toBeVisible();
-    expect(screen.getByText("Dimensions")).not.toBeVisible();
+    expect(screen.getByText("Dimensions")).toBeVisible();
+    expect(screen.queryByText("Reset epoch")).not.toBeInTheDocument();
+    expect(screen.getByText("Source block")).toBeVisible();
+    for (const hex of [digest, snapshot.manifest.contractAddress]) {
+      const full = toBase58(hashFromHex(hex));
+      expect(screen.getByTitle(full)).toHaveTextContent(
+        `${full.slice(0, 10)}…${full.slice(-6)}`,
+      );
+      expect(screen.queryByText(hex)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText("Block hash")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provenance")).not.toBeInTheDocument();
     expect(screen.queryByText("Immutable snapshot")).not.toBeInTheDocument();
     expect(
       screen.queryByText(/One Thruput contract invocation/),
     ).not.toBeInTheDocument();
   });
 
-  test("stale health does not remove verified static snapshot state", () => {
-    render(<ActivityContent state={state} />);
-    expect(screen.queryByText(/Indexer (status|idle)/)).not.toBeInTheDocument();
-    expect(screen.getByText("Generation 3")).toBeInTheDocument();
-  });
-
-  test("distinguishes verified metadata from active initial ownership", () => {
-    render(
-      <ActivityContent
-        state={{ ...state, visualized: null }}
-        rendererAvailability="available"
-      />,
-    );
-    expect(screen.getByText("No active visualization")).toBeInTheDocument();
-    expect(
-      screen.getByText("Verified snapshot is loading renderer coverage"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Actively displayed")).not.toBeInTheDocument();
-  });
-
   test("does not label retained metadata as visualized without WebGL", () => {
     render(
-      <ActivityContent state={state} rendererAvailability="unavailable" />,
+      <GenerationReadout state={state} rendererAvailability="unavailable" />,
     );
     expect(
-      screen.getByText("Unavailable", { exact: true }),
+      screen.getByText("Visualization unavailable", { exact: true }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Renderer unavailable; verified metadata retained"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Actively displayed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ready/)).not.toBeInTheDocument();
   });
 });
