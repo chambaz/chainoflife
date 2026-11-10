@@ -148,14 +148,13 @@ function GenerationActivityItem({
     }
   };
   return (
-    <li className="grid text-sm tabular-nums">
-      <p>
+    <li className="grid text-sm">
+      <p className="text-muted-foreground">
         Generation {generation}
-        {entry.kind === "WorldInitialized" ? " · Reset" : ""}
       </p>
       <div className="flex items-center gap-2">
-        <p className="min-w-0 font-mono text-muted-foreground" title={hash}>
-          Epoch {entry.epoch} · {hash.slice(0, 6)}…{hash.slice(-6)}
+        <p className="min-w-0 font-mono text-xs" title={hash}>
+          {hash.slice(0, 10)}…{hash.slice(-6)}
         </p>
         <Button
           type="button"
