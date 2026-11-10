@@ -191,8 +191,17 @@ export async function recoverResize(params: Parameters): Promise<ResizeRecord> {
   const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     const record = loadResize(scope);
-    if (!record?.hash)
-      throw new Error("No signed resize is available to observe.");
+    if (!record) throw new Error("No reset is available to recover.");
+    if (record.status === "committed" || record.status === "failed")
+      return record;
+    // The SDK awaits onSigned, including saving this hash, before broadcast.
+    // Holding the write lock ensures another tab is no longer submitting it.
+    if (!record.hash)
+      return save(scope, {
+        ...record,
+        status: "failed",
+        message: "Reset interrupted. Try again.",
+      });
     const applied = save(
       scope,
       applyResult(

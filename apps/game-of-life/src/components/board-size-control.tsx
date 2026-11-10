@@ -122,7 +122,7 @@ export function BoardSizeControl({
     }
   };
   useEffect(() => {
-    if (!pending || !record?.hash || busy) return;
+    if (!pending || busy) return;
     const timer = window.setTimeout(() => void run(true), 3_000);
     return () => window.clearTimeout(timer);
   }, [pending, record, busy]);
@@ -186,7 +186,9 @@ export function BoardSizeControl({
           "Checking reset…"
         ) : error || record?.status === "failed" ? (
           <>
-            Reset failed.{" "}
+            {record?.message === "Reset interrupted. Try again."
+              ? "Reset interrupted."
+              : "Reset failed."}{" "}
             <button
               type="button"
               className="text-primary underline"

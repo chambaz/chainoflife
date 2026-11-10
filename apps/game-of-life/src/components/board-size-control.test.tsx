@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import type { AppConfig, LifeTransactionProfiles } from "@/config";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
@@ -12,9 +18,10 @@ const resize = vi.hoisted(() =>
   })),
 );
 const loadResize = vi.hoisted(() => vi.fn<() => unknown>(() => null));
+const recoverResize = vi.hoisted(() => vi.fn());
 vi.mock("@/transactions/resize", () => ({
   resizeWorld: resize,
-  recoverResize: vi.fn(),
+  recoverResize,
   loadResize,
   resizeStorageKey: () => "resize-test",
   subscribeResize: () => () => {},
@@ -107,4 +114,49 @@ test("shows concise failure feedback and waits for the reset to be visible", asy
   rerender(<BoardSizeControl {...props} size={8000} visualizedEpoch="2" />);
   await waitFor(() => expect(slider).toBeEnabled());
   expect(onResettingChange).toHaveBeenLastCalledWith(false);
+});
+
+test("automatically releases a hashless reset and enables an explicit retry", async () => {
+  vi.useFakeTimers();
+  try {
+    resize.mockClear();
+    recoverResize.mockResolvedValueOnce({
+      status: "failed",
+      hash: null,
+      size: 8000,
+      message: "Reset interrupted. Try again.",
+    });
+    loadResize.mockReturnValueOnce({
+      status: "signing",
+      hash: null,
+      size: 8000,
+    });
+    const onResettingChange = vi.fn();
+    render(
+      <BoardSizeControl
+        size={2200}
+        config={{ networkId: "aa", contractAddress: "bb" } as AppConfig}
+        profiles={{} as LifeTransactionProfiles}
+        wallet={{ addressHex: "cc" } as VisitorWallet}
+        client={Promise.resolve({} as never)}
+        onPreview={vi.fn()}
+        onCommitted={vi.fn()}
+        onResettingChange={onResettingChange}
+      />,
+    );
+    expect(screen.getByRole("slider")).toBeDisabled();
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    expect(screen.getByRole("slider")).toBeEnabled();
+    expect(screen.getByText("Reset interrupted.")).toHaveTextContent(
+      "Reset interrupted. Try again",
+    );
+    expect(onResettingChange).toHaveBeenLastCalledWith(false);
+    expect(resize).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    });
+    expect(resize).toHaveBeenCalledWith(expect.anything(), 8000);
+  } finally {
+    vi.useRealTimers();
+  }
 });
