@@ -55,9 +55,14 @@ export function recordMeasurement(
   scope: Scope,
   measurement: WorldMeasurement,
 ): void {
-  const entries = loadMeasurements(scope);
-  if (entries.some(({ hash }) => hash === measurement.hash)) return;
-  save(scope, [...entries, measurement]);
+  // Timing is optional; storage failures must not change a verified receipt.
+  try {
+    const entries = loadMeasurements(scope);
+    if (entries.some(({ hash }) => hash === measurement.hash)) return;
+    save(scope, [...entries, measurement]);
+  } catch (cause) {
+    console.error("Cannot record transaction timing", cause);
+  }
 }
 
 export function markBoardReady(scope: Scope, digest: string): void {

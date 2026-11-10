@@ -71,29 +71,29 @@ export function createWriteBoundary(
   return {
     async execute(invocation, policy, observer) {
       let hash: string | null = null;
-      const client = await connection;
-      const wallet = createWalletClient({
-        client,
-        account,
-        networkHash: networkHash(
-          sha256Hash(fromHex0x(`0x${config.networkId}`)),
-        ),
-        onSigned(evidence) {
-          hash = toHex0x(evidence.transactionHash);
-          // Preserve the exact approved bytes before the SDK broadcasts once.
-          localStorage.setItem(
-            `chain-of-life:submission:${config.networkId}:${hash}`,
-            JSON.stringify({
-              hash,
-              networkId: config.networkId,
-              account: visitor.address,
-              signedTransaction: toHex0x(evidence.signedTransaction),
-            }),
-          );
-          observer.onSigned(hash);
-        },
-      });
       try {
+        const client = await connection;
+        const wallet = createWalletClient({
+          client,
+          account,
+          networkHash: networkHash(
+            sha256Hash(fromHex0x(`0x${config.networkId}`)),
+          ),
+          onSigned(evidence) {
+            hash = toHex0x(evidence.transactionHash);
+            // Preserve the exact approved bytes before the SDK broadcasts once.
+            localStorage.setItem(
+              `chain-of-life:submission:${config.networkId}:${hash}`,
+              JSON.stringify({
+                hash,
+                networkId: config.networkId,
+                account: visitor.address,
+                signedTransaction: toHex0x(evidence.signedTransaction),
+              }),
+            );
+            observer.onSigned(hash);
+          },
+        });
         const result = await wallet.executeAndWait(
           {
             invocation,
