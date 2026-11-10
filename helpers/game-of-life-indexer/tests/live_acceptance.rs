@@ -61,8 +61,10 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
     let manifest = LifeManifest::from_json(&manifest_bytes).expect("validate manifest");
     let provenance = LifeProvenance::from_json(&provenance_bytes).expect("validate provenance");
     assert_eq!(manifest.generation, latest.generation);
+    assert_eq!(manifest.epoch, latest.epoch);
     assert_eq!(manifest.state_digest, latest.state_digest);
     assert_eq!(provenance.generation, latest.generation);
+    assert_eq!(provenance.epoch, latest.epoch);
     assert_eq!(provenance.state_digest, latest.state_digest);
     assert_eq!(latest.source_block_height, provenance.source_block_height);
     assert_eq!(latest.source_block_hash, provenance.source_block_hash);
@@ -89,7 +91,11 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
     );
     if expected_generation > 0 {
         let (_, predecessor_digest, _) = state
-            .predecessor_publication(&network, &canonical_contract, expected_generation)
+            .predecessor_publication(
+                &network,
+                &canonical_contract,
+                latest.source_block_height.parse().expect("source height"),
+            )
             .expect("read predecessor publication")
             .expect("previous generation remains recorded");
         assert!(

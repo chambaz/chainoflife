@@ -32,8 +32,8 @@ impl StateStore {
                 digest TEXT NOT NULL, provenance BLOB NOT NULL,
                 PRIMARY KEY (network, contract, digest)
              );
-             CREATE TABLE IF NOT EXISTS publications (
-                network TEXT NOT NULL, contract TEXT NOT NULL, generation TEXT NOT NULL,
+             CREATE TABLE IF NOT EXISTS publications_v2 (
+                network TEXT NOT NULL, contract TEXT NOT NULL, source_height TEXT NOT NULL,
                 digest TEXT NOT NULL, promoted_at INTEGER NOT NULL,
                 PRIMARY KEY (network, contract, digest)
              );
@@ -207,14 +207,14 @@ impl StateStore {
         &self,
         network: &str,
         contract: &str,
-        generation: u64,
+        source_height: u64,
         digest: &str,
         promoted_at: i64,
     ) -> Result<(), StateError> {
         self.connection.execute(
-            "INSERT INTO publications(network,contract,generation,digest,promoted_at) VALUES(?1,?2,?3,?4,?5)
+            "INSERT INTO publications_v2(network,contract,source_height,digest,promoted_at) VALUES(?1,?2,?3,?4,?5)
              ON CONFLICT DO UPDATE SET promoted_at=MAX(promoted_at,excluded.promoted_at)",
-            params![network, contract, generation.to_string(), digest, promoted_at],
+            params![network, contract, source_height.to_string(), digest, promoted_at],
         )?;
         Ok(())
     }
@@ -228,15 +228,15 @@ impl StateStore {
         let transaction = self.connection.unchecked_transaction()?;
         {
             let mut statement = transaction.prepare(
-                "INSERT INTO publications(network,contract,generation,digest,promoted_at)
+                "INSERT INTO publications_v2(network,contract,source_height,digest,promoted_at)
                  VALUES(?1,?2,?3,?4,?5)
                  ON CONFLICT DO UPDATE SET promoted_at=MAX(promoted_at,excluded.promoted_at)",
             )?;
-            for (generation, digest, promoted_at) in publications {
+            for (source_height, digest, promoted_at) in publications {
                 statement.execute(params![
                     network,
                     contract,
-                    generation.to_string(),
+                    source_height.to_string(),
                     digest,
                     promoted_at
                 ])?;
@@ -255,20 +255,20 @@ impl StateStore {
         let row: Option<(String, i64)> = self
             .connection
             .query_row(
-                "SELECT generation,promoted_at FROM publications
+                "SELECT source_height,promoted_at FROM publications_v2
                  WHERE network=?1 AND contract=?2 AND digest=?3",
                 params![network, contract, digest],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        row.map(|(generation, promoted_at)| {
-            generation
+        row.map(|(source_height, promoted_at)| {
+            source_height
                 .parse()
-                .map(|generation| (generation, promoted_at))
+                .map(|source_height| (source_height, promoted_at))
                 .map_err(|_| {
                     StateError::Provenance(crate::Error::Schema {
-                        field: "generation",
-                        reason: "stored publication generation is invalid",
+                        field: "sourceBlockHeight",
+                        reason: "stored publication height is invalid",
                     })
                 })
         })
@@ -279,29 +279,29 @@ impl StateStore {
         &self,
         network: &str,
         contract: &str,
-        generation: u64,
+        source_height: u64,
     ) -> Result<Option<(u64, String, i64)>, StateError> {
-        let generation = generation.to_string();
+        let source_height = source_height.to_string();
         let row: Option<(String, String, i64)> = self
             .connection
             .query_row(
-                "SELECT generation,digest,promoted_at FROM publications
+                "SELECT source_height,digest,promoted_at FROM publications_v2
                  WHERE network=?1 AND contract=?2 AND
-                   (length(generation)<length(?3) OR
-                    (length(generation)=length(?3) AND generation<?3))
-                 ORDER BY length(generation) DESC,generation DESC LIMIT 1",
-                params![network, contract, generation],
+                    (length(source_height)<length(?3) OR
+                     (length(source_height)=length(?3) AND source_height<?3))
+                 ORDER BY length(source_height) DESC,source_height DESC LIMIT 1",
+                params![network, contract, source_height],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        row.map(|(generation, digest, promoted_at)| {
-            generation
+        row.map(|(source_height, digest, promoted_at)| {
+            source_height
                 .parse()
-                .map(|generation| (generation, digest, promoted_at))
+                .map(|source_height| (source_height, digest, promoted_at))
                 .map_err(|_| {
                     StateError::Provenance(crate::Error::Schema {
-                        field: "generation",
-                        reason: "stored publication generation is invalid",
+                        field: "sourceBlockHeight",
+                        reason: "stored publication height is invalid",
                     })
                 })
         })
@@ -315,10 +315,10 @@ impl StateStore {
         grace_after: i64,
     ) -> Result<Vec<String>, StateError> {
         let mut statement = self.connection.prepare(
-            "SELECT digest FROM publications WHERE network=?1 AND contract=?2
-             AND (promoted_at>=?3 OR generation IN (
-                SELECT generation FROM publications WHERE network=?1 AND contract=?2
-                ORDER BY length(generation) DESC, generation DESC LIMIT 2
+            "SELECT digest FROM publications_v2 WHERE network=?1 AND contract=?2
+             AND (promoted_at>=?3 OR source_height IN (
+                SELECT source_height FROM publications_v2 WHERE network=?1 AND contract=?2
+                ORDER BY length(source_height) DESC, source_height DESC LIMIT 2
              ))",
         )?;
         let rows =

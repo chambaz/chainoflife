@@ -106,6 +106,9 @@ fn provenance_parser_enforces_event_generation_and_cross_fields() {
 #[test]
 fn manifest_and_provenance_reject_population_above_world_capacity() {
     let manifest = LifeManifest::new(&SnapshotIdentity {
+        epoch: 0,
+        width: 10_000,
+        height: 10_000,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         generation: 0,
@@ -123,14 +126,16 @@ fn manifest_and_provenance_reject_population_above_world_capacity() {
 #[test]
 fn status_enforces_state_specific_fields_progress_and_identifiers() {
     let identity = PublishedIdentity {
+        epoch: "0".into(),
         generation: "7".into(),
         state_digest: DIGEST.into(),
     };
     let valid = LifeStatus {
-        schema_version: 1,
+        schema_version: 2,
         state: IndexerState::Preparing,
         observed: Some(identity.clone()),
         preparing: Some(Progress {
+            epoch: "0".into(),
             generation: "7".into(),
             state_digest: DIGEST.into(),
             completed_units: 20,
@@ -178,7 +183,8 @@ fn schemas_reject_noncanonical_decimal_unknown_fields_and_invalid_dates() {
 
 fn latest(manifest_url: String) -> LatestPointer {
     LatestPointer {
-        schema_version: 1,
+        epoch: "0".into(),
+        schema_version: 2,
         generation: "7".into(),
         state_digest: DIGEST.into(),
         manifest_url,
@@ -190,7 +196,8 @@ fn latest(manifest_url: String) -> LatestPointer {
 
 fn initialized_provenance() -> LifeProvenance {
     LifeProvenance {
-        schema_version: 1,
+        epoch: "0".into(),
+        schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         generation: "0".into(),

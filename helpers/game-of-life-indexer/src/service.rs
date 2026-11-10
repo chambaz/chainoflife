@@ -55,8 +55,6 @@ pub enum FailurePoint {
     AfterPromotion,
 }
 
-const TILE_COUNT: u32 = 2_139;
-
 pub struct IndexerService<S> {
     config: ServiceConfig,
     source: S,
@@ -143,13 +141,14 @@ impl<S: ChainSource> IndexerService<S> {
             let observed = self.source.metadata().await?;
             let digest = hex32(&observed.state_digest);
             if latest.is_some_and(|latest| {
-                latest.generation == observed.generation.to_string()
+                latest.epoch == observed.epoch.to_string()
+                    && latest.generation == observed.generation.to_string()
                     && latest.state_digest == digest
             }) {
                 self.cleanup()?;
                 let mut status = self.status.write().await;
-                status.observed = Some(identity(observed.generation, &digest));
-                status.published = Some(identity(observed.generation, &digest));
+                status.observed = Some(identity(observed.epoch, observed.generation, &digest));
+                status.published = Some(identity(observed.epoch, observed.generation, &digest));
                 status.state = IndexerState::Idle;
                 status.preparing = None;
                 status.error_code = None;
@@ -160,7 +159,7 @@ impl<S: ChainSource> IndexerService<S> {
                 &observed,
                 &digest,
                 0,
-                crate::CHUNK_COUNT as u32,
+                observed.chunk_count() as u32,
                 ProgressUnit::Chunks,
             )
             .await;
@@ -189,8 +188,8 @@ impl<S: ChainSource> IndexerService<S> {
         self.set_preparing(
             &metadata,
             &digest,
-            crate::CHUNK_COUNT as u32,
-            crate::CHUNK_COUNT as u32,
+            metadata.chunk_count() as u32,
+            metadata.chunk_count() as u32,
             ProgressUnit::Chunks,
         )
         .await;
@@ -201,7 +200,15 @@ impl<S: ChainSource> IndexerService<S> {
             .state
             .resolve_evidence(&candidate)?
             .unwrap_or(candidate);
-        self.set_preparing(&metadata, &digest, 0, TILE_COUNT, ProgressUnit::Tiles)
+        let tile_count = (0..=crate::MAX_ZOOM)
+            .map(|z| {
+                metadata
+                    .width
+                    .div_ceil(crate::TILE_SIZE * (1 << (crate::MAX_ZOOM - z)))
+                    .pow(2)
+            })
+            .sum();
+        self.set_preparing(&metadata, &digest, 0, tile_count, ProgressUnit::Tiles)
             .await;
         self.fail_if(FailurePoint::BeforeBuild)?;
         let download = self.pending.take().ok_or_else(|| {
@@ -243,7 +250,8 @@ impl<S: ChainSource> IndexerService<S> {
         )?;
         self.fail_if(FailurePoint::AfterArtifacts)?;
         let pointer = LatestPointer {
-            schema_version: 1,
+            epoch: metadata.epoch.to_string(),
+            schema_version: 2,
             generation: metadata.generation.to_string(),
             state_digest: digest.clone(),
             manifest_url: format!(
@@ -273,7 +281,7 @@ impl<S: ChainSource> IndexerService<S> {
         let mut status = self.status.write().await;
         status.state = IndexerState::Idle;
         status.preparing = None;
-        status.published = Some(identity(metadata.generation, &digest));
+        status.published = Some(identity(metadata.epoch, metadata.generation, &digest));
         status.error_code = None;
         status.retry = None;
         Ok(())
@@ -288,9 +296,10 @@ impl<S: ChainSource> IndexerService<S> {
         unit: ProgressUnit,
     ) {
         let mut status = self.status.write().await;
-        status.observed = Some(identity(metadata.generation, digest));
+        status.observed = Some(identity(metadata.epoch, metadata.generation, digest));
         status.state = IndexerState::Preparing;
         status.preparing = Some(Progress {
+            epoch: metadata.epoch.to_string(),
             generation: metadata.generation.to_string(),
             state_digest: digest.to_owned(),
             completed_units,
@@ -364,6 +373,7 @@ impl<S: ChainSource> IndexerService<S> {
         let event = self.events.iter().rev().find(|event| {
             let event_specific_match = if metadata.generation == 0 {
                 event.initialized
+                    && event.size == Some(metadata.width)
                     && event.seed == Some(metadata.seed)
                     && event.max_queue_len == Some(metadata.max_queue_len)
                     && event.request_id.is_none()
@@ -375,7 +385,8 @@ impl<S: ChainSource> IndexerService<S> {
                     && event.request_id.is_some()
                     && event.requester.is_some()
             };
-            event.generation == metadata.generation
+            event.epoch == metadata.epoch
+                && event.generation == metadata.generation
                 && event.population == metadata.population
                 && event.state_digest == metadata.state_digest
                 && event.block_height <= height
@@ -406,7 +417,8 @@ impl<S: ChainSource> IndexerService<S> {
                 }
             };
         Ok(LifeProvenance {
-            schema_version: 1,
+            epoch: metadata.epoch.to_string(),
+            schema_version: 2,
             network_id: self.config.network_id.clone(),
             contract_address: self.config.contract_address.clone(),
             generation: metadata.generation.to_string(),
@@ -451,26 +463,35 @@ impl<S: ChainSource> IndexerService<S> {
         let ready = self
             .publisher
             .ready_identities(&self.config.network_id, &self.config.contract_address)?;
-        let mut publications = vec![(current_generation, latest.state_digest.clone(), promoted_at)];
+        // Publication retention follows source heights across generation-zero resets.
+        let revision = latest
+            .source_block_height
+            .parse()
+            .map_err(|_| crate::Error::Schema {
+                field: "sourceBlockHeight",
+                reason: "invalid height",
+            })?;
+        let mut publications = vec![(revision, latest.state_digest.clone(), promoted_at)];
         let recorded_predecessor = self.state.predecessor_publication(
             &self.config.network_id,
             &self.config.contract_address,
-            current_generation,
+            revision,
         )?;
         let predecessor = recorded_predecessor
-            .filter(|(generation, digest, _)| {
+            .filter(|(source_height, digest, _)| {
                 ready.iter().any(|identity| {
-                    identity.generation == *generation && identity.state_digest == *digest
+                    identity.source_block_height == *source_height
+                        && identity.state_digest == *digest
                 })
             })
             .or_else(|| {
                 ready
                     .iter()
-                    .filter(|identity| identity.generation < current_generation)
-                    .max_by_key(|identity| identity.generation)
+                    .filter(|identity| identity.source_block_height < revision)
+                    .max_by_key(|identity| identity.source_block_height)
                     .map(|identity| {
                         (
-                            identity.generation,
+                            identity.source_block_height,
                             identity.state_digest.clone(),
                             promoted_at,
                         )
@@ -484,8 +505,14 @@ impl<S: ChainSource> IndexerService<S> {
             &self.config.contract_address,
             &publications,
         )?;
-        self.status.write().await.published =
-            Some(identity(current_generation, &latest.state_digest));
+        self.status.write().await.published = Some(identity(
+            latest.epoch.parse().map_err(|_| crate::Error::Schema {
+                field: "epoch",
+                reason: "invalid epoch",
+            })?,
+            current_generation,
+            &latest.state_digest,
+        ));
         self.latest_publication = Some(latest.clone());
         self.publication_reconciled = true;
         Ok(Some(latest))
@@ -502,7 +529,7 @@ impl<S: ChainSource> IndexerService<S> {
 
 pub fn initial_status() -> LifeStatus {
     LifeStatus {
-        schema_version: 1,
+        schema_version: 2,
         state: IndexerState::Idle,
         observed: None,
         preparing: None,
@@ -512,8 +539,9 @@ pub fn initial_status() -> LifeStatus {
         heartbeat_at: now(),
     }
 }
-fn identity(generation: u64, digest: &str) -> PublishedIdentity {
+fn identity(epoch: u64, generation: u64, digest: &str) -> PublishedIdentity {
     PublishedIdentity {
+        epoch: epoch.to_string(),
         generation: generation.to_string(),
         state_digest: digest.into(),
     }

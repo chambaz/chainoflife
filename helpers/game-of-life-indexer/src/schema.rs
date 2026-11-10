@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{CELL_COUNT, Error, MAX_ZOOM, Result, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH};
+use crate::{CELL_COUNT, Error, MAX_ZOOM, Result, TILE_SIZE, WORLD_WIDTH};
 
 const TILE_TEMPLATE: &str = "tiles/{z}/{x}/{y}.bin";
 
@@ -14,6 +14,7 @@ pub struct Verification {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifeManifest {
+    pub epoch: String,
     pub schema_version: u8,
     pub network_id: String,
     pub contract_address: String,
@@ -34,13 +35,14 @@ pub struct LifeManifest {
 impl LifeManifest {
     pub fn new(identity: &SnapshotIdentity) -> Self {
         Self {
-            schema_version: 1,
+            epoch: identity.epoch.to_string(),
+            schema_version: 2,
             network_id: identity.network_id.clone(),
             contract_address: identity.contract_address.clone(),
             generation: identity.generation.to_string(),
             seed: identity.seed.to_string(),
-            width: WORLD_WIDTH,
-            height: WORLD_HEIGHT,
+            width: identity.width,
+            height: identity.height,
             population: identity.population.to_string(),
             state_digest: hex32(&identity.state_digest),
             tile_size: TILE_SIZE,
@@ -56,15 +58,25 @@ impl LifeManifest {
     }
 
     pub fn validate(&self) -> Result<()> {
-        require(self.schema_version == 1, "schemaVersion", "must be 1")?;
+        parse_u64("epoch", &self.epoch)?;
+        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
         parse_u64("generation", &self.generation)?;
         parse_u64("seed", &self.seed)?;
         parse_population(&self.population)?;
         validate_hex32("stateDigest", &self.state_digest)?;
-        require(self.width == WORLD_WIDTH, "width", "unsupported width")?;
-        require(self.height == WORLD_HEIGHT, "height", "unsupported height")?;
+        require(
+            (100..=WORLD_WIDTH).contains(&self.width) && self.width.is_multiple_of(100),
+            "width",
+            "unsupported width",
+        )?;
+        require(self.height == self.width, "height", "world must be square")?;
+        require(
+            parse_population(&self.population)? <= u64::from(self.width) * u64::from(self.height),
+            "population",
+            "exceeds dimensions",
+        )?;
         require(
             self.tile_size == TILE_SIZE,
             "tileSize",
@@ -109,6 +121,9 @@ impl LifeManifest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotIdentity {
+    pub epoch: u64,
+    pub width: u32,
+    pub height: u32,
     pub network_id: String,
     pub contract_address: String,
     pub generation: u64,
@@ -141,6 +156,7 @@ pub enum EventKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifeProvenance {
+    pub epoch: String,
     pub schema_version: u8,
     pub network_id: String,
     pub contract_address: String,
@@ -161,7 +177,8 @@ pub struct LifeProvenance {
 
 impl LifeProvenance {
     pub fn validate(&self) -> Result<()> {
-        require(self.schema_version == 1, "schemaVersion", "must be 1")?;
+        parse_u64("epoch", &self.epoch)?;
+        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
         parse_u64("seed", &self.seed)?;
@@ -214,6 +231,7 @@ impl LifeProvenance {
 
     pub(crate) fn matches(&self, identity: &SnapshotIdentity) -> bool {
         self.network_id == identity.network_id
+            && self.epoch == identity.epoch.to_string()
             && self.contract_address == identity.contract_address
             && self.generation == identity.generation.to_string()
             && self.seed == identity.seed.to_string()
@@ -238,6 +256,7 @@ fn validate_event_common(value: &LifeProvenance, expected: EventKind) -> Result<
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LatestPointer {
+    pub epoch: String,
     pub schema_version: u8,
     pub generation: String,
     pub state_digest: String,
@@ -269,7 +288,8 @@ impl LatestPointer {
     }
 
     fn validate_fields(&self) -> Result<()> {
-        require(self.schema_version == 1, "schemaVersion", "must be 1")?;
+        parse_u64("epoch", &self.epoch)?;
+        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
         parse_u64("generation", &self.generation)?;
         validate_hex32("stateDigest", &self.state_digest)?;
         parse_u64("sourceBlockHeight", &self.source_block_height)?;
@@ -300,12 +320,14 @@ pub enum IndexerState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublishedIdentity {
+    pub epoch: String,
     pub generation: String,
     pub state_digest: String,
 }
 
 impl PublishedIdentity {
     fn validate(&self) -> Result<()> {
+        parse_u64("epoch", &self.epoch)?;
         parse_u64("generation", &self.generation)?;
         validate_hex32("stateDigest", &self.state_digest)
     }
@@ -322,6 +344,7 @@ pub enum ProgressUnit {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Progress {
+    pub epoch: String,
     pub generation: String,
     pub state_digest: String,
     pub completed_units: u32,
@@ -332,6 +355,7 @@ pub struct Progress {
 impl Progress {
     fn validate(&self) -> Result<()> {
         PublishedIdentity {
+            epoch: self.epoch.clone(),
             generation: self.generation.clone(),
             state_digest: self.state_digest.clone(),
         }
@@ -374,7 +398,7 @@ pub struct LifeStatus {
 
 impl LifeStatus {
     pub fn validate(&self) -> Result<()> {
-        require(self.schema_version == 1, "schemaVersion", "must be 1")?;
+        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
         if let Some(value) = &self.observed {
             value.validate()?;
         }

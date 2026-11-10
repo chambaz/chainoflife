@@ -19,7 +19,7 @@ use thruput_json_rpc_types::responses::{
 };
 use thruput_xdr::types::{ContractAddress, SHA256Hash};
 
-use crate::{CHUNK_BYTES, CHUNK_COUNT, CHUNKS_PER_ROW, ChunkResponse, SnapshotMetadata};
+use crate::{CHUNK_BYTES, ChunkResponse, SnapshotMetadata};
 
 const INTERFACE: &str = "GameOfLife";
 const VERSION: &str = "0.1.0";
@@ -54,6 +54,8 @@ pub struct CoherentDownload {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChainEvent {
+    pub epoch: u64,
+    pub size: Option<u32>,
     pub generation: u64,
     pub seed: Option<u64>,
     pub max_queue_len: Option<u32>,
@@ -214,10 +216,11 @@ impl ChainSource for ThruputSource {
             .validate()
             .map_err(|error| SourceError::Mixed(error.to_string()))?;
         let source = self;
-        let download = stream::iter(0..CHUNK_COUNT as u32)
+        let parts = before.chunks_per_row;
+        let download = stream::iter(0..before.chunk_count() as u32)
             .map(|key| async move {
-                let row = key / CHUNKS_PER_ROW;
-                let part = key % CHUNKS_PER_ROW;
+                let row = key / parts;
+                let part = key % parts;
                 let response = source.view("get_chunk", encode(&(row, part))?).await?;
                 let response_height = *response.state_block_height;
                 let bytes: [u8; CHUNK_BYTES] = decode("get_chunk", &response)?;
@@ -338,6 +341,7 @@ fn has_retention_gap(initial_scan: bool, resume_height: Option<u64>, oldest_bloc
 #[derive(Debug, PartialEq, Eq, xdrs::ReadXDR)]
 #[xdrs(crate = "::xdrs")]
 struct WireMetadata {
+    epoch: u64,
     width: u32,
     height: u32,
     generation: u64,
@@ -352,6 +356,7 @@ struct WireMetadata {
 impl From<WireMetadata> for SnapshotMetadata {
     fn from(value: WireMetadata) -> Self {
         Self {
+            epoch: value.epoch,
             width: value.width,
             height: value.height,
             generation: value.generation,
@@ -393,23 +398,27 @@ fn decode_life_event(event: &IdentifiedEvent) -> Option<Result<ChainEvent, Sourc
                 "WorldInitialized must contain only its signature topic".into(),
             )));
         }
-        let decoded: Result<(u64, u32, u64, SHA256Hash), _> =
+        let decoded: Result<(u64, u32, u64, u32, u64, SHA256Hash), _> =
             xdrs::cxs::decode(&event.event.data.0);
         Some(
             decoded
-                .map(|(seed, max_queue_len, population, digest)| ChainEvent {
-                    generation: 0,
-                    seed: Some(seed),
-                    max_queue_len: Some(max_queue_len),
-                    population,
-                    state_digest: digest.into_inner(),
-                    block_height,
-                    transaction_hash: tx,
-                    event_index: event.sequence_number,
-                    request_id: None,
-                    requester: None,
-                    initialized: true,
-                })
+                .map(
+                    |(epoch, size, seed, max_queue_len, population, digest)| ChainEvent {
+                        epoch,
+                        size: Some(size),
+                        generation: 0,
+                        seed: Some(seed),
+                        max_queue_len: Some(max_queue_len),
+                        population,
+                        state_digest: digest.into_inner(),
+                        block_height,
+                        transaction_hash: tx,
+                        event_index: event.sequence_number,
+                        request_id: None,
+                        requester: None,
+                        initialized: true,
+                    },
+                )
                 .map_err(|error| SourceError::Decode("WorldInitialized event", error.to_string())),
         )
     } else if topic == advanced {
@@ -424,23 +433,27 @@ fn decode_life_event(event: &IdentifiedEvent) -> Option<Result<ChainEvent, Sourc
             )));
         }
         let request = format!("0x{}", hex::encode(request_topic.0));
-        let decoded: Result<(u64, ContractAddress, u64, SHA256Hash), _> =
+        let decoded: Result<(u64, u64, ContractAddress, u64, SHA256Hash), _> =
             xdrs::cxs::decode(&event.event.data.0);
         Some(
             decoded
-                .map(|(generation, requester, population, digest)| ChainEvent {
-                    generation,
-                    seed: None,
-                    max_queue_len: None,
-                    population,
-                    state_digest: digest.into_inner(),
-                    block_height,
-                    transaction_hash: tx,
-                    event_index: event.sequence_number,
-                    request_id: Some(request),
-                    requester: Some(format!("0x{}", hex::encode(requester.as_ref()))),
-                    initialized: false,
-                })
+                .map(
+                    |(epoch, generation, requester, population, digest)| ChainEvent {
+                        epoch,
+                        size: None,
+                        generation,
+                        seed: None,
+                        max_queue_len: None,
+                        population,
+                        state_digest: digest.into_inner(),
+                        block_height,
+                        transaction_hash: tx,
+                        event_index: event.sequence_number,
+                        request_id: Some(request),
+                        requester: Some(format!("0x{}", hex::encode(requester.as_ref()))),
+                        initialized: false,
+                    },
+                )
                 .map_err(|error| {
                     SourceError::Decode("GenerationAdvanced event", error.to_string())
                 }),
@@ -462,8 +475,15 @@ mod tests {
     #[test]
     fn lifecycle_decoder_requires_exact_topics_and_payloads() {
         let initialized = event_signature(VERSION, CONTRACT_CRATE, "WorldInitialized");
-        let initialized_data = xdrs::cxs::encode(&(7u64, 64u32, 9u64, SHA256Hash::from([3; 32])))
-            .expect("initialized payload");
+        let initialized_data = xdrs::cxs::encode(&(
+            0u64,
+            10_000u32,
+            7u64,
+            64u32,
+            9u64,
+            SHA256Hash::from([3; 32]),
+        ))
+        .expect("initialized payload");
         let decoded = decode_life_event(&event(vec![Topic(initialized)], initialized_data))
             .expect("recognized")
             .expect("valid initialized event");
@@ -478,9 +498,15 @@ mod tests {
             decode_life_event(&event(vec![Topic(initialized)], vec![1])),
             Some(Err(SourceError::Decode("WorldInitialized event", _)))
         ));
-        let mut trailing_initialized =
-            xdrs::cxs::encode(&(7u64, 64u32, 9u64, SHA256Hash::from([3; 32])))
-                .expect("initialized payload");
+        let mut trailing_initialized = xdrs::cxs::encode(&(
+            0u64,
+            10_000u32,
+            7u64,
+            64u32,
+            9u64,
+            SHA256Hash::from([3; 32]),
+        ))
+        .expect("initialized payload");
         trailing_initialized.push(0);
         assert!(matches!(
             decode_life_event(&event(vec![Topic(initialized)], trailing_initialized)),

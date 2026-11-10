@@ -145,6 +145,40 @@ fn stale_build_does_not_replace_latest() {
 }
 
 #[test]
+fn reset_generation_zero_supersedes_prior_epoch_and_survives_restart() {
+    let fixture = Fixture::new();
+    fixture.ready(9, DIGEST0);
+    fixture
+        .publisher
+        .promote(NETWORK, CONTRACT, &pointer(9, DIGEST0))
+        .unwrap();
+    fixture.ready(0, DIGEST1);
+    for file in ["manifest.json", "provenance.json"] {
+        let path = fixture.digest_dir(DIGEST1).join(file);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        value["epoch"] = "1".into();
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    let mut reset = pointer(0, DIGEST1);
+    reset.epoch = "1".into();
+    fixture
+        .publisher
+        .promote(NETWORK, CONTRACT, &reset)
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .publisher
+            .promote(NETWORK, CONTRACT, &pointer(9, DIGEST0)),
+        Err(StorageError::Stale { .. })
+    ));
+    let root = fixture.publisher.root().to_owned();
+    drop(fixture.publisher);
+    let publisher = Publisher::open(root).unwrap();
+    assert_eq!(publisher.latest(NETWORK, CONTRACT).unwrap(), Some(reset));
+}
+
+#[test]
 fn generation_mismatch_cannot_poison_latest_as_stale() {
     let fixture = Fixture::new();
     fixture.ready(0, DIGEST0);
@@ -454,6 +488,7 @@ async fn status_reports_chunk_tile_and_file_preparation_boundaries() {
     let digest = format!("0x{}", hex::encode(metadata.state_digest));
     let status = Arc::new(RwLock::new(initial_status()));
     let previous = PublishedIdentity {
+        epoch: "0".into(),
         generation: "9".into(),
         state_digest: DIGEST0.into(),
     };
@@ -977,6 +1012,9 @@ impl Fixture {
         let base = self.digest_dir(digest);
         fs::create_dir_all(base.join("tiles")).expect("tiles");
         let identity = SnapshotIdentity {
+            epoch: 0,
+            width: 10_000,
+            height: 10_000,
             network_id: NETWORK.into(),
             contract_address: CONTRACT.into(),
             generation,
@@ -1011,7 +1049,8 @@ impl Fixture {
 
 fn pointer(generation: u64, digest: &str) -> LatestPointer {
     LatestPointer {
-        schema_version: 1,
+        epoch: "0".into(),
+        schema_version: 2,
         generation: generation.to_string(),
         state_digest: digest.into(),
         manifest_url: format!("/v1/worlds/{NETWORK}/{CONTRACT}/{digest}/manifest.json"),
@@ -1022,7 +1061,8 @@ fn pointer(generation: u64, digest: &str) -> LatestPointer {
 }
 fn provenance(generation: u64, digest: &str) -> LifeProvenance {
     LifeProvenance {
-        schema_version: 1,
+        epoch: "0".into(),
+        schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         generation: generation.to_string(),
@@ -1042,7 +1082,8 @@ fn provenance(generation: u64, digest: &str) -> LifeProvenance {
 }
 fn event_provenance(generation: u64, digest: &str, verified_at: &str) -> LifeProvenance {
     LifeProvenance {
-        schema_version: 1,
+        epoch: "0".into(),
+        schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         generation: generation.to_string(),
@@ -1098,6 +1139,7 @@ impl ChainSource for MixedSource {
 
 fn metadata(generation: u64) -> SnapshotMetadata {
     SnapshotMetadata {
+        epoch: 0,
         width: WORLD_WIDTH,
         height: WORLD_HEIGHT,
         generation,
@@ -1131,6 +1173,8 @@ impl DeadSource {
         let initialized = metadata.generation == 0;
         Self {
             event: ChainEvent {
+                epoch: 0,
+                size: Some(10_000),
                 generation: metadata.generation,
                 seed: initialized.then_some(metadata.seed),
                 max_queue_len: initialized.then_some(metadata.max_queue_len),
@@ -1275,12 +1319,13 @@ impl ChainSource for MovingTipSource {
 fn dead_metadata(generation: u64) -> SnapshotMetadata {
     let head = vec![0; CHUNK_BYTES];
     let tail = vec![0; TAIL_BYTES];
-    let mut digest = WorldDigest::new(WORLD_WIDTH, WORLD_HEIGHT, generation);
+    let mut digest = WorldDigest::for_epoch(WORLD_WIDTH, WORLD_HEIGHT, 0, generation);
     for row in 0..WORLD_HEIGHT {
         digest.update(row * CHUNKS_PER_ROW, &head);
         digest.update(row * CHUNKS_PER_ROW + 1, &tail);
     }
     SnapshotMetadata {
+        epoch: 0,
         width: WORLD_WIDTH,
         height: WORLD_HEIGHT,
         generation,
@@ -1365,6 +1410,7 @@ impl ChainSource for FailThenMetadata {
             })
         } else {
             Ok(SnapshotMetadata {
+                epoch: 0,
                 width: WORLD_WIDTH,
                 height: WORLD_HEIGHT,
                 generation: 0,

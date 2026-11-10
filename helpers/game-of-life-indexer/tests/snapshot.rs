@@ -12,9 +12,68 @@ const CONTRACT: &str = "0x222222222222222222222222222222222222222222222222222222
 const BLOCK_HASH: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
 
 #[test]
+fn small_padded_world_has_exact_tiles_and_distinct_reset_identity() {
+    let mut chunks = Vec::new();
+    let mut digest = WorldDigest::for_epoch(100, 100, 2, 0);
+    for row in 0..100 {
+        let mut bytes = vec![255; 13];
+        bytes[12] = 15;
+        digest.update(row, &bytes);
+        chunks.push(ChunkResponse {
+            row,
+            part: 0,
+            bytes,
+        });
+    }
+    let metadata = SnapshotMetadata {
+        epoch: 2,
+        width: 100,
+        height: 100,
+        generation: 0,
+        seed: 0,
+        population: 10_000,
+        state_digest: digest.finish(),
+        chunk_bytes: 1000,
+        chunks_per_row: 1,
+        max_queue_len: 16,
+    };
+    let snapshot = build_snapshot(
+        &metadata,
+        NETWORK_ID.into(),
+        CONTRACT.into(),
+        chunks.clone(),
+        provenance(&metadata),
+    )
+    .unwrap();
+    assert_eq!(snapshot.manifest.width, 100);
+    assert_eq!(snapshot.manifest.epoch, "2");
+    assert_eq!(snapshot.artifacts.len(), 9); // One tile per zoom, manifest, provenance.
+    let cells = artifact(&snapshot, "tiles/6/0/0.bin");
+    assert_eq!(cells[12], 15);
+    assert!(cells[13..32].iter().all(|byte| *byte == 0));
+    let mut other_epoch = metadata.clone();
+    other_epoch.epoch += 1;
+    assert!(matches!(
+        reconstruct_canonical_world(&other_epoch, chunks.clone()),
+        Err(Error::Digest { .. })
+    ));
+    let mut padded = chunks.clone();
+    padded[0].bytes[12] |= 128;
+    assert!(matches!(
+        reconstruct_canonical_world(&metadata, padded),
+        Err(Error::Schema { .. })
+    ));
+    chunks[0].bytes.resize(1000, 1);
+    assert!(matches!(
+        reconstruct_canonical_world(&metadata, chunks),
+        Err(Error::Schema { .. })
+    ));
+}
+
+#[test]
 fn reconstruction_trims_tail_padding_and_accepts_unordered_chunks() {
     let (metadata, mut chunks) = dead_fixture();
-    chunks[1].bytes.resize(CHUNK_BYTES, 0xff);
+    chunks[1].bytes.resize(CHUNK_BYTES, 0);
     chunks.reverse();
 
     let canonical = reconstruct_canonical_world(&metadata, chunks).expect("valid fixture");
@@ -41,7 +100,7 @@ fn reconstruction_rejects_short_and_long_chunk_payloads() {
             row: 0,
             part: 0,
             actual: 999,
-            expected: "exactly 1000 bytes",
+            expected: "canonical chunk length or 1000 bytes with zero padding",
         }
     );
 
@@ -53,7 +112,7 @@ fn reconstruction_rejects_short_and_long_chunk_payloads() {
             row: 0,
             part: 1,
             actual: 251,
-            expected: "exactly 250 or 1000 bytes",
+            expected: "canonical chunk length or 1000 bytes with zero padding",
         }
     );
 
@@ -65,7 +124,7 @@ fn reconstruction_rejects_short_and_long_chunk_payloads() {
             row: 0,
             part: 0,
             actual: 1001,
-            expected: "exactly 1000 bytes",
+            expected: "canonical chunk length or 1000 bytes with zero padding",
         }
     );
 }
@@ -158,10 +217,19 @@ fn metadata_rejects_every_unsupported_layout_field() {
             "max_queue_len" => candidate.max_queue_len = 0,
             _ => unreachable!(),
         }
-        assert!(matches!(
-            candidate.validate(),
-            Err(Error::UnsupportedMetadata { field: actual, .. }) if actual == field
-        ));
+        if matches!(field, "width" | "height") {
+            assert!(matches!(
+                candidate.validate(),
+                Err(Error::Schema {
+                    field: "dimensions",
+                    ..
+                })
+            ));
+        } else {
+            assert!(
+                matches!(candidate.validate(), Err(Error::UnsupportedMetadata { field: actual, .. }) if actual == field)
+            );
+        }
     }
 }
 
@@ -281,6 +349,9 @@ fn coordinate_validation_covers_non_power_of_two_edges() {
 fn manifest_json_is_compact_strict_and_confined() {
     let (metadata, _) = dead_fixture();
     let identity = game_of_life_indexer::SnapshotIdentity {
+        epoch: 0,
+        width: metadata.width,
+        height: metadata.height,
         network_id: NETWORK_ID.into(),
         contract_address: CONTRACT.into(),
         generation: metadata.generation,
@@ -308,7 +379,7 @@ fn full_seed_zero_fixture_matches_contract_and_is_deterministic() {
     assert_eq!(metadata.population, 49_999_272);
     assert_eq!(
         hex::encode(metadata.state_digest),
-        "18b9622140df6f9f0a03cbce4c18838f41e0a395f206f6290fb1e3182ede1623"
+        "5bc29c418cd47f0d7b3d479a7b70d70ed66521c3881a2610f3d0c5652d7e1927"
     );
     let first = build_snapshot(
         &metadata,
@@ -349,7 +420,7 @@ fn seed_zero_fixture() -> (SnapshotMetadata, Vec<ChunkResponse>) {
 
 fn fixture_with_fill(mut fill: impl FnMut(&mut [u8])) -> (SnapshotMetadata, Vec<ChunkResponse>) {
     let mut chunks = Vec::with_capacity((WORLD_HEIGHT * CHUNKS_PER_ROW) as usize);
-    let mut digest = WorldDigest::new(WORLD_WIDTH, WORLD_HEIGHT, 0);
+    let mut digest = WorldDigest::for_epoch(WORLD_WIDTH, WORLD_HEIGHT, 0, 0);
     let mut population = 0u64;
     for row in 0..WORLD_HEIGHT {
         for part in 0..CHUNKS_PER_ROW {
@@ -366,6 +437,7 @@ fn fixture_with_fill(mut fill: impl FnMut(&mut [u8])) -> (SnapshotMetadata, Vec<
     }
     (
         SnapshotMetadata {
+            epoch: 0,
             width: WORLD_WIDTH,
             height: WORLD_HEIGHT,
             generation: 0,
@@ -389,7 +461,7 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
         chunk.bytes[byte_in_row % CHUNK_BYTES] |= 1 << (x % 8);
     }
 
-    let mut digest = WorldDigest::new(WORLD_WIDTH, WORLD_HEIGHT, 0);
+    let mut digest = WorldDigest::for_epoch(WORLD_WIDTH, WORLD_HEIGHT, 0, 0);
     let mut population = 0;
     for (key, chunk) in chunks.iter().enumerate() {
         population += chunk
@@ -401,6 +473,7 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
     }
     (
         SnapshotMetadata {
+            epoch: 0,
             width: WORLD_WIDTH,
             height: WORLD_HEIGHT,
             generation: 0,
@@ -417,7 +490,8 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
 
 fn provenance(metadata: &SnapshotMetadata) -> LifeProvenance {
     LifeProvenance {
-        schema_version: 1,
+        epoch: metadata.epoch.to_string(),
+        schema_version: 2,
         network_id: NETWORK_ID.into(),
         contract_address: CONTRACT.into(),
         generation: metadata.generation.to_string(),

@@ -2,12 +2,13 @@ use game_of_life_core::digest::WorldDigest;
 
 use crate::schema::{LifeManifest, LifeProvenance, SnapshotIdentity, compact_json};
 use crate::{
-    CANONICAL_BYTES, CELL_TILE_BYTES, CHUNK_BYTES, CHUNK_COUNT, CHUNKS_PER_ROW, DENSITY_TILE_BYTES,
-    Error, MAX_ZOOM, ROW_BYTES, Result, TAIL_BYTES, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH,
+    CELL_TILE_BYTES, CHUNK_BYTES, DENSITY_TILE_BYTES, Error, MAX_ZOOM, Result, TILE_SIZE,
+    WORLD_WIDTH,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotMetadata {
+    pub epoch: u64,
     pub width: u32,
     pub height: u32,
     pub generation: u64,
@@ -20,12 +21,32 @@ pub struct SnapshotMetadata {
 }
 
 impl SnapshotMetadata {
+    pub fn row_bytes(&self) -> usize {
+        (self.width as usize).div_ceil(8)
+    }
+    pub fn chunk_count(&self) -> usize {
+        (self.height * self.chunks_per_row) as usize
+    }
+    pub fn canonical_bytes(&self) -> usize {
+        self.row_bytes() * self.height as usize
+    }
     pub fn validate(&self) -> Result<()> {
+        if !(100..=WORLD_WIDTH).contains(&self.width)
+            || !self.width.is_multiple_of(100)
+            || self.height != self.width
+        {
+            return Err(Error::Schema {
+                field: "dimensions",
+                reason: "expected a square world, 100 to 10000 in steps of 100",
+            });
+        }
         for (field, expected, actual) in [
-            ("width", WORLD_WIDTH, self.width),
-            ("height", WORLD_HEIGHT, self.height),
             ("chunk_bytes", CHUNK_BYTES as u32, self.chunk_bytes),
-            ("chunks_per_row", CHUNKS_PER_ROW, self.chunks_per_row),
+            (
+                "chunks_per_row",
+                self.row_bytes().div_ceil(CHUNK_BYTES) as u32,
+                self.chunks_per_row,
+            ),
         ] {
             if actual != expected {
                 return Err(Error::UnsupportedMetadata {
@@ -62,7 +83,7 @@ pub struct TileCoordinate {
 
 impl TileCoordinate {
     pub fn new(z: u8, x: u32, y: u32) -> Result<Self> {
-        let count = tile_count_axis(z).ok_or(Error::TileCoordinate { z, x, y })?;
+        let count = tile_count_axis(z, WORLD_WIDTH).ok_or(Error::TileCoordinate { z, x, y })?;
         if x >= count || y >= count {
             return Err(Error::TileCoordinate { z, x, y });
         }
@@ -112,39 +133,39 @@ pub fn reconstruct_canonical_world(
     chunks: Vec<ChunkResponse>,
 ) -> Result<Vec<u8>> {
     metadata.validate()?;
-    if chunks.len() != CHUNK_COUNT {
+    let chunk_count = metadata.chunk_count();
+    if chunks.len() != chunk_count {
         return Err(Error::ChunkCount {
-            expected: CHUNK_COUNT,
+            expected: chunk_count,
             actual: chunks.len(),
         });
     }
 
-    let mut ordered: Vec<Option<Vec<u8>>> = vec![None; CHUNK_COUNT];
+    let mut ordered: Vec<Option<Vec<u8>>> = vec![None; chunk_count];
     for chunk in chunks {
-        if chunk.row >= WORLD_HEIGHT || chunk.part >= CHUNKS_PER_ROW {
+        if chunk.row >= metadata.height || chunk.part >= metadata.chunks_per_row {
             return Err(Error::ChunkCoordinate {
                 row: chunk.row,
                 part: chunk.part,
             });
         }
-        let valid_length = match chunk.part {
-            0 => chunk.bytes.len() == CHUNK_BYTES,
-            1 => matches!(chunk.bytes.len(), TAIL_BYTES | CHUNK_BYTES),
-            _ => false,
-        };
+        let length = (metadata.row_bytes() - chunk.part as usize * CHUNK_BYTES).min(CHUNK_BYTES);
+        let valid_length = chunk.bytes.len() == length || chunk.bytes.len() == CHUNK_BYTES;
         if !valid_length {
             return Err(Error::ChunkLength {
                 row: chunk.row,
                 part: chunk.part,
                 actual: chunk.bytes.len(),
-                expected: if chunk.part == 0 {
-                    "exactly 1000 bytes"
-                } else {
-                    "exactly 250 or 1000 bytes"
-                },
+                expected: "canonical chunk length or 1000 bytes with zero padding",
             });
         }
-        let index = (chunk.row * CHUNKS_PER_ROW + chunk.part) as usize;
+        if chunk.bytes[length..].iter().any(|byte| *byte != 0) {
+            return Err(Error::Schema {
+                field: "chunk",
+                reason: "nonzero chunk padding",
+            });
+        }
+        let index = (chunk.row * metadata.chunks_per_row + chunk.part) as usize;
         if ordered[index].replace(chunk.bytes).is_some() {
             return Err(Error::DuplicateChunk {
                 row: chunk.row,
@@ -153,19 +174,31 @@ pub fn reconstruct_canonical_world(
         }
     }
 
-    let mut canonical = Vec::with_capacity(CANONICAL_BYTES);
-    let mut digest = WorldDigest::new(WORLD_WIDTH, WORLD_HEIGHT, metadata.generation);
+    let mut canonical = Vec::with_capacity(metadata.canonical_bytes());
+    let mut digest = WorldDigest::for_epoch(
+        metadata.width,
+        metadata.height,
+        metadata.epoch,
+        metadata.generation,
+    );
     let mut population = 0u64;
     for (key, chunk) in ordered.into_iter().enumerate() {
         let chunk = chunk.ok_or(Error::ChunkCount {
-            expected: CHUNK_COUNT,
+            expected: chunk_count,
             actual: key,
         })?;
-        let canonical_chunk = if key % CHUNKS_PER_ROW as usize == 0 {
-            &chunk
-        } else {
-            &chunk[..TAIL_BYTES]
-        };
+        let part = key % metadata.chunks_per_row as usize;
+        let length = (metadata.row_bytes() - part * CHUNK_BYTES).min(CHUNK_BYTES);
+        let canonical_chunk = &chunk[..length];
+        if part + 1 == metadata.chunks_per_row as usize
+            && !metadata.width.is_multiple_of(8)
+            && canonical_chunk[length - 1] >> (metadata.width % 8) != 0
+        {
+            return Err(Error::Schema {
+                field: "chunk",
+                reason: "nonzero row padding",
+            });
+        }
         population += canonical_chunk
             .iter()
             .map(|byte| u64::from(byte.count_ones()))
@@ -173,9 +206,9 @@ pub fn reconstruct_canonical_world(
         digest.update(key as u32, canonical_chunk);
         canonical.extend_from_slice(canonical_chunk);
     }
-    if canonical.len() != CANONICAL_BYTES {
+    if canonical.len() != metadata.canonical_bytes() {
         return Err(Error::CanonicalLength {
-            expected: CANONICAL_BYTES,
+            expected: metadata.canonical_bytes(),
             actual: canonical.len(),
         });
     }
@@ -204,6 +237,9 @@ pub fn build_snapshot(
 ) -> Result<Snapshot> {
     let canonical = reconstruct_canonical_world(metadata, chunks)?;
     let identity = SnapshotIdentity {
+        epoch: metadata.epoch,
+        width: metadata.width,
+        height: metadata.height,
         network_id,
         contract_address,
         generation: metadata.generation,
@@ -222,7 +258,7 @@ pub fn build_snapshot(
     let manifest = LifeManifest::new(&identity);
     manifest.validate()?;
 
-    let (tiles, density_levels) = build_tiles(&canonical)?;
+    let (tiles, density_levels) = build_tiles(metadata, &canonical)?;
     validate_tiles(metadata, &canonical, &tiles, &density_levels)?;
 
     let mut artifacts = Vec::with_capacity(tiles.len() + 2);
@@ -259,15 +295,18 @@ struct DensityLevel {
     values: Vec<u16>,
 }
 
-fn build_tiles(canonical: &[u8]) -> Result<(Vec<Tile>, Vec<DensityLevel>)> {
-    if canonical.len() != CANONICAL_BYTES {
+fn build_tiles(
+    metadata: &SnapshotMetadata,
+    canonical: &[u8],
+) -> Result<(Vec<Tile>, Vec<DensityLevel>)> {
+    if canonical.len() != metadata.canonical_bytes() {
         return Err(Error::CanonicalLength {
-            expected: CANONICAL_BYTES,
+            expected: metadata.canonical_bytes(),
             actual: canonical.len(),
         });
     }
     let mut density_levels = Vec::with_capacity(MAX_ZOOM as usize);
-    let mut child = build_level_five(canonical);
+    let mut child = build_level_five(metadata, canonical);
     for z in (0..5).rev() {
         let parent = aggregate_level(z, &child);
         density_levels.push(child);
@@ -280,19 +319,23 @@ fn build_tiles(canonical: &[u8]) -> Result<(Vec<Tile>, Vec<DensityLevel>)> {
     for level in &density_levels {
         emit_density_tiles(level, &mut tiles)?;
     }
-    emit_cell_tiles(canonical, &mut tiles)?;
+    emit_cell_tiles(metadata, canonical, &mut tiles)?;
     Ok((tiles, density_levels))
 }
 
-fn build_level_five(canonical: &[u8]) -> DensityLevel {
-    let width = WORLD_WIDTH / 2;
-    let height = WORLD_HEIGHT / 2;
+fn build_level_five(metadata: &SnapshotMetadata, canonical: &[u8]) -> DensityLevel {
+    let width = metadata.width.div_ceil(2);
+    let height = metadata.height.div_ceil(2);
     let mut values = vec![0u16; (width * height) as usize];
-    for y in 0..WORLD_HEIGHT {
-        let source = &canonical[y as usize * ROW_BYTES..(y as usize + 1) * ROW_BYTES];
+    for y in 0..metadata.height {
+        let source =
+            &canonical[y as usize * metadata.row_bytes()..(y as usize + 1) * metadata.row_bytes()];
         let destination = &mut values[(y / 2 * width) as usize..((y / 2 + 1) * width) as usize];
         for (byte_x, byte) in source.iter().copied().enumerate() {
             for pair in 0..4 {
+                if byte_x * 4 + pair >= width as usize {
+                    break;
+                }
                 destination[byte_x * 4 + pair] +=
                     u16::from((byte >> (pair * 2) & 0b11).count_ones() as u8);
             }
@@ -325,11 +368,7 @@ fn aggregate_level(z: u8, child: &DensityLevel) -> DensityLevel {
 }
 
 fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) -> Result<()> {
-    let count = tile_count_axis(level.z).ok_or(Error::TileCoordinate {
-        z: level.z,
-        x: 0,
-        y: 0,
-    })?;
+    let count = level.width.div_ceil(TILE_SIZE);
     for x in 0..count {
         for y in 0..count {
             let coordinate = TileCoordinate::new(level.z, x, y)?;
@@ -355,8 +394,12 @@ fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) -> Result<()
     Ok(())
 }
 
-fn emit_cell_tiles(canonical: &[u8], output: &mut Vec<Tile>) -> Result<()> {
-    let count = tile_count_axis(MAX_ZOOM).ok_or(Error::TileCoordinate {
+fn emit_cell_tiles(
+    metadata: &SnapshotMetadata,
+    canonical: &[u8],
+    output: &mut Vec<Tile>,
+) -> Result<()> {
+    let count = tile_count_axis(MAX_ZOOM, metadata.width).ok_or(Error::TileCoordinate {
         z: MAX_ZOOM,
         x: 0,
         y: 0,
@@ -365,15 +408,16 @@ fn emit_cell_tiles(canonical: &[u8], output: &mut Vec<Tile>) -> Result<()> {
         for y in 0..count {
             let coordinate = TileCoordinate::new(MAX_ZOOM, x, y)?;
             let mut bytes = vec![0; CELL_TILE_BYTES];
-            let valid_bytes =
-                ((WORLD_WIDTH.saturating_sub(x * TILE_SIZE)).min(TILE_SIZE) / 8) as usize;
+            let valid_bytes = (metadata.width.saturating_sub(x * TILE_SIZE))
+                .min(TILE_SIZE)
+                .div_ceil(8) as usize;
             for local_y in 0..TILE_SIZE {
                 let source_y = y * TILE_SIZE + local_y;
-                if source_y >= WORLD_HEIGHT {
+                if source_y >= metadata.height {
                     break;
                 }
                 let source_x = (x * TILE_SIZE / 8) as usize;
-                let source_offset = source_y as usize * ROW_BYTES + source_x;
+                let source_offset = source_y as usize * metadata.row_bytes() + source_x;
                 let destination_offset = local_y as usize * 32;
                 bytes[destination_offset..destination_offset + valid_bytes]
                     .copy_from_slice(&canonical[source_offset..source_offset + valid_bytes]);
@@ -391,7 +435,7 @@ fn validate_tiles(
     levels: &[DensityLevel],
 ) -> Result<()> {
     let expected_coordinates = (0..=MAX_ZOOM).flat_map(|z| {
-        let count = tile_count_axis(z).unwrap_or(0);
+        let count = tile_count_axis(z, metadata.width).unwrap_or(0);
         (0..count).flat_map(move |x| (0..count).map(move |y| TileCoordinate { z, x, y }))
     });
     let mut expected_count = 0;
@@ -426,7 +470,7 @@ fn validate_tiles(
                 actual: tile.bytes.len(),
             });
         }
-        validate_edge_padding(tile)?;
+        validate_edge_padding(metadata, tile)?;
     }
     if tiles.len() != expected_count {
         return Err(Error::TileInventory {
@@ -442,10 +486,12 @@ fn validate_tiles(
         for (index, value) in level.values.iter().enumerate() {
             let x = index as u32 % level.width;
             let y = index as u32 / level.width;
-            let covered_width = WORLD_WIDTH
+            let covered_width = metadata
+                .width
                 .saturating_sub(x * cells_per_texel)
                 .min(cells_per_texel);
-            let covered_height = WORLD_HEIGHT
+            let covered_height = metadata
+                .height
                 .saturating_sub(y * cells_per_texel)
                 .min(cells_per_texel);
             let maximum = covered_width * covered_height;
@@ -471,19 +517,22 @@ fn validate_tiles(
     }
 
     let cell_tiles = tiles.iter().filter(|tile| tile.coordinate.z == MAX_ZOOM);
-    let mut roundtrip = vec![0u8; CANONICAL_BYTES];
+    let mut roundtrip = vec![0u8; metadata.canonical_bytes()];
     let mut roundtrip_population = 0u64;
     for tile in cell_tiles {
         let x = tile.coordinate.x;
         let y = tile.coordinate.y;
-        let valid_bytes = ((WORLD_WIDTH.saturating_sub(x * TILE_SIZE)).min(TILE_SIZE) / 8) as usize;
+        let valid_bytes = (metadata.width.saturating_sub(x * TILE_SIZE))
+            .min(TILE_SIZE)
+            .div_ceil(8) as usize;
         for local_y in 0..TILE_SIZE {
             let world_y = y * TILE_SIZE + local_y;
-            if world_y >= WORLD_HEIGHT {
+            if world_y >= metadata.height {
                 break;
             }
             let tile_offset = local_y as usize * 32;
-            let world_offset = world_y as usize * ROW_BYTES + (x * TILE_SIZE / 8) as usize;
+            let world_offset =
+                world_y as usize * metadata.row_bytes() + (x * TILE_SIZE / 8) as usize;
             let source = &tile.bytes[tile_offset..tile_offset + valid_bytes];
             roundtrip[world_offset..world_offset + valid_bytes].copy_from_slice(source);
             roundtrip_population += source
@@ -501,7 +550,7 @@ fn validate_tiles(
             actual: roundtrip_population,
         });
     }
-    let digest = digest_canonical(metadata.generation, &roundtrip);
+    let digest = digest_canonical(metadata, &roundtrip);
     if digest != metadata.state_digest {
         return Err(Error::Digest {
             expected: hex_digest(&metadata.state_digest),
@@ -511,13 +560,13 @@ fn validate_tiles(
     Ok(())
 }
 
-fn validate_edge_padding(tile: &Tile) -> Result<()> {
+fn validate_edge_padding(metadata: &SnapshotMetadata, tile: &Tile) -> Result<()> {
     let cells_per_texel = 1u32 << (MAX_ZOOM - tile.coordinate.z);
     for local_y in 0..TILE_SIZE {
         for local_x in 0..TILE_SIZE {
             let outside = (tile.coordinate.x * TILE_SIZE + local_x) * cells_per_texel
-                >= WORLD_WIDTH
-                || (tile.coordinate.y * TILE_SIZE + local_y) * cells_per_texel >= WORLD_HEIGHT;
+                >= metadata.width
+                || (tile.coordinate.y * TILE_SIZE + local_y) * cells_per_texel >= metadata.height;
             if !outside {
                 continue;
             }
@@ -557,20 +606,25 @@ fn validate_parent_sums(parent: &DensityLevel, child: &DensityLevel) -> Result<(
     Ok(())
 }
 
-fn digest_canonical(generation: u64, canonical: &[u8]) -> [u8; 32] {
-    let mut digest = WorldDigest::new(WORLD_WIDTH, WORLD_HEIGHT, generation);
-    for row in 0..WORLD_HEIGHT as usize {
-        let bytes = &canonical[row * ROW_BYTES..(row + 1) * ROW_BYTES];
-        digest.update((row * 2) as u32, &bytes[..CHUNK_BYTES]);
-        digest.update((row * 2 + 1) as u32, &bytes[CHUNK_BYTES..]);
+fn digest_canonical(metadata: &SnapshotMetadata, canonical: &[u8]) -> [u8; 32] {
+    let mut digest = WorldDigest::for_epoch(
+        metadata.width,
+        metadata.height,
+        metadata.epoch,
+        metadata.generation,
+    );
+    for (row, bytes) in canonical.chunks(metadata.row_bytes()).enumerate() {
+        for (part, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+            digest.update(row as u32 * metadata.chunks_per_row + part as u32, chunk);
+        }
     }
     digest.finish()
 }
 
-fn tile_count_axis(z: u8) -> Option<u32> {
+fn tile_count_axis(z: u8, size: u32) -> Option<u32> {
     (z <= MAX_ZOOM).then(|| {
         let cells_per_texel = 1u32 << (MAX_ZOOM - z);
-        WORLD_WIDTH.div_ceil(TILE_SIZE * cells_per_texel)
+        size.div_ceil(TILE_SIZE * cells_per_texel)
     })
 }
 

@@ -52,8 +52,20 @@ pub enum ProbeFailure {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadyIdentity {
+    pub epoch: u64,
+    pub source_block_height: u64,
     pub generation: u64,
     pub state_digest: String,
+}
+
+fn parse_epoch(value: &str) -> Result<u64, StorageError> {
+    value.parse().map_err(|_| {
+        crate::Error::Schema {
+            field: "epoch",
+            reason: "invalid epoch",
+        }
+        .into()
+    })
 }
 
 impl Publisher {
@@ -234,13 +246,15 @@ impl Publisher {
                         field: "generation",
                         reason: "invalid candidate generation",
                     })?;
-            if candidate_generation < current_generation {
+            let current_epoch = parse_epoch(&current.epoch)?;
+            let candidate_epoch = parse_epoch(&pointer.epoch)?;
+            if (candidate_epoch, candidate_generation) < (current_epoch, current_generation) {
                 return Err(StorageError::Stale {
                     candidate: candidate_generation,
                     latest: current_generation,
                 });
             }
-            if candidate_generation == current_generation {
+            if (candidate_epoch, candidate_generation) == (current_epoch, current_generation) {
                 if current.state_digest != pointer.state_digest {
                     return Err(StorageError::Collision(latest.display().to_string()));
                 }
@@ -276,7 +290,8 @@ impl Publisher {
             {
                 continue;
             }
-            let (manifest, _) = self.verify_ready(network, contract, &entry.path(), &digest)?;
+            let (manifest, provenance) =
+                self.verify_ready(network, contract, &entry.path(), &digest)?;
             let generation = manifest
                 .generation
                 .parse()
@@ -285,11 +300,18 @@ impl Publisher {
                     reason: "ready manifest generation is invalid",
                 })?;
             identities.push(ReadyIdentity {
+                epoch: parse_epoch(&manifest.epoch)?,
+                source_block_height: provenance.source_block_height.parse().map_err(|_| {
+                    crate::Error::Schema {
+                        field: "sourceBlockHeight",
+                        reason: "invalid height",
+                    }
+                })?,
                 generation,
                 state_digest: digest,
             });
         }
-        identities.sort_by_key(|identity| identity.generation);
+        identities.sort_by_key(|identity| (identity.epoch, identity.generation));
         Ok(identities)
     }
 
@@ -303,7 +325,8 @@ impl Publisher {
         let base = scope.join(&pointer.state_digest);
         let (manifest, provenance) =
             self.verify_ready(network, contract, &base, &pointer.state_digest)?;
-        if pointer.generation != manifest.generation
+        if pointer.epoch != manifest.epoch
+            || pointer.generation != manifest.generation
             || pointer.source_block_height != provenance.source_block_height
             || pointer.source_block_hash != provenance.source_block_hash
         {
@@ -391,6 +414,7 @@ impl Publisher {
             || provenance.contract_address != contract
             || manifest.state_digest != digest
             || provenance.state_digest != digest
+            || manifest.epoch != provenance.epoch
             || manifest.generation != provenance.generation
             || manifest.seed != provenance.seed
             || manifest.population != provenance.population
@@ -398,7 +422,7 @@ impl Publisher {
             return Err(StorageError::Collision(base.display().to_string()));
         }
         for z in 0..=MAX_ZOOM {
-            let count = 10_000u32.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
+            let count = manifest.width.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
             let expected = if z == MAX_ZOOM {
                 CELL_TILE_BYTES as u64
             } else {
@@ -508,6 +532,7 @@ fn validate_artifacts(
         || provenance.contract_address != contract
         || manifest.state_digest != digest
         || provenance.state_digest != digest
+        || manifest.epoch != provenance.epoch
         || manifest.generation != provenance.generation
         || manifest.seed != provenance.seed
         || manifest.population != provenance.population
@@ -516,7 +541,7 @@ fn validate_artifacts(
     }
     let mut expected_count = 2usize;
     for z in 0..=MAX_ZOOM {
-        let count = 10_000u32.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
+        let count = manifest.width.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
         let expected_length = if z == MAX_ZOOM {
             CELL_TILE_BYTES
         } else {

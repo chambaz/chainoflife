@@ -65,10 +65,10 @@ async function main() {
       THRUPUT_CONTRACT_ADDRESS: contractAddress,
       GAME_OF_LIFE_ARTIFACT_ROOT:
         environment.GAME_OF_LIFE_ARTIFACT_ROOT ??
-        join(repoRoot, "tmp/game-of-life-indexer/artifacts"),
+        join(repoRoot, "tmp/game-of-life-indexer-v2/artifacts"),
       GAME_OF_LIFE_INDEXER_DB:
         environment.GAME_OF_LIFE_INDEXER_DB ??
-        join(repoRoot, "tmp/game-of-life-indexer/indexer.sqlite3"),
+        join(repoRoot, "tmp/game-of-life-indexer-v2/indexer.sqlite3"),
       GAME_OF_LIFE_INDEXER_LISTEN: socketAddress(indexerUrl),
       GAME_OF_LIFE_CORS_ORIGINS: appUrl.origin,
     },
