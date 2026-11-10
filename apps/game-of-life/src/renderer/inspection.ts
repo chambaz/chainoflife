@@ -32,8 +32,9 @@ export function inspect(
   y: number,
   z: number,
   generation: string,
+  worldSize = WORLD_SIZE,
 ): Inspection {
-  const mapped = worldToTile(x, y, z);
+  const mapped = worldToTile(x, y, z, worldSize);
   if (tile.kind === "cells") {
     if (z !== MAX_ZOOM) throw new Error("cell tile used below exact zoom");
     const byte =
@@ -49,8 +50,8 @@ export function inspect(
   const scale = cellsPerTexel(z);
   const originX = mapped.tile.x * TILE_SIZE * scale + mapped.texelX * scale;
   const originY = mapped.tile.y * TILE_SIZE * scale + mapped.texelY * scale;
-  const width = Math.max(0, Math.min(scale, WORLD_SIZE - originX));
-  const height = Math.max(0, Math.min(scale, WORLD_SIZE - originY));
+  const width = Math.max(0, Math.min(scale, worldSize - originX));
+  const height = Math.max(0, Math.min(scale, worldSize - originY));
   return {
     kind: "density",
     generation,

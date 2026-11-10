@@ -1,7 +1,17 @@
 # Chain of Life explorer
 
-The React app displays verified world snapshots and submits tick requests.
+The React app displays verified world snapshots, submits tick requests, and
+resets the on-chain board through a 100–10,000-cell-per-side header slider.
 See the [root README](../../README.md) for installation and local startup.
+
+Dragging previews the boundary. Releasing the slider, or releasing an adjustment
+key, submits one reset. A reset keeps the seed, increments the epoch, and starts
+generation zero. Pending requests must finish first. Signed resets are saved
+before broadcast. The app automatically checks uncertain results using the
+original transaction hash. Advance stays disabled until the reset is visible.
+
+The Activity panel lists generation and reset transactions. Each shortened hash
+has a button to copy its full value. Advances are processed automatically.
 
 ## Commands
 
@@ -30,6 +40,12 @@ RUN_GAME_OF_LIFE_LOCAL_INTEGRATION=1 npm run test:integration:local
 GAME_OF_LIFE_APP_URL=http://127.0.0.1:5173 npm run test:browser:local
 ```
 
+The live resize test changes the board through 100, 1,000, and 10,000 cells per
+side and returns to 100. It saves timings in `test-results/live/resize-measurements.json`.
+To preserve an older deployment journal when deploying this format, set
+`GAME_OF_LIFE_DEPLOYMENT_JOURNAL=deployment-v2.json` for `setup:local`.
+Development uses fresh storage under `tmp/game-of-life-indexer-v2`.
+
 Set `GAME_OF_LIFE_BROWSER_EVIDENCE` to an ignored JSON path to save browser
 measurements. Browser tests use SwiftShader; timings are not hardware-GPU results.
 
@@ -46,7 +62,7 @@ VITE_GAME_OF_LIFE_INDEXER_URL=http://127.0.0.1:8787
 
 The indexer URL must be an origin root. `dev` builds and supervises the indexer
 and Vite; the node runs separately. Indexer data defaults to
-`tmp/game-of-life-indexer`. Override with `GAME_OF_LIFE_ARTIFACT_ROOT` and
+`tmp/game-of-life-indexer-v2`. Override with `GAME_OF_LIFE_ARTIFACT_ROOT` and
 `GAME_OF_LIFE_INDEXER_DB`. The app uses same-origin `/thruput-rpc` and
 `/thruput-indexer` proxies.
 

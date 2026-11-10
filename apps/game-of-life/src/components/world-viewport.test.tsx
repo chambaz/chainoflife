@@ -78,7 +78,7 @@ function renderViewport(onAvailability: (value: string) => void) {
   render(
     <WorldViewport
       client={{} as IndexerClient}
-      initialSnapshot={{} as ImmutableSnapshot}
+      initialSnapshot={{ manifest: { width: 10_000 } } as ImmutableSnapshot}
       initialIdentity={null}
       candidate={null}
       candidateEpoch={null}

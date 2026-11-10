@@ -1,5 +1,11 @@
 import type { ThruputClient } from "@thruputchain/client";
-import { act, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AppConfig } from "@/config";
 import { walletFromSeed } from "@/wallet/visitor-wallet";
@@ -11,6 +17,13 @@ import {
   type TickRequestRecord,
 } from "@/transactions/records";
 import { TransactionActivity } from "./transaction-activity";
+import { requestTick, processOneTick } from "@/transactions/workflow";
+
+vi.mock("@/transactions/workflow", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/transactions/workflow")>()),
+  requestTick: vi.fn(),
+  processOneTick: vi.fn(),
+}));
 
 vi.mock("@/transactions/observer", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/transactions/observer")>()),
@@ -38,6 +51,82 @@ const config = {
 const wallet = walletFromSeed(`0x${"01".repeat(32)}`);
 
 describe("transaction activity", () => {
+  test("disables Advance while a reset is in progress", () => {
+    render(
+      <TransactionActivity
+        config={config}
+        profiles={config.transactionProfiles!}
+        wallet={wallet}
+        client={{} as ThruputClient}
+        onCrankCommitted={vi.fn()}
+        resetting
+      />,
+    );
+    const advance = screen.getByRole("button", {
+      name: "Resetting world...",
+    });
+    expect(advance).toBeDisabled();
+    fireEvent.click(advance);
+    expect(requestTick).not.toHaveBeenCalled();
+    expect(processOneTick).not.toHaveBeenCalled();
+  });
+  test.each([false, true])(
+    "always processes advances, resuming accepted work: %s",
+    async (accepted) => {
+      vi.mocked(observeCompletions).mockResolvedValue({
+        observations: [],
+        observedThroughBlock: null,
+        retentionGapRequestIds: new Set(),
+      });
+      vi.mocked(requestTick).mockResolvedValue({ requests: [], cranks: [] });
+      vi.mocked(processOneTick).mockResolvedValue({ requests: [], cranks: [] });
+      if (accepted)
+        saveRequests(transactionScope(config, wallet.addressHex), [
+          acceptedRequest(wallet.addressHex),
+        ]);
+      render(
+        <TransactionActivity
+          config={config}
+          profiles={config.transactionProfiles!}
+          wallet={wallet}
+          client={{} as ThruputClient}
+          onCrankCommitted={vi.fn()}
+        />,
+      );
+      expect(screen.queryByLabelText("Auto process")).not.toBeInTheDocument();
+      expect(screen.queryByText("No local request")).not.toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Advance 100,000,000 cells" }),
+      );
+      await waitFor(() =>
+        expect(accepted ? processOneTick : requestTick).toHaveBeenCalledOnce(),
+      );
+      if (!accepted)
+        expect(requestTick).toHaveBeenCalledWith(
+          expect.objectContaining({ automaticCrank: true }),
+        );
+      expect(accepted ? requestTick : processOneTick).not.toHaveBeenCalled();
+    },
+  );
+  test("updates the advance count when the on-chain board size changes", () => {
+    const props = {
+      config,
+      profiles: config.transactionProfiles!,
+      wallet,
+      client: {} as ThruputClient,
+      onCrankCommitted: vi.fn(),
+    };
+    const { rerender } = render(
+      <TransactionActivity {...props} worldSize={100} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Advance 10,000 cells" }),
+    ).toBeInTheDocument();
+    rerender(<TransactionActivity {...props} worldSize={7400} />);
+    expect(
+      screen.getByRole("button", { name: "Advance 54,760,000 cells" }),
+    ).toBeInTheDocument();
+  });
   test("preserves the read surface and reports malformed durable storage", () => {
     const scope = transactionScope(config, wallet.addressHex);
     localStorage.setItem(requestStorageKey(scope), "malformed");
@@ -135,6 +224,8 @@ describe("transaction activity", () => {
 });
 
 afterEach(() => {
+  vi.mocked(requestTick).mockReset();
+  vi.mocked(processOneTick).mockReset();
   vi.mocked(observeCompletions).mockReset();
   vi.restoreAllMocks();
 });

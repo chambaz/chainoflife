@@ -10,6 +10,7 @@ import {
 const digest = `0x${"aa".repeat(32)}`;
 const snapshot = {
   manifest: {
+    epoch: "0",
     networkId: "11".repeat(32),
     contractAddress: `0x${"22".repeat(32)}`,
     generation: "3",
@@ -29,6 +30,7 @@ const snapshot = {
 const state = {
   ...INITIAL_SYNCHRONIZATION_STATE,
   chain: {
+    epoch: "0",
     width: 10000,
     height: 10000,
     generation: "5",

@@ -9,6 +9,7 @@ import {
 function snapshot(generation: string, byte: string): ImmutableSnapshot {
   return {
     manifest: {
+      epoch: "0",
       generation,
       stateDigest: `0x${byte.repeat(64)}`,
     },
@@ -34,6 +35,22 @@ function commit(state: ReturnType<typeof stage>) {
 }
 
 describe("generation synchronization", () => {
+  test("a reset supersedes an older epoch even when its generation is lower", () => {
+    const old = snapshot("9", "a");
+    const reset = snapshot("0", "b");
+    const next = {
+      ...reset,
+      manifest: { ...reset.manifest, epoch: "1", width: 100, height: 100 },
+    };
+    const state = stage(
+      commit(stage(INITIAL_SYNCHRONIZATION_STATE, old)),
+      next,
+    );
+    expect(state.candidate).toBe(next);
+    const committed = commit(state);
+    expect(stage(committed, old).visualized).toBe(next);
+    expect(stage(committed, old).candidate).toBeNull();
+  });
   test("stages the first eligible snapshot without assigning ownership", () => {
     const first = snapshot("0", "a");
     const state = stage(INITIAL_SYNCHRONIZATION_STATE, first);
@@ -116,6 +133,7 @@ describe("generation synchronization", () => {
         ...state,
         chain: {
           width: 10000,
+          epoch: "0",
           height: 10000,
           generation: "5",
           seed: "7",
@@ -130,6 +148,7 @@ describe("generation synchronization", () => {
       {
         type: "chain-read",
         value: {
+          epoch: "0",
           width: 10000,
           height: 10000,
           generation: "5",

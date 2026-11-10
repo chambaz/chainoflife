@@ -37,12 +37,16 @@ export function TransactionActivity({
   wallet,
   client,
   onCrankCommitted,
+  worldSize = 10_000,
+  resetting = false,
 }: {
   readonly config: Readonly<AppConfig>;
   readonly profiles: LifeTransactionProfiles;
   readonly wallet: VisitorWallet;
   readonly client: CoreThruputClient | Promise<CoreThruputClient>;
   readonly onCrankCommitted: () => void;
+  readonly worldSize?: number;
+  readonly resetting?: boolean;
 }) {
   const scope = transactionScope(config, wallet.addressHex);
   const [boundary] = useState(() =>
@@ -53,7 +57,6 @@ export function TransactionActivity({
     initial.requests,
   );
   const [cranks, setCranks] = useState<readonly CrankRecord[]>(initial.cranks);
-  const [mode, setMode] = useState<"automatic" | "manual">("automatic");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initial.error);
   const [observerError, setObserverError] = useState<string | null>(null);
@@ -129,7 +132,7 @@ export function TransactionActivity({
   }, [client, config.contractAddress, crankStorageKey(scope)]);
 
   const run = async (action: () => Promise<WorkflowResult>) => {
-    if (busy) return;
+    if (busy || resetting) return;
     setBusy(true);
     setError(null);
     try {
@@ -141,8 +144,6 @@ export function TransactionActivity({
     }
   };
   const common = { config, profiles, wallet, boundary };
-  const latestRequest = requests.at(-1);
-  const latestCrank = cranks.at(-1);
   const recoverableRequests = requests.filter(
     (record) =>
       record.transactionHash !== null &&
@@ -161,7 +162,7 @@ export function TransactionActivity({
   );
 
   return (
-    <section className="pointer-events-none absolute right-[max(.75rem,var(--safe-right))] bottom-[max(.75rem,var(--safe-bottom))] left-[max(.75rem,var(--safe-left))] z-20 rounded-lg border border-border bg-panel/95 p-3 shadow-lg backdrop-blur-md sm:left-auto sm:w-[23rem] [@media(max-height:400px)]:right-auto [@media(max-height:400px)]:left-[max(.75rem,var(--safe-left))]">
+    <section className="pointer-events-none absolute right-[max(.75rem,var(--safe-right))] bottom-[calc(var(--safe-bottom)+10rem)] left-[max(.75rem,var(--safe-left))] z-20 rounded-lg border border-border bg-panel/95 p-3 shadow-lg backdrop-blur-md sm:left-auto sm:w-[23rem] md:bottom-[max(.75rem,var(--safe-bottom))] [@media(max-height:400px)]:bottom-[max(.75rem,var(--safe-bottom))] [@media(max-height:400px)]:left-auto [@media(max-height:400px)]:w-[min(23rem,45%)]">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-medium tracking-widest text-muted-foreground uppercase">
@@ -175,62 +176,44 @@ export function TransactionActivity({
             Wallet {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
           </p>
         </div>
-        <label className="pointer-events-auto flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={mode === "automatic"}
-            onChange={(event) =>
-              setMode(event.target.checked ? "automatic" : "manual")
-            }
-            disabled={busy}
-          />
-          Auto process
-        </label>
       </div>
       <Button
         className="pointer-events-auto mt-3 w-full justify-between"
-        disabled={busy}
+        disabled={busy || resetting}
         onClick={() =>
           void run(() =>
-            requestTick({ ...common, automaticCrank: mode === "automatic" }),
+            loadRequests(scope).some(({ status }) => status === "accepted")
+              ? processOneTick(common)
+              : requestTick({ ...common, automaticCrank: true }),
           )
         }
       >
         <span className="flex items-center gap-2">
           {busy ? <LoaderCircle className="animate-spin" /> : <Zap />}
-          Advance 100,000,000 cells
+          {resetting
+            ? "Resetting world..."
+            : `Advance ${(worldSize * worldSize).toLocaleString()} cells`}
         </span>
         <ChevronRight />
       </Button>
-      {mode === "manual" ? (
-        <Button
-          variant="outline"
-          className="pointer-events-auto mt-2 w-full"
-          disabled={busy}
-          onClick={() => void run(() => processOneTick(common))}
-        >
-          Process one queued request
-        </Button>
-      ) : null}
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <Status
-          label="Request"
-          value={
-            latestRequest ? requestLabel(latestRequest) : "No local request"
-          }
-        />
-        <Status
-          label="Crank"
-          value={latestCrank ? crankLabel(latestCrank) : "No local crank"}
-        />
-      </div>
       {recoverableRequests.map((record) => (
         <RecoveryButton
           key={record.localId}
           label={`Check request ${abbreviate(record.transactionHash!)}`}
           busy={busy}
           onClick={() =>
-            run(() => recoverRequest({ ...common, localId: record.localId }))
+            run(async () => {
+              const recovered = await recoverRequest({
+                ...common,
+                localId: record.localId,
+              });
+              return recovered.requests.some(
+                ({ localId, status }) =>
+                  localId === record.localId && status === "accepted",
+              )
+                ? processOneTick(common)
+                : recovered;
+            })
           }
         />
       ))}
@@ -276,39 +259,11 @@ export function TransactionActivity({
           }
         />
       ))}
-      {requests.length > 0 || cranks.length > 0 ? (
-        <details className="pointer-events-auto mt-2 text-xs text-muted-foreground">
-          <summary className="cursor-pointer text-foreground">
-            Inspect durable history
-          </summary>
-          <ol className="mt-2 max-h-40 space-y-1 overflow-y-auto font-mono">
-            {[...requests].reverse().map((record) => (
-              <li key={record.localId} className="break-all">
-                Request {record.status} · {record.receiptBlock ?? "no receipt"}{" "}
-                · {record.transactionHash ?? "no hash"}
-                {record.diagnostic ? ` · ${record.diagnostic}` : ""}
-              </li>
-            ))}
-            {[...cranks].reverse().map((record) => (
-              <li key={record.localId} className="break-all">
-                Crank {record.status} · {record.receiptBlock ?? "no receipt"} ·{" "}
-                {record.transactionHash ?? "no hash"}
-                {record.diagnostic ? ` · ${record.diagnostic}` : ""}
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
       {(error ?? observerError) ? (
         <p role="alert" className="mt-2 text-xs text-destructive">
           {error ?? observerError}
         </p>
       ) : null}
-      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-        Request and processing are separate durable transactions. Local event
-        tracking is finite; missing retained history is reported as permanently
-        unknown.
-      </p>
     </section>
   );
 }
@@ -332,34 +287,6 @@ function RecoveryButton({
       <RotateCcw className="size-3" /> {label}
     </button>
   );
-}
-
-function Status({
-  label,
-  value,
-}: {
-  readonly label: string;
-  readonly value: string;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-background/45 p-2">
-      <p className="text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate font-mono text-foreground">{value}</p>
-    </div>
-  );
-}
-
-function requestLabel(record: TickRequestRecord): string {
-  if (record.status === "completionUnknown") return "Completion unknown";
-  if (record.status === "advanced")
-    return `Advanced to ${record.resultingGeneration}`;
-  return record.status;
-}
-
-function crankLabel(record: CrankRecord): string {
-  if (record.status === "advanced")
-    return `Advanced to ${record.resultingGeneration}`;
-  return record.status === "noWork" ? "Found no work" : record.status;
 }
 
 function message(cause: unknown): string {

@@ -6,6 +6,7 @@ import {
 } from "@/chain/metadata-state";
 import type { ImmutableSnapshot } from "@/indexer/client";
 import type { LifeStatus } from "@/indexer/schema";
+import { compareWorldVersion } from "@/indexer/schema";
 
 export type ArtifactState =
   | "idle"
@@ -215,9 +216,7 @@ function compareSnapshot(
   left: ImmutableSnapshot,
   right: ImmutableSnapshot,
 ): number {
-  const a = BigInt(left.manifest.generation);
-  const b = BigInt(right.manifest.generation);
-  return a < b ? -1 : a > b ? 1 : 0;
+  return compareWorldVersion(left.manifest, right.manifest);
 }
 
 export function isStatusStale(

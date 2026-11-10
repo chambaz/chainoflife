@@ -23,6 +23,7 @@ const RPC_METHODS = new Set([
   "sendTransaction",
   "getTransactionReceipt",
   "getTransactionStatus",
+  "getTransactionsByRootAddress",
   "faucet_requestAirdrop",
   "dev_fundAccount",
 ]);
@@ -452,6 +453,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
   };
   let heldCandidateTiles: Array<() => void> = [];
   const identity = (generation: number) => ({
+    epoch: "0",
     networkId: network,
     contractAddress: contract,
     generation: String(generation),
@@ -466,7 +468,8 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
       if (fixture.latestState === "unavailable") return undefined;
       if (fixture.latestState === "malformed") return { schemaVersion: 2 };
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        epoch: "0",
         generation: String(published),
         stateDigest: digest,
         manifestUrl: `${base}/${digest}/manifest.json`,
@@ -480,20 +483,25 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
       if (fixture.status === "malformed") return { schemaVersion: 2 };
       const preparing = fixture.status === "preparing" ? 1 : null;
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         state: fixture.status,
-        observed: { generation: "1", stateDigest: digests[1] },
+        observed: { epoch: "0", generation: "1", stateDigest: digests[1] },
         preparing:
           preparing === null
             ? null
             : {
                 generation: "1",
+                epoch: "0",
                 stateDigest: digests[1],
                 completedUnits: 7,
                 totalUnits: 12,
                 unit: "tiles",
               },
-        published: { generation: String(published), stateDigest: digest },
+        published: {
+          epoch: "0",
+          generation: String(published),
+          stateDigest: digest,
+        },
         retry:
           fixture.status === "error"
             ? { attempt: 2, nextAt: "2026-08-29T01:03:00Z" }
@@ -509,7 +517,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
       const root = `${base}/${value.stateDigest}`;
       if (pathname === `${root}/manifest.json`)
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ...value,
           width: 10000,
           height: 10000,
@@ -525,7 +533,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
         };
       if (pathname === `${root}/provenance.json`)
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ...value,
           sourceBlockHeight: String(9 + generation),
           sourceBlockHash: block,
@@ -573,6 +581,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
     serializeCxs(
       {
         width: 10_000n,
+        epoch: 0n,
         height: 10_000n,
         generation: BigInt(generation),
         seed: 7n,

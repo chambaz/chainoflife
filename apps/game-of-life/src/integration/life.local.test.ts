@@ -64,6 +64,19 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       });
       await expect(
         wallets[1]!.executeAndWait({
+          invocation: GameOfLife.v0_1.resize.invocation(
+            address,
+            gasAmount(1_000_000n),
+            { size: 100n },
+          ),
+          gasLimit: gasAmount(2_000_000n),
+        }),
+      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      expect(
+        (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
+      ).toEqual(before);
+      await expect(
+        wallets[1]!.executeAndWait({
           invocation: GameOfLife.v0_1.processNextTick.invocation(
             address,
             gasAmount(100_000n),
@@ -124,6 +137,60 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
           gasLimit: gasAmount(2_000_000n),
         }),
       ).rejects.toBeInstanceOf(TransactionExecutionError);
+      await wallets[0]!.executeAndWait({
+        invocation: GameOfLife.v0_1.resize.invocation(
+          address,
+          gasAmount(10_000_000_000n),
+          { size: 100n },
+        ),
+        gasLimit: gasAmount(10_010_000_000n),
+        expiryBlocks: 64n,
+      });
+      const reset = (
+        await GameOfLife.v0_1.getMetadata.view({ client, address })
+      ).value;
+      expect(reset.epoch).toBe(before.epoch + 1n);
+      expect(reset.generation).toBe(0n);
+      expect(reset.seed).toBe(before.seed);
+      await expect(
+        wallets[0]!.executeAndWait({
+          invocation: GameOfLife.v0_1.resize.invocation(
+            address,
+            gasAmount(1_000_000n),
+            { size: 101n },
+          ),
+          gasLimit: gasAmount(2_000_000n),
+        }),
+      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      const chunk = (
+        await GameOfLife.v0_1.getChunk.view({
+          client,
+          address,
+          args: { row: 0n, part: 0n },
+        })
+      ).value;
+      await expect(
+        wallets[0]!.executeAndWait({
+          invocation: GameOfLife.v0_1.resize.invocation(
+            address,
+            gasAmount(1_000_000n),
+            { size: 10_000n },
+          ),
+          gasLimit: gasAmount(2_000_000n),
+        }),
+      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      expect(
+        (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
+      ).toEqual(reset);
+      expect(
+        (
+          await GameOfLife.v0_1.getChunk.view({
+            client,
+            address,
+            args: { row: 0n, part: 0n },
+          })
+        ).value,
+      ).toEqual(chunk);
     }, 420_000);
   },
 );

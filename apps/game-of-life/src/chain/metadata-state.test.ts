@@ -6,6 +6,7 @@ import {
 } from "./metadata-state";
 
 const metadata = {
+  epoch: "0",
   width: 10_000,
   height: 10_000,
   generation: "4",
@@ -21,6 +22,25 @@ const state: ChainState = {
   chainError: null,
   chainVerification: "fresh",
 };
+
+test("a reset epoch accepts generation zero and rejects a late old-epoch read", () => {
+  const reset = {
+    ...metadata,
+    epoch: "1",
+    generation: "0",
+    width: 100,
+    height: 100,
+    population: "1",
+    stateDigest: `0x${"bb".repeat(32)}`,
+  };
+  const next = reconcileChainMetadata(state, reset);
+  expect(next.chain).toEqual(reset);
+  expect(next.chainVerification).toBe("fresh");
+  expect(reconcileChainMetadata(next, metadata).chain).toEqual(reset);
+  expect(reconcileChainMetadata(next, metadata).chainVerification).toBe(
+    "integrity",
+  );
+});
 
 describe("chain metadata verification state", () => {
   test("treats lower and conflicting equal generations as integrity failures", () => {

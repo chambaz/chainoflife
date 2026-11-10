@@ -16,6 +16,7 @@ export type RequestStatus =
   | "completionUnknown";
 
 export interface TickRequestRecord {
+  readonly epoch?: string;
   readonly schemaVersion: 1;
   readonly localId: string;
   readonly requester: string;
@@ -43,6 +44,7 @@ export type CrankStatus =
   | "incompatible";
 
 export interface CrankRecord {
+  readonly epoch?: string;
   readonly schemaVersion: 1;
   readonly localId: string;
   readonly submittedBy: string;
@@ -270,6 +272,8 @@ function isRequest(value: unknown): value is TickRequestRecord {
   const status = value.status;
   return (
     value.schemaVersion === VERSION &&
+    (value.epoch === undefined ||
+      (typeof value.epoch === "string" && DECIMAL.test(value.epoch))) &&
     validId(value.localId) &&
     hex(value.requester) &&
     typeof status === "string" &&
@@ -362,6 +366,8 @@ function isCrank(value: unknown): value is CrankRecord {
   const status = value.status;
   return (
     value.schemaVersion === VERSION &&
+    (value.epoch === undefined ||
+      (typeof value.epoch === "string" && DECIMAL.test(value.epoch))) &&
     validId(value.localId) &&
     hex(value.submittedBy) &&
     typeof status === "string" &&

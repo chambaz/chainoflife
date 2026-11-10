@@ -3,6 +3,7 @@ import { Focus, Minus, Plus, RotateCcw } from "lucide-react";
 import type { ImmutableSnapshot, IndexerClient } from "@/indexer/client";
 import type { RendererAvailability } from "@/synchronization";
 import { Button } from "@/components/ui/button";
+import { ResizePreview } from "./resize-preview";
 import {
   MAX_CAMERA_ZOOM,
   MIN_CAMERA_ZOOM,
@@ -17,6 +18,7 @@ import {
 } from "@/renderer/world-renderer";
 
 interface Props {
+  readonly previewSize?: number | null;
   readonly client: IndexerClient;
   readonly initialSnapshot: ImmutableSnapshot;
   readonly initialIdentity: CandidateIdentity | null;
@@ -42,6 +44,7 @@ export function WorldViewport({
   approveCommit,
   onAnnouncement,
   onAvailability,
+  previewSize = null,
 }: Props) {
   const section = useRef<HTMLElement>(null);
   const canvasDescription = useId();
@@ -62,6 +65,7 @@ export function WorldViewport({
     onAvailability,
   };
   const [camera, setCamera] = useState(INITIAL_CAMERA);
+  const [worldSize, setWorldSize] = useState(initialSnapshot.manifest.width);
   const [level, setLevel] = useState(0);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [cellHighlight, setCellHighlight] = useState<CellHighlight | null>(
@@ -118,8 +122,11 @@ export function WorldViewport({
             lifecycle.current.onAvailability("unavailable");
           },
           onTransition: (value) => lifecycle.current.onTransition(value),
-          approveSnapshotCommit: (value, identity) =>
-            lifecycle.current.approveCommit(value, identity),
+          approveSnapshotCommit: (value, identity) => {
+            const approved = lifecycle.current.approveCommit(value, identity);
+            if (approved) setWorldSize(value.manifest.width);
+            return approved;
+          },
         },
         mountedIdentity.current,
       );
@@ -161,9 +168,24 @@ export function WorldViewport({
       <canvas
         ref={canvas}
         tabIndex={-1}
-        aria-label="Pan and zoom the 10,000 by 10,000 cell world"
+        aria-label={`Pan and zoom the ${worldSize.toLocaleString()} by ${worldSize.toLocaleString()} cell world`}
         className="size-full touch-none"
       />
+      {previewSize !== null ? (
+        <>
+          <div
+            aria-label={`Preview: ${previewSize} by ${previewSize} cells`}
+            className="pointer-events-none absolute border-2 border-dashed border-primary bg-primary/10 outline outline-background"
+            style={{
+              left: viewport.width / 2 - camera.x * 2 ** camera.zoom,
+              top: viewport.height / 2 - camera.y * 2 ** camera.zoom,
+              width: previewSize * 2 ** camera.zoom,
+              height: previewSize * 2 ** camera.zoom,
+            }}
+          />
+          <ResizePreview currentSize={worldSize} proposedSize={previewSize} />
+        </>
+      ) : null}
       {highlight ? (
         <span
           aria-hidden="true"
@@ -238,72 +260,70 @@ export function WorldViewport({
           </span>
         )}
       </div>
-      <div className="absolute right-[max(.75rem,var(--safe-right))] bottom-[max(.75rem,var(--safe-bottom))] flex items-end gap-3">
-        <Minimap camera={camera} viewport={viewport} />
+      <div className="absolute bottom-[max(.75rem,var(--safe-bottom))] left-[max(.75rem,var(--safe-left))] grid max-w-[calc(100%-max(.75rem,var(--safe-left))-max(.75rem,var(--safe-right)))] justify-items-start gap-3">
+        <div className="flex items-end gap-3">
+          <Minimap camera={camera} viewport={viewport} worldSize={worldSize} />
+          <div
+            role="group"
+            className="flex rounded-md border border-border bg-panel/95 p-1 shadow-sm backdrop-blur-md"
+            aria-label="World controls"
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
+              aria-label="Zoom out"
+              disabled={controlsDisabled || camera.zoom <= MIN_CAMERA_ZOOM}
+              onClick={() => renderer.current?.zoom(-0.5)}
+            >
+              <Minus />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
+              aria-label="Zoom in"
+              disabled={controlsDisabled || camera.zoom >= MAX_CAMERA_ZOOM}
+              onClick={() => renderer.current?.zoom(0.5)}
+            >
+              <Plus />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
+              aria-label="Fit world"
+              disabled={controlsDisabled}
+              onClick={() => renderer.current?.fit()}
+            >
+              <Focus />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
+              aria-label="Reset north-up"
+              disabled={controlsDisabled}
+              onClick={() => renderer.current?.reset()}
+            >
+              <RotateCcw />
+            </Button>
+          </div>
+        </div>
         <div
-          role="group"
-          className="flex rounded-md border border-border bg-panel/95 p-1 shadow-sm backdrop-blur-md"
-          aria-label="World controls"
+          aria-label="World scale and rendering mode"
+          className="w-fit max-w-full rounded-md border border-border bg-panel/95 px-3 py-2 font-mono text-base backdrop-blur-md sm:text-sm"
         >
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
-            aria-label="Zoom out"
-            disabled={controlsDisabled || camera.zoom <= MIN_CAMERA_ZOOM}
-            onClick={() => renderer.current?.zoom(-0.5)}
-          >
-            <Minus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
-            aria-label="Zoom in"
-            disabled={controlsDisabled || camera.zoom >= MAX_CAMERA_ZOOM}
-            onClick={() => renderer.current?.zoom(0.5)}
-          >
-            <Plus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
-            aria-label="Fit world"
-            disabled={controlsDisabled}
-            onClick={() => renderer.current?.fit()}
-          >
-            <Focus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
-            aria-label="Reset north-up"
-            disabled={controlsDisabled}
-            onClick={() => renderer.current?.reset()}
-          >
-            <RotateCcw />
-          </Button>
-        </div>
-      </div>
-      <div
-        aria-label="World scale and rendering mode"
-        className="absolute bottom-[calc(var(--safe-bottom)+4.5rem)] left-[max(.75rem,var(--safe-left))] w-fit rounded-md border border-border bg-panel/95 px-3 py-2 font-mono text-base backdrop-blur-md sm:bottom-[max(.75rem,var(--safe-bottom))] sm:text-sm"
-        style={{
-          maxWidth:
-            "calc(100% - max(.75rem, var(--safe-left)) - max(.75rem, var(--safe-right)))",
-        }}
-      >
-        <div className="text-muted-foreground">
-          {renderingMode(level, camera.zoom)}
-        </div>
-        <div className="mt-1 flex items-center gap-2">
-          <span
-            className="block h-px bg-primary"
-            style={{ width: ruler.pixels }}
-          />
-          <span>{ruler.label}</span>
+          <div className="text-muted-foreground">
+            {renderingMode(level, camera.zoom)}
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            <span
+              className="block h-px bg-primary"
+              style={{ width: ruler.pixels }}
+            />
+            <span>{ruler.label}</span>
+          </div>
         </div>
       </div>
     </section>
@@ -319,15 +339,23 @@ function inspectionLabel(value: Inspection): string {
 function Minimap({
   camera,
   viewport,
+  worldSize,
 }: {
   readonly camera: Camera;
+  readonly worldSize: number;
   readonly viewport: { readonly width: number; readonly height: number };
 }) {
   const scale = 2 ** camera.zoom;
-  const width = Math.min(100, (100 * viewport.width) / scale / 10_000);
-  const height = Math.min(100, (100 * viewport.height) / scale / 10_000);
-  const left = Math.max(0, Math.min(100 - width, camera.x / 100 - width / 2));
-  const top = Math.max(0, Math.min(100 - height, camera.y / 100 - height / 2));
+  const width = Math.min(100, (100 * viewport.width) / scale / worldSize);
+  const height = Math.min(100, (100 * viewport.height) / scale / worldSize);
+  const left = Math.max(
+    0,
+    Math.min(100 - width, (camera.x * 100) / worldSize - width / 2),
+  );
+  const top = Math.max(
+    0,
+    Math.min(100 - height, (camera.y * 100) / worldSize - height / 2),
+  );
   return (
     <div
       className="relative hidden size-24 overflow-hidden rounded-md border border-border bg-panel/95 sm:block"

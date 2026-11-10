@@ -1,4 +1,5 @@
 import type { ChainMetadata } from "./game-of-life";
+import { compareWorldVersion } from "@/indexer/schema";
 
 export type ChainVerification =
   "loading" | "fresh" | "stale" | "unavailable" | "integrity";
@@ -20,18 +21,14 @@ export function reconcileChainMetadata<T extends ChainState>(
       chainError: null,
       chainVerification: "fresh",
     };
-  const generation = BigInt(next.generation);
-  const currentGeneration = BigInt(current.chain.generation);
-  if (generation < currentGeneration)
+  const order = compareWorldVersion(next, current.chain);
+  if (order < 0)
     return {
       ...current,
       chainError: "Chain metadata regressed to an older generation",
       chainVerification: "integrity",
     };
-  if (
-    generation === currentGeneration &&
-    !sameChainIdentity(current.chain, next)
-  )
+  if (order === 0 && !sameChainIdentity(current.chain, next))
     return {
       ...current,
       chainError:

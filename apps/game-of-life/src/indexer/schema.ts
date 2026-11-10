@@ -11,6 +11,7 @@ const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
 const ERROR_CODE = /^[A-Z0-9_]+$/;
 
 export interface SnapshotIdentity {
+  readonly epoch: string;
   readonly networkId: string;
   readonly contractAddress: string;
   readonly generation: string;
@@ -20,9 +21,9 @@ export interface SnapshotIdentity {
 }
 
 export interface LifeManifest extends SnapshotIdentity {
-  readonly schemaVersion: 1;
-  readonly width: 10_000;
-  readonly height: 10_000;
+  readonly schemaVersion: 2;
+  readonly width: number;
+  readonly height: number;
   readonly tileSize: 256;
   readonly maxZoom: 6;
   readonly densityEncoding: "u16le-live-count";
@@ -35,7 +36,8 @@ export interface LifeManifest extends SnapshotIdentity {
 }
 
 export interface LatestPointer {
-  readonly schemaVersion: 1;
+  readonly epoch: string;
+  readonly schemaVersion: 2;
   readonly generation: string;
   readonly stateDigest: string;
   readonly manifestUrl: string;
@@ -50,7 +52,7 @@ export type EvidenceKind =
   | "generation-advanced-event";
 
 export interface LifeProvenance extends SnapshotIdentity {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly sourceBlockHeight: string;
   readonly sourceBlockHash: string;
   readonly evidenceKind: EvidenceKind;
@@ -63,12 +65,13 @@ export interface LifeProvenance extends SnapshotIdentity {
 }
 
 export interface PublishedIdentity {
+  readonly epoch: string;
   readonly generation: string;
   readonly stateDigest: string;
 }
 
 export interface LifeStatus {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly state: "idle" | "preparing" | "error";
   readonly observed: PublishedIdentity | null;
   readonly preparing:
@@ -85,6 +88,7 @@ export interface LifeStatus {
 }
 
 export interface CurrentWorldMetadata {
+  readonly epoch: string;
   readonly width: number;
   readonly height: number;
   readonly generation: string;
@@ -100,8 +104,30 @@ export class SchemaError extends Error {
   }
 }
 
+export function worldSize(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    value < 100 ||
+    value > WORLD_SIZE ||
+    value % 100 !== 0
+  )
+    throw new SchemaError("world size must be 100–10,000 in steps of 100");
+  return value;
+}
+
+export function compareWorldVersion(
+  left: { readonly epoch: string; readonly generation: string },
+  right: { readonly epoch: string; readonly generation: string },
+): number {
+  const epoch = BigInt(left.epoch) - BigInt(right.epoch);
+  const difference =
+    epoch || BigInt(left.generation) - BigInt(right.generation);
+  return difference < 0n ? -1 : difference > 0n ? 1 : 0;
+}
+
 export function parseManifest(input: unknown): LifeManifest {
   const value = record(input, "manifest", [
+    "epoch",
     "schemaVersion",
     "networkId",
     "contractAddress",
@@ -122,9 +148,9 @@ export function parseManifest(input: unknown): LifeManifest {
     "canonicalDownloadVerified",
     "individualTileProofs",
   ]);
-  literal(value.schemaVersion, 1, "schemaVersion");
-  literal(value.width, WORLD_SIZE, "width");
-  literal(value.height, WORLD_SIZE, "height");
+  literal(value.schemaVersion, 2, "schemaVersion");
+  const width = worldSize(value.width);
+  literal(value.height, width, "height");
   literal(value.tileSize, TILE_SIZE, "tileSize");
   literal(value.maxZoom, MAX_ZOOM, "maxZoom");
   literal(value.densityEncoding, "u16le-live-count", "densityEncoding");
@@ -141,11 +167,13 @@ export function parseManifest(input: unknown): LifeManifest {
     "verification.individualTileProofs",
   );
   const identity = parseIdentity(value);
+  if (BigInt(identity.population) > BigInt(width * width))
+    throw new SchemaError("population exceeds world dimensions");
   return {
     ...identity,
-    schemaVersion: 1,
-    width: 10_000,
-    height: 10_000,
+    schemaVersion: 2,
+    width,
+    height: width,
     tileSize: 256,
     maxZoom: 6,
     densityEncoding: "u16le-live-count",
@@ -166,6 +194,7 @@ export function parseLatest(
   canonicalNetwork(networkId);
   canonicalHex32(contractAddress, "contractAddress");
   const value = record(input, "latest", [
+    "epoch",
     "schemaVersion",
     "generation",
     "stateDigest",
@@ -174,13 +203,14 @@ export function parseLatest(
     "sourceBlockHash",
     "publishedAt",
   ]);
-  literal(value.schemaVersion, 1, "schemaVersion");
+  literal(value.schemaVersion, 2, "schemaVersion");
   const generation = decimal(value.generation, "generation");
   const stateDigest = canonicalHex32(value.stateDigest, "stateDigest");
   const expected = `/v1/worlds/${networkId}/${contractAddress}/${stateDigest}/manifest.json`;
   literal(value.manifestUrl, expected, "manifestUrl");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    epoch: decimal(value.epoch, "epoch"),
     generation,
     stateDigest,
     manifestUrl: expected,
@@ -192,6 +222,7 @@ export function parseLatest(
 
 export function parseProvenance(input: unknown): LifeProvenance {
   const value = record(input, "provenance", [
+    "epoch",
     "schemaVersion",
     "networkId",
     "contractAddress",
@@ -209,7 +240,7 @@ export function parseProvenance(input: unknown): LifeProvenance {
     "requester",
     "verifiedAt",
   ]);
-  literal(value.schemaVersion, 1, "schemaVersion");
+  literal(value.schemaVersion, 2, "schemaVersion");
   const identity = parseIdentity(value);
   const evidenceKind = oneOf(
     value.evidenceKind,
@@ -257,7 +288,7 @@ export function parseProvenance(input: unknown): LifeProvenance {
   }
   return {
     ...identity,
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceBlockHeight: decimal(value.sourceBlockHeight, "sourceBlockHeight"),
     sourceBlockHash: canonicalHex32(value.sourceBlockHash, "sourceBlockHash"),
     evidenceKind,
@@ -281,7 +312,7 @@ export function parseStatus(input: unknown): LifeStatus {
     "errorCode",
     "heartbeatAt",
   ]);
-  literal(value.schemaVersion, 1, "schemaVersion");
+  literal(value.schemaVersion, 2, "schemaVersion");
   const state = oneOf(
     value.state,
     ["idle", "preparing", "error"] as const,
@@ -290,6 +321,7 @@ export function parseStatus(input: unknown): LifeStatus {
   const observed = nullableIdentity(value.observed, "observed");
   const published = nullableIdentity(value.published, "published");
   const preparingValue = nullableRecord(value.preparing, "preparing", [
+    "epoch",
     "generation",
     "stateDigest",
     "completedUnits",
@@ -335,7 +367,7 @@ export function parseStatus(input: unknown): LifeStatus {
   )
     throw new SchemaError("errorCode must match error state");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     state,
     observed,
     preparing,
@@ -351,11 +383,12 @@ export function assertSnapshotAgreement(
   manifest: LifeManifest,
   provenance: LifeProvenance,
 ): void {
-  const identityKeys = ["generation", "stateDigest"] as const;
+  const identityKeys = ["epoch", "generation", "stateDigest"] as const;
   for (const key of identityKeys)
     if (latest[key] !== manifest[key])
       throw new SchemaError(`latest and manifest ${key} disagree`);
   const fullKeys = [
+    "epoch",
     "networkId",
     "contractAddress",
     "generation",
@@ -385,16 +418,15 @@ export function assertSnapshotEligible(
     manifest.contractAddress !== scope.contractAddress
   )
     throw new SchemaError("snapshot is outside the configured world scope");
-  for (const key of ["width", "height", "seed"] as const)
+  for (const key of ["seed"] as const)
     if (manifest[key] !== current[key])
       throw new SchemaError(`snapshot and current chain ${key} disagree`);
 
-  const generation = BigInt(manifest.generation);
-  const currentGeneration = BigInt(current.generation);
-  if (generation > currentGeneration)
+  const order = compareWorldVersion(manifest, current);
+  if (order > 0)
     throw new SchemaError("snapshot is ahead of accepted chain metadata");
-  if (generation === currentGeneration) {
-    for (const key of ["population", "stateDigest"] as const)
+  if (order === 0) {
+    for (const key of ["width", "height", "population", "stateDigest"] as const)
       if (manifest[key] !== current[key])
         throw new SchemaError(`snapshot and current chain ${key} disagree`);
     return;
@@ -424,6 +456,7 @@ function parseIdentity(value: Record<string, unknown>): SnapshotIdentity {
     throw new SchemaError("population exceeds world capacity");
   return {
     networkId: canonicalNetwork(value.networkId),
+    epoch: decimal(value.epoch, "epoch"),
     contractAddress: canonicalHex32(value.contractAddress, "contractAddress"),
     generation: decimal(value.generation, "generation"),
     seed: decimal(value.seed, "seed"),
@@ -525,6 +558,7 @@ function positiveIntegerOrZero(input: unknown, field: string): number {
 }
 function parsePublished(value: Record<string, unknown>): PublishedIdentity {
   return {
+    epoch: decimal(value.epoch, "epoch"),
     generation: decimal(value.generation, "generation"),
     stateDigest: canonicalHex32(value.stateDigest, "stateDigest"),
   };
@@ -535,7 +569,9 @@ function nullableIdentity(
 ): PublishedIdentity | null {
   return input === null
     ? null
-    : parsePublished(record(input, field, ["generation", "stateDigest"]));
+    : parsePublished(
+        record(input, field, ["epoch", "generation", "stateDigest"]),
+      );
 }
 function requireAllNull(values: readonly unknown[], message: string): void {
   if (values.some((value) => value !== null)) throw new SchemaError(message);

@@ -6,7 +6,7 @@ import {
 } from "@deck.gl/core";
 import type { NonGeoBoundingBox } from "@deck.gl/geo-layers";
 import type { ImmutableSnapshot, IndexerClient } from "@/indexer/client";
-import { WORLD_SIZE } from "@/indexer/schema";
+import { compareWorldVersion } from "@/indexer/schema";
 import {
   ActiveByteBudget,
   DECK_LAYER_CACHE_BUDGET,
@@ -16,6 +16,7 @@ import {
 import {
   clampCamera,
   fitCamera,
+  fillCamera,
   MAX_CAMERA_ZOOM,
   MIN_CAMERA_ZOOM,
   parseCamera,
@@ -148,13 +149,20 @@ export class WorldRenderer {
       SHARED_CPU_CACHE_BUDGET,
       this.resources,
     );
-    this.camera =
-      parseCamera(location.search) ??
-      fitCamera(canvas.clientWidth || 800, canvas.clientHeight || 600);
+    const filled = fillCamera(
+      canvas.clientWidth || 800,
+      canvas.clientHeight || 600,
+      snapshot.manifest.width,
+    );
+    const saved = parseCamera(location.search);
+    this.camera = saved
+      ? { ...saved, zoom: Math.max(saved.zoom, filled.zoom) }
+      : filled;
     this.camera = clampCamera(
       this.camera,
       canvas.clientWidth || 800,
       canvas.clientHeight || 600,
+      snapshot.manifest.width,
     );
     this.resize = new ResizeObserver(() => this.resized());
     this.tabIndexObserver = new MutationObserver(() => {
@@ -193,19 +201,7 @@ export class WorldRenderer {
       canvas: this.canvas,
       width: this.canvas.clientWidth,
       height: this.canvas.clientHeight,
-      views: new OrthographicView({
-        id: "life",
-        flipY: true,
-        controller: {
-          dragRotate: false,
-          touchRotate: false,
-          maxBounds: [
-            [0, 0],
-            [WORLD_SIZE, WORLD_SIZE],
-          ],
-          scrollZoom: { smooth: true },
-        },
-      }),
+      views: this.worldView(),
       viewState: {
         target: [this.camera.x, this.camera.y, 0],
         zoom: this.camera.zoom,
@@ -229,15 +225,21 @@ export class WorldRenderer {
   }
   fit(): void {
     this.setCamera(
-      fitCamera(this.canvas.clientWidth, this.canvas.clientHeight),
+      fitCamera(
+        this.canvas.clientWidth,
+        this.canvas.clientHeight,
+        this.cameraWorldSize,
+      ),
     );
   }
   reset(): void {
-    this.setCamera({
-      x: WORLD_SIZE / 2,
-      y: WORLD_SIZE / 2,
-      zoom: MIN_CAMERA_ZOOM,
-    });
+    this.setCamera(
+      fillCamera(
+        this.canvas.clientWidth,
+        this.canvas.clientHeight,
+        this.cameraWorldSize,
+      ),
+    );
   }
   handleKey(event: KeyboardEvent): void {
     this.key(event);
@@ -248,10 +250,12 @@ export class WorldRenderer {
     epoch: number,
   ): void {
     if (this.destroyed) return;
-    const displayedGeneration = BigInt(this.displayed.manifest.generation);
-    const nextGeneration = BigInt(snapshot.manifest.generation);
-    if (nextGeneration < displayedGeneration) return;
-    if (nextGeneration === displayedGeneration) {
+    const order = compareWorldVersion(
+      snapshot.manifest,
+      this.displayed.manifest,
+    );
+    if (order < 0) return;
+    if (order === 0) {
       if (
         snapshot.manifest.stateDigest !== this.displayed.manifest.stateDigest
       ) {
@@ -263,9 +267,12 @@ export class WorldRenderer {
       return;
     }
     if (this.candidate) {
-      const candidateGeneration = BigInt(this.candidate.manifest.generation);
-      if (nextGeneration < candidateGeneration) return;
-      if (nextGeneration === candidateGeneration) {
+      const candidateOrder = compareWorldVersion(
+        snapshot.manifest,
+        this.candidate.manifest,
+      );
+      if (candidateOrder < 0) return;
+      if (candidateOrder === 0) {
         if (
           snapshot.manifest.stateDigest !== this.candidate.manifest.stateDigest
         ) {
@@ -292,6 +299,7 @@ export class WorldRenderer {
     this.candidateSelection = EMPTY_SELECTION;
     this.coverageReadyFrame = null;
     this.callbacks.onTransition("staging");
+    if (snapshot.manifest.width !== this.displayed.manifest.width) this.reset();
     this.updateLayers();
     this.evaluateCoverage();
   }
@@ -370,7 +378,7 @@ export class WorldRenderer {
       data: snapshot.manifestUrl.href,
       opacity,
       TilesetClass: LifeTileset,
-      extent: [0, 0, WORLD_SIZE, WORLD_SIZE],
+      extent: [0, 0, snapshot.manifest.width, snapshot.manifest.height],
       tileSize: 16_384,
       minZoom: 0,
       maxZoom: 6,
@@ -419,7 +427,10 @@ export class WorldRenderer {
         immediateParentRefinement(tiles as unknown as RefinementTile[], digest),
       renderSubLayers: (props) => {
         if (!props.data) return null;
-        const bounds = clippedBounds(props.tile.bbox as NonGeoBoundingBox);
+        const bounds = clippedBounds(
+          props.tile.bbox as NonGeoBoundingBox,
+          snapshot.manifest.width,
+        );
         const resourceKey = `${digest}:${tileId(props.data.index)}`;
         if (props.data.availability === "missing")
           return new UnavailableTileLayer(props, {
@@ -447,6 +458,7 @@ export class WorldRenderer {
             pickable: false,
           });
         return new LifeTileTextureLayer(props, {
+          worldSize: snapshot.manifest.width,
           id: `${props.id}-texture`,
           bounds,
           content: props.data,
@@ -576,13 +588,28 @@ export class WorldRenderer {
       : this.candidateSelection;
   }
   private updateLayers(): void {
-    this.deck?.setProps({ layers: this.layers() });
+    this.deck?.setProps({ views: this.worldView(), layers: this.layers() });
+  }
+  private worldView(): OrthographicView {
+    return new OrthographicView({
+      id: "life",
+      flipY: true,
+      controller: {
+        dragRotate: false,
+        touchRotate: false,
+        scrollZoom: { smooth: true },
+      },
+    });
+  }
+  private get cameraWorldSize(): number {
+    return this.candidate?.manifest.width ?? this.displayed.manifest.width;
   }
   private setCamera(camera: Camera): void {
     const next = clampCamera(
       camera,
       this.canvas.clientWidth,
       this.canvas.clientHeight,
+      this.cameraWorldSize,
     );
     const changed = !sameCamera(this.camera, next);
     if (changed) this.resetInitialCoverage();
@@ -610,6 +637,7 @@ export class WorldRenderer {
       },
       this.canvas.clientWidth,
       this.canvas.clientHeight,
+      this.cameraWorldSize,
     );
     const controlled = {
       target: [this.camera.x, this.camera.y, 0] as [number, number, number],
@@ -698,6 +726,7 @@ export class WorldRenderer {
       this.camera,
       this.canvas.clientWidth,
       this.canvas.clientHeight,
+      this.cameraWorldSize,
     );
     const changed = !sameCamera(this.camera, next);
     this.camera = next;
@@ -786,7 +815,7 @@ export class WorldRenderer {
     visible: readonly TileIndex[],
   ): void {
     const visibleIds = new Set(visible.map(tileId));
-    const candidates = ring(visible).filter(
+    const candidates = ring(visible, this.displayed.manifest.width).filter(
       (index) => !visibleIds.has(tileId(index)),
     );
     if (!candidates.length) return;
@@ -820,9 +849,19 @@ export class WorldRenderer {
     const world = viewport.unproject([screenX, screenY]);
     const x = Math.floor(world[0]!);
     const y = Math.floor(world[1]!);
-    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE)
+    if (
+      x < 0 ||
+      x >= this.displayed.manifest.width ||
+      y < 0 ||
+      y >= this.displayed.manifest.height
+    )
       return this.callbacks.onInspect(null, false, null);
-    const mapped = worldToTile(x, y, this.displayedSelection.level);
+    const mapped = worldToTile(
+      x,
+      y,
+      this.displayedSelection.level,
+      this.displayed.manifest.width,
+    );
     let data = this.displayedLoader.cache.get(this.cacheKey(mapped.tile));
     if (!data) {
       const parent = parentIndex(mapped.tile);
@@ -836,6 +875,7 @@ export class WorldRenderer {
             y,
             data.index.z,
             this.displayed.manifest.generation,
+            this.displayed.manifest.width,
           )
         : null;
     this.callbacks.onInspect(

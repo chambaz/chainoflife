@@ -21,8 +21,8 @@ export interface RefinementTile {
 
 export const cellsPerTexel = (z: number): number => 2 ** (MAX_ZOOM - z);
 export const tileSpan = (z: number): number => TILE_SIZE * cellsPerTexel(z);
-export const tileCount = (z: number): number =>
-  Math.ceil(WORLD_SIZE / tileSpan(z));
+export const tileCount = (z: number, worldSize = WORLD_SIZE): number =>
+  Math.ceil(worldSize / tileSpan(z));
 export const tileId = ({ z, x, y }: TileIndex): string => `${z}/${x}/${y}`;
 export function parentIndex(index: TileIndex): TileIndex | null {
   return index.z === 0
@@ -33,17 +33,25 @@ export function parentIndex(index: TileIndex): TileIndex | null {
         y: Math.floor(index.y / 2),
       };
 }
-export function tileBounds(index: TileIndex): TileBounds {
+export function tileBounds(
+  index: TileIndex,
+  worldSize = WORLD_SIZE,
+): TileBounds {
   const span = tileSpan(index.z);
   return {
     left: index.x * span,
     top: index.y * span,
-    right: Math.min((index.x + 1) * span, WORLD_SIZE),
-    bottom: Math.min((index.y + 1) * span, WORLD_SIZE),
+    right: Math.min((index.x + 1) * span, worldSize),
+    bottom: Math.min((index.y + 1) * span, worldSize),
   };
 }
-export function worldToTile(x: number, y: number, z: number) {
-  if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE)
+export function worldToTile(
+  x: number,
+  y: number,
+  z: number,
+  worldSize = WORLD_SIZE,
+) {
+  if (x < 0 || x >= worldSize || y < 0 || y >= worldSize)
     throw new RangeError("world coordinate is out of bounds");
   const span = tileSpan(z);
   const scale = cellsPerTexel(z);
@@ -86,10 +94,13 @@ export function immediateParentRefinement(
     if (fallback && usable(fallback, digest)) fallback.isVisible = true;
   }
 }
-export function ring(indices: readonly TileIndex[]): TileIndex[] {
+export function ring(
+  indices: readonly TileIndex[],
+  worldSize = WORLD_SIZE,
+): TileIndex[] {
   const output = new Map<string, TileIndex>();
   for (const index of indices) {
-    const count = tileCount(index.z);
+    const count = tileCount(index.z, worldSize);
     for (
       let y = Math.max(0, index.y - 1);
       y <= Math.min(count - 1, index.y + 1);

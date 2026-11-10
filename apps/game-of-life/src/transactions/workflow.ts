@@ -27,6 +27,8 @@ import {
   type TickRequestRecord,
 } from "@/transactions/records";
 import type { WriteBoundary, WriteResult } from "@/transactions/write-boundary";
+import { assertNoPendingResize } from "./resize";
+import { recordMeasurement } from "./measurements";
 
 export interface WorkflowResult {
   readonly requests: readonly TickRequestRecord[];
@@ -42,6 +44,7 @@ export async function requestTick(params: {
 }): Promise<WorkflowResult> {
   const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
+    assertNoPendingResize(scope);
     let requests: readonly TickRequestRecord[] = loadRequests(scope);
     let cranks: readonly CrankRecord[] = loadCranks(scope);
     const submittedAt = new Date().toISOString();
@@ -160,12 +163,7 @@ export async function recoverCrank(params: {
       crank.transactionHash,
       params.profiles.crank.observationTimeoutMs,
     );
-    const applied = crankResult(
-      crank,
-      requests,
-      result,
-      params.config.contractAddress,
-    );
+    const applied = crankResult(crank, requests, result, params.config);
     const savedRequests = saveRequests(scope, applied.requests);
     cranks = saveCranks(scope, upsert(cranks, applied.crank));
     return { requests: savedRequests, cranks };
@@ -236,6 +234,7 @@ async function crankWhileLocked(params: {
   readonly scope: ReturnType<typeof transactionScope>;
 }): Promise<WorkflowResult> {
   let requests = loadRequests(params.scope);
+  assertNoPendingResize(params.scope);
   let cranks = loadCranks(params.scope);
   if (hasBlockingCrank(cranks))
     throw new Error(
@@ -270,12 +269,7 @@ async function crankWhileLocked(params: {
       );
     },
   });
-  const applied = crankResult(
-    crank,
-    requests,
-    result,
-    params.config.contractAddress,
-  );
+  const applied = crankResult(crank, requests, result, params.config);
   requests = saveRequests(params.scope, applied.requests);
   cranks = saveCranks(
     params.scope,
@@ -315,6 +309,7 @@ function admissionRecord(
   return {
     ...common,
     status: "accepted",
+    epoch: events[0]!.fields.epoch.toString(),
     requestId: toHex0x(events[0]!.topics.request_id),
   };
 }
@@ -323,7 +318,7 @@ function crankResult(
   crank: CrankRecord,
   requests: readonly TickRequestRecord[],
   result: WriteResult,
-  contractAddress: string,
+  config: Pick<AppConfig, "networkId" | "contractAddress">,
 ): { readonly crank: CrankRecord; readonly requests: TickRequestRecord[] } {
   const failure = crankFailure(crank, result);
   if (failure) return { crank: failure, requests: [...requests] };
@@ -334,7 +329,7 @@ function crankResult(
   try {
     const decoded = decodeCrankReturn(receipt);
     const events = GenerationAdvanced.allFromReceipt(receipt, {
-      address: addressFromHex(contractAddress),
+      address: addressFromHex(config.contractAddress),
     });
     if (decoded === null && events.length === 0)
       return {
@@ -354,6 +349,7 @@ function crankResult(
       !bytesEqual(decoded.request_id, event.topics.request_id) ||
       !bytesEqual(decoded.requested_by, event.fields.requested_by) ||
       decoded.metadata.generation !== event.fields.generation ||
+      decoded.metadata.epoch !== event.fields.epoch ||
       decoded.metadata.population !== event.fields.population ||
       !bytesEqual(decoded.metadata.state_digest, event.fields.state_digest)
     )
@@ -361,11 +357,24 @@ function crankResult(
     const requestId = toHex0x(event.topics.request_id);
     const requester = toHex0x(event.fields.requested_by);
     const advancedHash = toHex0x(receipt.transactionHash);
+    recordMeasurement(config, {
+      kind: "advance",
+      size: Number(decoded.metadata.width),
+      epoch: decoded.metadata.epoch.toString(),
+      generation: decoded.metadata.generation.toString(),
+      digest: toHex0x(decoded.metadata.state_digest),
+      hash: advancedHash,
+      submittedAt: Date.parse(crank.submittedAt),
+      confirmedAt: Date.parse(completedAt),
+      readyAt: null,
+      gasUsed: receipt.gasUsed.toString(),
+    });
     return {
       crank: {
         ...crank,
         status: "advanced",
         completedAt,
+        epoch: decoded.metadata.epoch.toString(),
         receiptBlock: receipt.blockHeight.toString(),
         consumedRequestId: requestId,
         resultingGeneration: event.fields.generation.toString(),
@@ -374,7 +383,10 @@ function crankResult(
         diagnostic: `Advanced a request from ${requester}`,
       },
       requests: requests.map((request) =>
-        request.requestId === requestId && request.requester === requester
+        request.requestId === requestId &&
+        request.requester === requester &&
+        (request.epoch === undefined ||
+          request.epoch === event.fields.epoch.toString())
           ? {
               ...request,
               status: "advanced",

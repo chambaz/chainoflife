@@ -125,7 +125,12 @@ test("keeps the visitor wallet and accepted requests across reloads", async ({
     { key, caller },
   );
   await page.reload();
-  await expect(page.getByText("accepted", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key)!).requests[0].status,
+      key,
+    ),
+  ).toBe("accepted");
   await expect(page.getByLabel("Your wallet")).toHaveAttribute(
     "title",
     address!,
@@ -140,7 +145,7 @@ test("keeps the visitor wallet and accepted requests across reloads", async ({
       "title",
       address!,
     );
-    await expect(other.getByText("No local request")).toBeVisible();
+    await expect(other.getByText("Inspect durable history")).toHaveCount(0);
   } finally {
     await other.close();
   }
@@ -277,6 +282,12 @@ test("buttons and keyboard update bounded shareable camera state", async ({
   await expect
     .poll(() => new URL(page.url()).searchParams.get("z"))
     .not.toBe(wheelZoom);
+  // Pan only after zooming beyond the full-board view; fit views are centered.
+  for (let count = 0; count < 3; count += 1)
+    await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect
+    .poll(() => Number(new URL(page.url()).searchParams.get("z")))
+    .toBeGreaterThan(-3);
   const dragX = new URL(page.url()).searchParams.get("x");
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.down();
@@ -303,6 +314,31 @@ test("buttons and keyboard update bounded shareable camera state", async ({
     .toBeGreaterThan(5000);
 });
 
+test("size previews preserve zoom and keep a smaller outline visible", async ({
+  page,
+}) => {
+  await page.goto("/?x=5000&y=5000&z=0");
+  await expect(page.getByText("Ready · generation 0")).toBeVisible();
+  await expect(page.getByText("Exact cells · 1 px per cell")).toBeVisible();
+  const slider = page.getByRole("slider", { name: "Board size" });
+  await expect(slider).toBeEnabled();
+  for (const size of [500, 7400, 100]) {
+    await slider.evaluate((element, size) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(element, String(size));
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }, size);
+    await expect(
+      page.getByRole("figure", { name: /Size comparison/ }),
+    ).toBeVisible();
+    await expect(page.getByTestId("proposed-size-outline")).toBeInViewport();
+    await expect(page.getByText("Exact cells · 1 px per cell")).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("z")).toBe("0");
+  }
+});
+
 test("decodes density and exact cells for retained CPU inspection", async ({
   page,
 }) => {
@@ -318,7 +354,7 @@ test("decodes density and exact cells for retained CPU inspection", async ({
   const zoomIn = page.getByRole("button", { name: "Zoom in" });
   for (let count = 0; count < 24; count += 1) {
     const previousZoom = new URL(page.url()).searchParams.get("z");
-    if (previousZoom === "4.000") break;
+    if (previousZoom === "6.000") break;
     await zoomIn.click();
     await expect
       .poll(() => new URL(page.url()).searchParams.get("z"))
@@ -326,10 +362,10 @@ test("decodes density and exact cells for retained CPU inspection", async ({
   }
   await expect
     .poll(() => new URL(page.url()).searchParams.get("z"))
-    .toBe("4.000");
+    .toBe("6.000");
   await expect(zoomIn).toBeDisabled();
-  await expect(page.getByText("Exact cells · 16 px per cell")).toBeVisible();
-  await expect(page.getByText("5 cells", { exact: true })).toBeVisible();
+  await expect(page.getByText("Exact cells · 64 px per cell")).toBeVisible();
+  await expect(page.getByText("1 cell", { exact: true })).toBeVisible();
   const pointer = {
     x: box!.x + box!.width / 2 + 1,
     y: box!.y + box!.height / 2 + 1,
@@ -362,6 +398,8 @@ test("supports tab focus and keyboard center inspection", async ({ page }) => {
   await expect(world).toHaveAccessibleDescription(/Enter to inspect/);
   await expect(canvas).toHaveAttribute("tabindex", "-1");
   await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("slider", { name: "Board size" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(world).toBeFocused();
   const box = await canvas.boundingBox();
@@ -664,7 +702,7 @@ test("preserves controls and world context at 320 CSS pixels", async ({
       .getByText("On-chain", { exact: true }),
   ).toBeVisible();
   await expect(
-    activityDialog.getByRole("button", { name: "Close sheet" }),
+    activityDialog.locator("summary").filter({ hasText: /^Activity$/ }),
   ).toBeFocused();
   const portraitClose = await activityDialog
     .getByRole("button", { name: "Close sheet" })

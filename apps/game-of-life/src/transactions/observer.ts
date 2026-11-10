@@ -9,6 +9,7 @@ import { GenerationAdvanced } from "@/contracts/game-of-life";
 import type { TickRequestRecord } from "@/transactions/records";
 
 export interface CompletionObservation {
+  readonly epoch?: string;
   readonly requestId: string;
   readonly requester: string;
   readonly transactionHash: string;
@@ -91,6 +92,8 @@ export async function observeCompletions(params: {
       const request = byId.get(requestId);
       if (
         !request ||
+        (request.epoch !== undefined &&
+          request.epoch !== event.fields.epoch.toString()) ||
         completed.has(requestId) ||
         request.requester !== toHex0x(event.fields.requested_by) ||
         identified.blockHeight < BigInt(request.receiptBlock!) ||
@@ -100,6 +103,7 @@ export async function observeCompletions(params: {
         continue;
       completed.add(requestId);
       observations.push({
+        epoch: event.fields.epoch.toString(),
         requestId,
         requester: request.requester,
         transactionHash: toHex0x(identified.transactionHash),
@@ -159,7 +163,10 @@ export function applyCompletionBatch(
     const observation = record.requestId
       ? observations.get(record.requestId)
       : undefined;
-    if (observation)
+    if (
+      observation &&
+      (record.epoch === undefined || record.epoch === observation.epoch)
+    )
       return {
         ...record,
         status: "advanced",

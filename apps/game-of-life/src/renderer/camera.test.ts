@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   clampCamera,
   fitCamera,
+  fillCamera,
   parseCamera,
   serializeCamera,
   zoomAround,
@@ -21,9 +22,9 @@ describe("camera", () => {
     }));
   test("uses the clamped zoom when constraining the center", () =>
     expect(clampCamera({ x: 0, y: 0, zoom: 10 }, 512, 512)).toEqual({
-      x: 16,
-      y: 16,
-      zoom: 4,
+      x: 4,
+      y: 4,
+      zoom: 6,
     }));
   test("preserves the world point under pointer zoom", () => {
     const camera = { x: 5000, y: 5000, zoom: -2 };
@@ -36,12 +37,26 @@ describe("camera", () => {
   });
   test.each([
     "?x=-1&y=0&z=0",
-    "?x=0&y=0&z=5",
+    "?x=0&y=0&z=7",
     "?x=0&y=0&z=0&evil=1",
     "?x=x&y=0&z=0",
     "?x=0&y=0",
     "?x=0&x=1&y=0&z=0",
   ])("rejects unsafe query %s", (query) =>
     expect(parseCamera(query)).toBeNull(),
+  );
+  test.each([
+    [1600, 900, 100],
+    [400, 900, 7400],
+    [3840, 2160, 100],
+    [1200, 800, 10000],
+  ])(
+    "fills a %i by %i viewport with a %i-cell board",
+    (width, height, size) => {
+      const camera = fillCamera(width, height, size);
+      expect(camera.x).toBe(size / 2);
+      expect(camera.y).toBe(size / 2);
+      expect(size * 2 ** camera.zoom).toBeCloseTo(Math.max(width, height));
+    },
   );
 });

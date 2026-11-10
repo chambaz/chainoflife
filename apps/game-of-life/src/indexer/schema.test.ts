@@ -12,6 +12,7 @@ const contract = `0x${"22".repeat(32)}`;
 const digest = `0x${"aa".repeat(32)}`;
 const block = `0x${"bb".repeat(32)}`;
 const identity = {
+  epoch: "0",
   networkId: network,
   contractAddress: contract,
   generation: "0",
@@ -20,7 +21,7 @@ const identity = {
   stateDigest: digest,
 };
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ...identity,
   width: 10000,
   height: 10000,
@@ -35,7 +36,8 @@ const manifest = {
   },
 };
 const latest = {
-  schemaVersion: 1,
+  epoch: "0",
+  schemaVersion: 2,
   generation: "0",
   stateDigest: digest,
   manifestUrl: `/v1/worlds/${network}/${contract}/${digest}/manifest.json`,
@@ -44,7 +46,7 @@ const latest = {
   publishedAt: "2026-08-28T01:02:03Z",
 };
 const provenance = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,
@@ -121,10 +123,11 @@ describe("artifact schemas", () => {
   });
   test("enforces status state cross-fields", () => {
     const status = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       state: "preparing",
       observed: null,
       preparing: {
+        epoch: "0",
         generation: "1",
         stateDigest: digest,
         completedUnits: 2,
@@ -157,6 +160,7 @@ describe("artifact schemas", () => {
     const m = parseManifest(manifest);
     const p = parseProvenance(provenance);
     const current = {
+      epoch: "0",
       width: 10000,
       height: 10000,
       generation: "0",
@@ -190,6 +194,7 @@ describe("artifact schemas", () => {
   });
   test("accepts historical event evidence but not historical metadata evidence", () => {
     const current = {
+      epoch: "0",
       width: 10000,
       height: 10000,
       generation: "1",
@@ -236,6 +241,7 @@ describe("artifact schemas", () => {
         aheadManifest,
         advanced,
         {
+          epoch: "0",
           width: 10000,
           height: 10000,
           generation: "0",
@@ -254,6 +260,7 @@ describe("artifact schemas", () => {
         parseManifest(manifest),
         parseProvenance(provenance),
         {
+          epoch: "0",
           width: 10000,
           height: 10000,
           generation: "0",

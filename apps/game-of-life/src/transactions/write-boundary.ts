@@ -17,6 +17,7 @@ import {
 } from "@thruputchain/protocol";
 import type { AppConfig, TransactionPolicy } from "@/config";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
+import { isExpiredUncommitted } from "./expired-submission";
 
 export type WriteResult =
   | {
@@ -33,6 +34,7 @@ export type WriteResult =
   | {
       readonly kind: "indeterminate";
       readonly hash: string | null;
+      readonly message?: string;
       readonly reason:
         "recentFailure" | "unknown" | "other" | "timeout" | "disconnect";
     };
@@ -112,6 +114,26 @@ export function createWriteBoundary(
             kind: "indeterminate",
             hash: toHex0x(error.transactionHash),
             reason: "unknown",
+            message: [error.message, error.submissionCause, error.cause]
+              .map((part) =>
+                part instanceof Error
+                  ? part.message
+                  : typeof part === "string"
+                    ? part
+                    : null,
+              )
+              .filter(Boolean)
+              .join(" · "),
+          };
+        if (hash !== null)
+          return {
+            kind: "indeterminate",
+            hash,
+            reason: "other",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Submission failed after signing",
           };
         return {
           kind: "preSubmissionFailure",
@@ -126,13 +148,50 @@ export function createWriteBoundary(
     async observe(hash, timeoutMs = 30_000) {
       try {
         const client = await connection;
-        const receipt = await client.waitForTransactionReceipt(
-          hashFromHex(hash),
-          { timeoutMs },
+        const signal = AbortSignal.timeout(Math.min(timeoutMs, 10_000));
+        const transactionHash = hashFromHex(hash);
+        const network = await client.getNetworkInfo({}, { signal });
+        if (toHex0x(network.networkHash) !== `0x${config.networkId}`)
+          throw new Error("The observation endpoint is on a different network");
+        const receipt = await client.getTransactionReceipt(
+          { transactionHash },
+          { signal },
         );
-        return committed(receipt, hash);
-      } catch {
-        return { kind: "indeterminate", hash, reason: "unknown" };
+        if (receipt) return committed(receipt, hash);
+        const status = await client.getTransactionStatus(
+          { transactionHash },
+          { signal },
+        );
+        if (
+          !(status instanceof UnsupportedRpcValue) &&
+          status.status !== "committed" &&
+          (await isExpiredUncommitted(client, config.networkId, hash, signal))
+        )
+          return {
+            kind: "invalid",
+            hash,
+            reason:
+              "The signed transaction expired without committing. You can submit a new resize.",
+          };
+        return {
+          kind: "indeterminate",
+          hash,
+          reason: "unknown",
+          message:
+            status instanceof UnsupportedRpcValue
+              ? "The node returned an unsupported transaction status. Keep the saved transaction."
+              : `Node status: ${status.status}. No receipt is available. Observe again to check the original transaction.`,
+        };
+      } catch (error) {
+        return {
+          kind: "indeterminate",
+          hash,
+          reason: "unknown",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Transaction observation failed",
+        };
       }
     },
   };

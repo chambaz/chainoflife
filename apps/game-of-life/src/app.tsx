@@ -1,4 +1,18 @@
-import { useEffect, useId, useReducer, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type { VisitorWallet } from "@/wallet/visitor-wallet";
+import { BoardSizeControl } from "@/components/board-size-control";
+import { WorldActivity } from "@/components/world-activity";
+import {
+  markBoardReady,
+  subscribeMeasurements,
+} from "@/transactions/measurements";
 import {
   Activity,
   CircleAlert,
@@ -10,7 +24,10 @@ import {
 } from "lucide-react";
 import type { AppConfig } from "@/config";
 import { createAppClient } from "@/chain/client";
-import { createLifeReadAdapter } from "@/chain/game-of-life";
+import {
+  createLifeReadAdapter,
+  type LifeReadAdapter,
+} from "@/chain/game-of-life";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -24,7 +41,11 @@ import {
 import { WorldViewport } from "@/components/world-viewport";
 import { VisitorControls } from "@/components/visitor-controls";
 import { IndexerClient, type ImmutableSnapshot } from "@/indexer/client";
-import { assertSnapshotEligible, SchemaError } from "@/indexer/schema";
+import {
+  assertSnapshotEligible,
+  compareWorldVersion,
+  SchemaError,
+} from "@/indexer/schema";
 import { createVisiblePoller, type Poller } from "@/polling";
 import {
   INITIAL_SYNCHRONIZATION_STATE,
@@ -45,6 +66,9 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   const stateRef = useRef(state);
   stateRef.current = state;
   const [announcement, setAnnouncement] = useState("");
+  const [wallet, setWallet] = useState<VisitorWallet | null>(null);
+  const [previewSize, setPreviewSize] = useState<number | null>(null);
+  const [resetting, setResetting] = useState(false);
   const [rendererAvailability, setRendererAvailability] =
     useState<RendererAvailability>("initializing");
   const rendererAvailabilityRef = useRef(rendererAvailability);
@@ -60,6 +84,19 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
     }),
   );
   const chainRefresh = useRef<(() => void) | null>(null);
+  const visualizedDigest = state.visualized?.manifest.stateDigest;
+  useEffect(() => {
+    if (!visualizedDigest) return;
+    const recordReady = () => {
+      try {
+        markBoardReady(config, visualizedDigest);
+      } catch (cause) {
+        console.error("Cannot record board-ready timing", cause);
+      }
+    };
+    recordReady();
+    return subscribeMeasurements(config, recordReady);
+  }, [config.networkId, config.contractAddress, visualizedDigest]);
 
   const send = (action: SynchronizationAction) => {
     stateRef.current = synchronizationReducer(stateRef.current, action);
@@ -103,19 +140,15 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
             stateRef.current.pendingSnapshot,
           ].filter((value): value is ImmutableSnapshot => value !== null);
           const newest = known.sort((left, right) =>
-            Number(
-              BigInt(right.manifest.generation) -
-                BigInt(left.manifest.generation),
-            ),
+            Number(compareWorldVersion(right.manifest, left.manifest)),
           )[0];
           if (newest) {
-            const order =
-              BigInt(pointer.generation) - BigInt(newest.manifest.generation);
-            if (order < 0n) {
+            const order = compareWorldVersion(pointer, newest.manifest);
+            if (order < 0) {
               commit(() => send({ type: "artifact-unchanged" }));
               return;
             }
-            if (order === 0n) {
+            if (order === 0) {
               if (pointer.stateDigest === newest.manifest.stateDigest)
                 commit(() => send({ type: "artifact-unchanged" }));
               else
@@ -282,7 +315,21 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   void statusClock;
   return (
     <main className="flex h-dvh min-w-80 flex-col overflow-hidden bg-background text-foreground">
-      <TopBar state={state} rendererAvailability={rendererAvailability} />
+      <TopBar state={state} rendererAvailability={rendererAvailability}>
+        {wallet && config.transactionProfiles && state.chain ? (
+          <BoardSizeControl
+            onResettingChange={setResetting}
+            visualizedEpoch={state.visualized?.manifest.epoch}
+            size={state.chain.width}
+            config={config}
+            profiles={config.transactionProfiles}
+            wallet={wallet}
+            client={rpcClient}
+            onPreview={setPreviewSize}
+            onCommitted={() => chainRefresh.current?.()}
+          />
+        ) : null}
+      </TopBar>
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">
           {rendererSnapshot ? (
@@ -290,6 +337,7 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
               key={rendererKey}
               client={indexer}
               initialSnapshot={rendererSnapshot}
+              previewSize={previewSize}
               initialIdentity={initialIdentity}
               candidate={visualized ? state.candidate : null}
               candidateEpoch={visualized ? state.candidateEpoch : null}
@@ -308,16 +356,20 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
             rendererAvailability={rendererAvailability}
           />
           <MobileSheets
+            reader={chain}
             state={state}
             config={config}
             rendererAvailability={rendererAvailability}
           />
           {config.transactionProfiles ? (
             <VisitorControls
+              resetting={resetting}
               key={`${config.networkId}:${config.contractAddress}`}
               config={config}
               profiles={config.transactionProfiles}
               client={rpcClient}
+              onWalletReady={setWallet}
+              worldSize={state.chain?.width ?? 10_000}
               onCrankCommitted={() => chainRefresh.current?.()}
             />
           ) : null}
@@ -330,6 +382,7 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
           <div className="border-t border-border">
             <DetailsContent state={state} config={config} />
           </div>
+          <WorldActivity reader={chain} />
         </aside>
       </div>
       <p
@@ -347,13 +400,15 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
 function TopBar({
   state,
   rendererAvailability,
+  children,
 }: {
   readonly state: SynchronizationState;
   readonly rendererAvailability: RendererAvailability;
+  readonly children?: ReactNode;
 }) {
   const identity = state.visualized?.manifest;
   return (
-    <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border bg-panel/95 pt-[max(.5rem,var(--safe-top))] pr-[max(.75rem,var(--safe-right))] pb-2 pl-[max(.75rem,var(--safe-left))] sm:pr-[max(1rem,var(--safe-right))] sm:pl-[max(1rem,var(--safe-left))]">
+    <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border bg-panel/95 pt-[max(.5rem,var(--safe-top))] pr-[max(.75rem,var(--safe-right))] pb-2 pl-[max(.75rem,var(--safe-left))] sm:pr-[max(1rem,var(--safe-right))] sm:pl-[max(1rem,var(--safe-left))] xl:grid-cols-[minmax(0,1fr)_auto_auto]">
       <div className="flex min-w-0 items-center gap-2.5">
         <a
           href="/"
@@ -365,11 +420,12 @@ function TopBar({
         <div className="min-w-0">
           <h1 className="truncate text-base font-semibold">Chain of Life</h1>
           <p className="truncate font-mono text-xs text-muted-foreground sm:text-sm">
-            100,000,000 cells
+            {((state.chain?.width ?? 10_000) ** 2).toLocaleString()} cells
           </p>
         </div>
       </div>
-      <div className="hidden items-center gap-6 lg:flex">
+      {children}
+      <div className="hidden items-center gap-6 xl:ml-12 xl:flex">
         <Metric label="On-chain" value={state.chain?.generation ?? "—"} />
         <Metric
           label="Visualized"
@@ -431,10 +487,12 @@ export function GenerationReadout({
 function MobileSheets({
   state,
   config,
+  reader,
   rendererAvailability,
 }: {
   readonly state: SynchronizationState;
   readonly config: Readonly<AppConfig>;
+  readonly reader: LifeReadAdapter;
   readonly rendererAvailability: RendererAvailability;
 }) {
   return (
@@ -462,6 +520,7 @@ function MobileSheets({
               state={state}
               rendererAvailability={rendererAvailability}
             />
+            <WorldActivity reader={reader} />
           </div>
         </SheetContent>
       </Sheet>
@@ -732,8 +791,7 @@ function isBehind(state: SynchronizationState): boolean {
   return Boolean(
     state.chain &&
     state.visualized &&
-    BigInt(state.chain.generation) >
-      BigInt(state.visualized.manifest.generation),
+    compareWorldVersion(state.chain, state.visualized.manifest) > 0,
   );
 }
 

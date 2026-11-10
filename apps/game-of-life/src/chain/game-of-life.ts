@@ -14,20 +14,23 @@ import {
 } from "@/contracts/game-of-life";
 
 export interface ChainMetadata {
-  readonly width: 10_000;
-  readonly height: 10_000;
+  readonly epoch: string;
+  readonly width: number;
+  readonly height: number;
   readonly generation: string;
   readonly seed: string;
   readonly population: string;
   readonly stateDigest: string;
   readonly chunkBytes: 1_000;
-  readonly chunksPerRow: 2;
+  readonly chunksPerRow: number;
   readonly maxQueueLength: number;
 }
 
 export type LifeChainEvent =
   | {
       readonly kind: "WorldInitialized";
+      readonly epoch: string;
+      readonly size: number;
       readonly blockHeight: string;
       readonly transactionHash: string;
       readonly sequenceNumber: number;
@@ -38,6 +41,7 @@ export type LifeChainEvent =
     }
   | {
       readonly kind: "TickRequested";
+      readonly epoch: string;
       readonly blockHeight: string;
       readonly transactionHash: string;
       readonly sequenceNumber: number;
@@ -46,6 +50,7 @@ export type LifeChainEvent =
     }
   | {
       readonly kind: "GenerationAdvanced";
+      readonly epoch: string;
       readonly blockHeight: string;
       readonly transactionHash: string;
       readonly sequenceNumber: number;
@@ -80,11 +85,13 @@ export function createLifeReadAdapter(params: {
       });
       const value = result.value;
       if (
-        value.width !== 10_000n ||
-        value.height !== 10_000n ||
+        value.width < 100n ||
+        value.width > 10_000n ||
+        value.width % 100n !== 0n ||
+        value.height !== value.width ||
         value.chunk_bytes !== 1_000n ||
-        value.chunks_per_row !== 2n ||
-        value.population > 100_000_000n ||
+        value.chunks_per_row !== ((value.width + 7n) / 8n + 999n) / 1_000n ||
+        value.population > value.width * value.height ||
         value.max_queue_len <= 0n ||
         value.max_queue_len > 0xffff_ffffn
       ) {
@@ -93,14 +100,15 @@ export function createLifeReadAdapter(params: {
       return {
         ...result,
         value: {
-          width: 10_000,
-          height: 10_000,
+          epoch: value.epoch.toString(),
+          width: Number(value.width),
+          height: Number(value.height),
           generation: value.generation.toString(),
           seed: value.seed.toString(),
           population: value.population.toString(),
           stateDigest: hex(value.state_digest),
           chunkBytes: 1_000,
-          chunksPerRow: 2,
+          chunksPerRow: Number(value.chunks_per_row),
           maxQueueLength: Number(value.max_queue_len),
         },
       };
@@ -142,6 +150,7 @@ export function createLifeReadAdapter(params: {
           const event = decodeEvent(identified.event);
           if (!event) continue;
           const common = {
+            epoch: event.fields.epoch.toString(),
             blockHeight: identified.blockHeight.toString(),
             transactionHash: hex(identified.transactionHash),
             sequenceNumber: identified.sequenceNumber,
@@ -155,6 +164,7 @@ export function createLifeReadAdapter(params: {
               throw new Error("Invalid WorldInitialized event");
             output.push({
               kind: "WorldInitialized",
+              size: Number(event.fields.size),
               ...common,
               seed: event.fields.seed.toString(),
               maxQueueLength: Number(event.fields.max_queue_len),

@@ -11,7 +11,8 @@ const config = {
   contractAddress: contract,
 };
 const latest = {
-  schemaVersion: 1,
+  epoch: "0",
+  schemaVersion: 2,
   generation: "0",
   stateDigest: digest,
   manifestUrl: `/v1/worlds/${network}/${contract}/${digest}/manifest.json`,
@@ -20,6 +21,7 @@ const latest = {
   publishedAt: "2026-08-28T01:02:03Z",
 };
 const identity = {
+  epoch: "0",
   networkId: network,
   contractAddress: contract,
   generation: "0",
@@ -28,7 +30,7 @@ const identity = {
   stateDigest: digest,
 };
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ...identity,
   width: 10000,
   height: 10000,
@@ -43,7 +45,7 @@ const manifest = {
   },
 };
 const provenance = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,

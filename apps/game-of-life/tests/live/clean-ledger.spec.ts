@@ -38,14 +38,9 @@ test("advances, indexes, visualizes, and recovers one complete world", async ({
   await page.getByRole("button", { name: "Advance 100,000,000 cells" }).click();
   const nextGeneration = initialGeneration + 1;
   await expect(
-    page.getByText(`Advanced to ${nextGeneration}`).first(),
-  ).toBeVisible({
-    timeout: 330_000,
-  });
-  await expect(
     page.getByText(`Ready · generation ${nextGeneration}`),
   ).toBeVisible({
-    timeout: 90_000,
+    timeout: 420_000,
   });
   await expect(
     page.getByText(`Visualized generation ${nextGeneration}.`),
@@ -59,8 +54,18 @@ test("advances, indexes, visualizes, and recovers one complete world", async ({
   ).toBeVisible({
     timeout: 60_000,
   });
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Activity$/ })
+    .click();
   await expect(
-    page.getByText(`Advanced to ${nextGeneration}`).first(),
+    page
+      .getByRole("button", {
+        name: new RegExp(
+          `Copy transaction hash for generation ${nextGeneration}, epoch`,
+        ),
+      })
+      .first(),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 412, height: 915 });

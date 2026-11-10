@@ -14,6 +14,7 @@ import type { LoadedTileData } from "./tile-loader";
 import type { TileBounds } from "./pyramid";
 
 interface Props extends LayerProps {
+  worldSize?: number;
   bounds: TileBounds;
   content: LoadedTileData;
   gpuBudget: ActiveByteBudget;
@@ -44,6 +45,7 @@ layout(std140) uniform lifeUniforms {
   float exact;
   float layerOpacity;
   float devicePixelRatio;
+  float worldSize;
 } life;`,
   uniformTypes: {
     tileOrigin: "vec2<f32>",
@@ -51,6 +53,7 @@ layout(std140) uniform lifeUniforms {
     exact: "f32",
     layerOpacity: "f32",
     devicePixelRatio: "f32",
+    worldSize: "f32",
   },
 };
 const vertex = `#version 300 es
@@ -58,7 +61,7 @@ in vec3 positions; in vec2 texCoords; out vec2 lifeUv;
 void main(void) { geometry.worldPosition = positions; geometry.uv = texCoords; geometry.pickingColor = vec3(1.,0.,0.); gl_Position = project_position_to_clipspace(positions, vec3(0.), vec3(0.), geometry.position); DECKGL_FILTER_GL_POSITION(gl_Position, geometry); lifeUv = texCoords; }`;
 export const LIFE_FRAGMENT_SHADER = `#version 300 es
 precision highp float; precision highp usampler2D; in vec2 lifeUv; out vec4 fragColor;
-void main(void) { vec2 cellUv = lifeUv * 256.; ivec2 texel = clamp(ivec2(floor(cellUv)), ivec2(0), ivec2(255)); vec2 cellMin = life.tileOrigin + vec2(texel) * life.cellsPerTexel; vec2 covered = max(min(vec2(10000.) - cellMin, vec2(life.cellsPerTexel)), vec2(0.)); if (covered.x * covered.y <= 0.) discard; float value = float(texelFetch(integerTexture, texel, 0).r); float density = life.exact > .5 ? value : value / (covered.x * covered.y); vec3 dead = vec3(.025,.055,.051); vec3 live = vec3(.40,1.,.75); vec3 color = mix(dead, live, pow(density, .42)); float devicePixelsPerCell = 1. / max(fwidth(cellUv.x), fwidth(cellUv.y)); float cssPixelsPerCell = devicePixelsPerCell / max(life.devicePixelRatio, 1.); float gridWidth = min(.18, 1. / max(cssPixelsPerCell, 1.)); if (life.exact > .5 && cssPixelsPerCell >= 4. && min(fract(cellUv.x), fract(cellUv.y)) < gridWidth) color *= .42; float alpha = clamp(life.layerOpacity, 0., 1.); fragColor = vec4(color, alpha); DECKGL_FILTER_COLOR(fragColor, geometry); }`;
+void main(void) { vec2 cellUv = lifeUv * 256.; ivec2 texel = clamp(ivec2(floor(cellUv)), ivec2(0), ivec2(255)); vec2 cellMin = life.tileOrigin + vec2(texel) * life.cellsPerTexel; vec2 covered = max(min(vec2(life.worldSize) - cellMin, vec2(life.cellsPerTexel)), vec2(0.)); if (covered.x * covered.y <= 0.) discard; float value = float(texelFetch(integerTexture, texel, 0).r); float density = life.exact > .5 ? value : value / (covered.x * covered.y); vec3 dead = vec3(.025,.055,.051); vec3 live = vec3(.40,1.,.75); vec3 color = mix(dead, live, pow(density, .42)); float devicePixelsPerCell = 1. / max(fwidth(cellUv.x), fwidth(cellUv.y)); float cssPixelsPerCell = devicePixelsPerCell / max(life.devicePixelRatio, 1.); float gridWidth = min(.18, 1. / max(cssPixelsPerCell, 1.)); if (life.exact > .5 && cssPixelsPerCell >= 4. && min(fract(cellUv.x), fract(cellUv.y)) < gridWidth) color *= .42; float alpha = clamp(life.layerOpacity, 0., 1.); fragColor = vec4(color, alpha); DECKGL_FILTER_COLOR(fragColor, geometry); }`;
 
 export class LifeTileTextureLayer extends Layer<Props> {
   declare state: State;
@@ -106,6 +109,7 @@ export class LifeTileTextureLayer extends Layer<Props> {
         exact: content.tile.kind === "cells" ? 1 : 0,
         layerOpacity: this.props.transitionOpacity,
         devicePixelRatio: globalThis.devicePixelRatio || 1,
+        worldSize: this.props.worldSize ?? WORLD_SIZE,
       },
     });
     model.draw(this.context.renderPass);
@@ -217,16 +221,19 @@ function sameBounds(left: TileBounds, right: TileBounds): boolean {
   );
 }
 
-export function clippedBounds(bounds: {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}): TileBounds {
+export function clippedBounds(
+  bounds: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  },
+  worldSize = WORLD_SIZE,
+): TileBounds {
   return {
     left: Math.max(0, bounds.left),
     top: Math.max(0, bounds.top),
-    right: Math.min(WORLD_SIZE, bounds.right),
-    bottom: Math.min(WORLD_SIZE, bounds.bottom),
+    right: Math.min(worldSize, bounds.right),
+    bottom: Math.min(worldSize, bounds.bottom),
   };
 }

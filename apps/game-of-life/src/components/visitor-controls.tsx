@@ -13,11 +13,17 @@ export function VisitorControls({
   profiles,
   client,
   onCrankCommitted,
+  onWalletReady,
+  worldSize = 10_000,
+  resetting = false,
 }: {
   readonly config: Readonly<AppConfig>;
   readonly profiles: LifeTransactionProfiles;
   readonly client: Promise<AppClient>;
   readonly onCrankCommitted: () => void;
+  readonly onWalletReady?: (wallet: VisitorWallet) => void;
+  readonly worldSize?: number;
+  readonly resetting?: boolean;
 }) {
   const [wallet, setWallet] = useState<VisitorWallet | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +43,10 @@ export function VisitorControls({
         ),
       )
       .then((ready) => {
-        if (!disposed) setWallet(ready);
+        if (!disposed) {
+          setWallet(ready);
+          onWalletReady?.(ready);
+        }
       })
       .catch((cause: unknown) => {
         if (!disposed)
@@ -58,6 +67,8 @@ export function VisitorControls({
         wallet={wallet}
         client={client}
         onCrankCommitted={onCrankCommitted}
+        worldSize={worldSize}
+        resetting={resetting}
       />
     );
   return (
