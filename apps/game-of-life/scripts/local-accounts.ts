@@ -11,7 +11,7 @@ import {
 export const localRoot = resolve(
   process.env.CHAIN_OF_LIFE_LOCAL_DIR ?? "../../tmp/chain-of-life",
 );
-export const rpcUrl = process.env.THRUPUT_RPC_URL ?? "http://127.0.0.1:9547";
+export const rpcUrl = process.env.THRUPUT_RPC_URL ?? "http://127.0.0.1:9545";
 
 export async function localAccounts(create = false) {
   await mkdir(localRoot, { recursive: true, mode: 0o700 });

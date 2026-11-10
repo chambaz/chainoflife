@@ -54,7 +54,7 @@ measurements. Browser tests use SwiftShader; timings are not hardware-GPU result
 Setup writes these public values to `.env.local`:
 
 ```text
-VITE_THRUPUT_RPC_URL=http://127.0.0.1:9547
+VITE_THRUPUT_RPC_URL=http://127.0.0.1:9545
 VITE_THRUPUT_NETWORK_ID=<64 lowercase hex characters>
 VITE_GAME_OF_LIFE_CONTRACT_ADDRESS=<0x-prefixed 32-byte hex address>
 VITE_GAME_OF_LIFE_INDEXER_URL=http://127.0.0.1:8787
@@ -94,7 +94,7 @@ histories are scoped to network, caller, and contract.
 
 | Service | Default | Override |
 | --- | --- | --- |
-| Node RPC | `127.0.0.1:9547` | `thruput node --port` and matching `THRUPUT_RPC_URL` for setup |
+| Node RPC | `127.0.0.1:9545` (Thruput default) | `thruput node --port` and matching `THRUPUT_RPC_URL` for setup |
 | Indexer | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during setup |
 | App | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` when running `dev` |
 
@@ -117,9 +117,9 @@ or configure a node. The node's ledger location is selected by `thruput node
 
 Setup reads the node's runtime manifest to find its public faucet address and
 check the network ID. By default it reads
-`tmp/chain-of-life/atomic-node/runtime/runtime-manifest.json`. Set
+`data/runtime/runtime-manifest.json` at the repository root. Set
 `THRUPUT_RUNTIME_MANIFEST` to an absolute path when using another node directory
-or a separate setup directory. Faucet signing keys stay in the node; setup sends
+instead of `data/`. Faucet signing keys stay in the node; setup sends
 funding requests over RPC. Indexer state is separate, as documented above.
 
 ### Start a separate fresh demo

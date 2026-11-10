@@ -130,7 +130,7 @@ if (state.deploymentNonce) {
 const address = parseAddress(state.address);
 const manifestPath =
   process.env.THRUPUT_RUNTIME_MANIFEST ??
-  resolve(localRoot, "atomic-node/runtime/runtime-manifest.json");
+  resolve("../../data/runtime/runtime-manifest.json");
 const runtime = JSON.parse(await readFile(manifestPath, "utf8"));
 assert.equal(
   runtime.networkHash,

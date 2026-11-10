@@ -2,4 +2,4 @@ default_profile = "local"
 
 [profile.local]
 network = "local"
-rpc_url = "http://127.0.0.1:9547"
+rpc_url = "http://127.0.0.1:9545"

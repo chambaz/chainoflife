@@ -37,7 +37,7 @@ const SECURITY_HEADERS = {
 
 export default defineConfig(({ command, mode }) => {
   const environment = loadEnv(mode, root, "");
-  const target = environment.VITE_THRUPUT_RPC_URL ?? "http://127.0.0.1:9547";
+  const target = environment.VITE_THRUPUT_RPC_URL ?? "http://127.0.0.1:9545";
   const indexerTarget =
     environment.VITE_GAME_OF_LIFE_INDEXER_URL ?? "http://127.0.0.1:8787";
   const { networkId, contractAddress } = indexerProxyScope(

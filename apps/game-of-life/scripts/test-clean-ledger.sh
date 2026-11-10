@@ -31,9 +31,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 "${THRUPUT_CLI:-thruput}" build -p game-of-life
 port="$(node -e 'const u = new URL(process.env.THRUPUT_RPC_URL); if (u.hostname !== "127.0.0.1" || u.protocol !== "http:" || !u.port) throw new Error("Use an explicit loopback HTTP port"); process.stdout.write(u.port)')"
-export THRUPUT_RUNTIME_MANIFEST="$CHAIN_OF_LIFE_LOCAL_DIR/atomic-node/runtime/runtime-manifest.json"
+export THRUPUT_RUNTIME_MANIFEST="$CHAIN_OF_LIFE_LOCAL_DIR/data/runtime/runtime-manifest.json"
 "${THRUPUT_CLI:-thruput}" node --port "$port" \
-  --data-dir "$CHAIN_OF_LIFE_LOCAL_DIR/atomic-node" \
+  --data-dir "$CHAIN_OF_LIFE_LOCAL_DIR/data" \
   --network-config max_tx_gas=60000000000 \
   --block-driver interval --block-interval-ms 1000 \
   --non-interactive --no-ui >"$CHAIN_OF_LIFE_LOCAL_DIR/node.log" 2>&1 &
