@@ -140,13 +140,11 @@ test("reloads evidence after acquiring the lock instead of releasing another tab
 
 test("queued recovery leaves a terminal reset unchanged", async () => {
   const boundary = {
-    execute: vi
-      .fn()
-      .mockResolvedValue({
-        kind: "preSubmissionFailure",
-        hash: null,
-        message: "Offline",
-      }),
+    execute: vi.fn().mockResolvedValue({
+      kind: "preSubmissionFailure",
+      hash: null,
+      message: "Offline",
+    }),
     observe: vi.fn(),
   };
   const params = { config, profiles, wallet, boundary };

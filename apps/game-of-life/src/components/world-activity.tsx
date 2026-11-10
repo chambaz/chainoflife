@@ -150,9 +150,7 @@ function GenerationActivityItem({
   };
   return (
     <li className="grid text-sm">
-      <p className="text-muted-foreground">
-        Generation {generation}
-      </p>
+      <p className="text-muted-foreground">Generation {generation}</p>
       <div className="flex items-center gap-2">
         <p className="min-w-0 font-mono text-xs" title={hash}>
           {abbreviate(hash)}
