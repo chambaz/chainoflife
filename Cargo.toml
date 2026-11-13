@@ -4,10 +4,10 @@ cargo-features = ["trim-paths"] #unstable
 resolver = "3"
 
 members = [
-    "contracts/game-of-life",
-    "helpers/game-of-life-core",
-    "helpers/game-of-life-indexer",
-    "sim-fixtures/life-storage-admission",
+    "contract",
+    "core",
+    "indexer",
+    "tests/storage-admission",
 ]
 
 [workspace.package]

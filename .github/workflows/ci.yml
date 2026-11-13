@@ -16,10 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [game-of-life, game-of-life-renderer-fixture]
+        directory: [".", "tests/renderer"]
     defaults:
       run:
-        working-directory: apps/${{ matrix.app }}
+        working-directory: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -57,6 +57,6 @@ jobs:
         run: |
           cargo install --version 0.43.0 --locked thruput
           export THRUPUT_CLI="$(command -v thruput)"
-          npm --prefix apps/game-of-life ci
-          npm --prefix apps/game-of-life run check:contracts
+          npm ci
+          npm run check:contracts
           thruput build -p life-storage-admission -- --locked

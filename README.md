@@ -63,7 +63,6 @@ thruput node \
 Keep the node running. In another terminal, from the repository root:
 
 ```sh
-cd apps/game-of-life
 npm ci
 npm run setup:local
 npm run dev
@@ -91,18 +90,18 @@ repository root. The block flags produce blocks once per second.
 Stop each terminal with Ctrl-C. To resume the same world, repeat the `thruput node`
 command above and run `npm run dev`; setup is only needed for the first deployment.
 
-For interrupted setup, keep the same node data and run from `apps/game-of-life`:
+For interrupted setup, keep the same node data and run from the repository root:
 
 ```sh
 npm run setup:local -- --resume
 ```
 
 For custom ports, data directories, or a fresh world, see
-[local configuration and recovery](apps/game-of-life/README.md).
+[local configuration and recovery](docs/development.md).
 
 ## Run against Futurenet
 
-From `apps/game-of-life`, use CLI 0.43.0 for Futurenet's current runtime:
+From the repository root, use CLI 0.43.0 for Futurenet's current runtime:
 
 ```sh
 THRUPUT_CLI=/path/to/compatible/thruput npm run deploy -- --preset futurenet
@@ -114,18 +113,21 @@ and the app hides the size control. The indexer and app run on your machine.
 `devnet` is an alias for `futurenet`.
 
 For custom sizes, build configuration, and recovery, see the
-[deployment guide](apps/game-of-life/README.md#deployment).
+[deployment guide](docs/development.md#deployment).
 
 ## Code
 
 | Directory | Purpose |
 | --- | --- |
-| [contracts/game-of-life](contracts/game-of-life) | Atomic world contract and storage layout |
-| [helpers/game-of-life-core](helpers/game-of-life-core) | Shared simulation, deterministic initialization, and digest |
-| [helpers/game-of-life-indexer](helpers/game-of-life-indexer) | Verified snapshots, SQLite state, and tile HTTP service |
-| [apps/game-of-life](apps/game-of-life) | Explorer, browser wallet, local setup, and tests |
-| [apps/game-of-life-renderer-fixture](apps/game-of-life-renderer-fixture) | Isolated renderer checks |
-| [sim-fixtures/life-storage-admission](sim-fixtures/life-storage-admission) | Storage-funding workload fixture |
+| [web](web) | Explorer and browser wallet |
+| [contract](contract) | Atomic world contract and storage layout |
+| [core](core) | Simulation, initialization, and digest |
+| [indexer](indexer) | Verified snapshots, SQLite state, and tile HTTP service |
+| [scripts](scripts) | Deployment, development, build, and benchmarks |
+| [tests](tests) | Browser checks, live checks, and isolated fixtures |
+
+See [architecture](docs/architecture.md), [development](docs/development.md),
+and [benchmarks](docs/benchmarks.md). Run npm commands from the repository root.
 
 ## License
 
