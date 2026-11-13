@@ -44,13 +44,12 @@ sudo apt-get install build-essential cmake pkg-config libssl-dev util-linux libj
 Install the Thruput CLI:
 
 ```sh
-cargo install --version 0.43.0 --locked thruput
+cargo install --version 0.45.0 --locked thruput
 ```
 
-`thruput node` manages its compatible runtime automatically.
-This demo requires **Thruput CLI 0.43.0** (runtime hog-devnode 0.1.31). CLI
-0.44.0 builds an artifact format that this runtime rejects. Set `THRUPUT_CLI`
-to select a compatible executable.
+This demo uses **Thruput CLI 0.45.0**, which builds v6 contract artifacts.
+`thruput node` manages its compatible runtime (hog-devnode 0.1.33)
+automatically. Set `THRUPUT_CLI` to select another executable.
 
 ### Start the demo
 

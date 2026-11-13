@@ -53,7 +53,7 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
       - name: Verify guest builds and generated bindings
         run: |
-          cargo install --version 0.43.0 --locked thruput
+          cargo install --version 0.45.0 --locked thruput
           export THRUPUT_CLI="$(command -v thruput)"
           npm ci
           npm run check:contracts
