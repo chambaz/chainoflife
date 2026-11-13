@@ -22,11 +22,11 @@ export function deploymentConfig(
       help: { type: "boolean", default: false },
     },
   });
+  const preset = values.preset;
   assert(
-    ["local", "futurenet", "devnet"].includes(values.preset),
-    "Preset must be local or futurenet (devnet is an alias)",
+    preset === "local" || preset === "futurenet",
+    "Preset must be local or futurenet",
   );
-  const preset = values.preset === "devnet" ? "futurenet" : values.preset;
   const mode = values.mode ?? (preset === "local" ? "configurable" : "fixed");
   assert(
     mode === "configurable" || mode === "fixed",
@@ -77,10 +77,7 @@ export function deploymentConfig(
         repoPath(preset === "local" ? ".env.local" : ".env.futurenet"),
     ),
     manifest: manifest ? resolve(manifest) : null,
-    journal: resolve(
-      stateDir,
-      env.GAME_OF_LIFE_DEPLOYMENT_JOURNAL ?? "deployment.json",
-    ),
+    journal: resolve(stateDir, "deployment.json"),
     deploymentGas: fullBudget ? 60_000_000_000n : 950_000_000n,
     deploymentTargetGas: fullBudget ? 59_000_000_000n : 945_000_000n,
     crankGas: fullBudget ? 10_010_000_000n : 950_000_000n,

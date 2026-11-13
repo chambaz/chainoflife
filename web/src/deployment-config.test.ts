@@ -5,7 +5,7 @@ import { deploymentConfig } from "../../scripts/deployment-config";
 describe("deployment presets", () => {
   test("separates local and public worlds and evidence", () => {
     const local = deploymentConfig([], {});
-    const remote = deploymentConfig(["--preset", "devnet"], {});
+    const remote = deploymentConfig(["--preset", "futurenet"], {});
     expect(local).toMatchObject({ mode: "configurable", size: 10000 });
     expect(remote).toMatchObject({
       preset: "futurenet",
@@ -42,6 +42,7 @@ describe("deployment presets", () => {
     });
   });
   test.each([
+    ["--preset", "devnet"],
     ["--size", "101"],
     ["--seed", "-1"],
     ["--mode", "unknown"],

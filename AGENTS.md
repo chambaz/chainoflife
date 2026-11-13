@@ -46,19 +46,11 @@ infrastructure unless explicitly requested.
 
 ## Verification
 
-From the repository root, run `npm run typecheck`, `npm test`, `npm run build`,
-and `npm run test:chromium` for browser changes. Chromium must be installed;
-`CHROMIUM_PATH` selects its executable.
+Run the checks in [docs/development.md](docs/development.md#verification) that
+match your change. Rust changes need the Rust checks. Initialization, simulation,
+or digest changes also need the core's release-mode full-scale reference test.
+Contract or generator changes need `npm run check:contracts`.
 
-For Rust changes, run `cargo fmt --all --check`,
-`cargo test --locked -p game-of-life-core -p game-of-life-indexer`, and
-`cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings`.
-Run the core's ignored full-scale reference test in release mode after changes
-to initialization, simulation, or digest encoding.
-
-Run `npm run check:contracts` after contract or generator changes. Live checks
-require CLI 0.43.0 and its compatible runtime: `test:clean-ledger` creates an
-isolated ledger, and `test:browser:local` uses `GAME_OF_LIFE_APP_URL`.
 Full-world ticks exceed the default gas cap; use the supplied node configuration.
 Report blocked live checks explicitly. Fixtures and old measurements are not
 fresh live acceptance.

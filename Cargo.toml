@@ -16,9 +16,6 @@ license = "Apache-2.0"
 authors = ["Chain of Life contributors"]
 publish = false
 repository = "https://github.com/chambaz/chainoflife"
-homepage = "https://thruput.network"
-keywords = ["thruput"]
-categories = ["blockchain"]
 
 [workspace.dependencies]
 # from sdk_rs repo:

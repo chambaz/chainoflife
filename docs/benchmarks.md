@@ -107,8 +107,8 @@ and retained generation 4 after reload. The fixed world had no size control.
 
 ## Verification
 
-Formatting, typecheck, 226 app unit tests, 30 Chromium tests, both app builds, and
-generated-binding checks passed. Rust formatting, 60 core/indexer tests, workspace
+Formatting, typecheck, app unit tests, Chromium tests, both app builds, and
+generated-binding checks passed. Rust formatting, core and indexer tests, workspace
 Clippy, and the release-mode full-scale reference test passed. Fresh-ledger
 acceptance passed fixed/configurable initialization and resize checks plus the existing
 atomic rollback test, including setup resume. All 66 public deployment, request,

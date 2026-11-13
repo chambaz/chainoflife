@@ -15,9 +15,8 @@ npm run build -- --config .env.futurenet
 Local defaults to a resizable 10,000² world. Futurenet uses
 `https://rpc.thruput.network` and a fixed 2,900² world, with 950-million root gas
 and 945-million target gas. The contract enforces the fixed size.
-`setup:local` is a local shortcut; `devnet` aliases `futurenet`.
-Use CLI 0.43.0 for the tested Futurenet runtime. Set `THRUPUT_CLI` to select its
-executable. Deployment builds the contract and verifies three complete updates.
+Use the [required CLI](../README.md#requirements); set `THRUPUT_CLI` to select
+its executable. Deployment builds the contract and verifies three complete updates.
 
 Flags override presets: `--rpc-url`, `--mode configurable|fixed`, `--size`,
 `--seed`, `--output`, `--state-dir`, and `--runtime-manifest`.
@@ -36,9 +35,10 @@ and amount only when explicitly requested. Keep the complete deployment director
 ## Configuration and state
 
 Deployment writes public app settings to `.env.local` or `.env.futurenet`.
-`dev` defaults to `.env.local`; selecting a file isolates its `VITE_` settings
-from other environment files and inherited values. `dev` starts the indexer and
-Vite. Run the local node separately. Remote RPC URLs can use HTTP or HTTPS.
+`dev` and `build` read `.env.local` unless `--config` selects another file.
+The app receives only the `VITE_` settings in the selected file; inherited
+values are ignored. `dev` starts the indexer and Vite. Run the local node
+separately. Remote RPC URLs can use HTTP or HTTPS.
 
 | State | Location |
 | --- | --- |
@@ -94,7 +94,9 @@ cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
 ```
 
 Chromium defaults to `/usr/bin/chromium`; override with `CHROMIUM_PATH`.
-`generate:contracts` regenerates bindings; `check:contracts` checks for drift.
+`test:chromium` serves the app with the fixture settings in
+`tests/support/browser.env`. `generate:contracts` regenerates bindings;
+`check:contracts` checks for drift.
 After simulation, initialization, or digest changes, also run:
 
 ```sh
@@ -102,7 +104,7 @@ cargo test --locked -p game-of-life-core --release \
   full_scale_generation_one_vector -- --ignored
 ```
 
-Live checks require CLI 0.43.0 and its compatible runtime:
+Live checks require the [required CLI](../README.md#requirements) and its runtime:
 
 ```sh
 # Creates an isolated ledger and restores .env.local on exit.

@@ -4,8 +4,8 @@ This isolated fixture tests deck.gl and luma.gl behavior with a small synthetic
 world. It retains its own implementation and lockfile so dependency-level failures
 can be reproduced without the app, wallet, or indexer.
 
-Its 14 unit tests cover tile selection, parent fallback, clipping, and hysteresis.
-Its five Chromium probes check integer texture sampling, exact-cell decoding,
+Its unit tests cover tile selection, parent fallback, clipping, and hysteresis.
+Its Chromium probes check integer texture sampling, exact-cell decoding,
 GPU resource release, digest isolation, partial-edge pixels, and controller bounds.
 
 The app's tests cover production rendering, snapshot transitions, network failures,

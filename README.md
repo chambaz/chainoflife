@@ -42,11 +42,13 @@ sudo apt-get install build-essential cmake pkg-config libssl-dev util-linux libj
 Install the Thruput CLI:
 
 ```sh
-cargo install thruput
+cargo install --version 0.43.0 --locked thruput
 ```
 
 `thruput node` manages its compatible runtime automatically.
-This demo was tested with Thruput CLI 0.43.0 and hog-devnode 0.1.31.
+This demo requires **Thruput CLI 0.43.0** (runtime hog-devnode 0.1.31). CLI
+0.44.0 builds an artifact format that this runtime rejects. Set `THRUPUT_CLI`
+to select a compatible executable.
 
 ### Start the demo
 
@@ -64,7 +66,7 @@ Keep the node running. In another terminal, from the repository root:
 
 ```sh
 npm ci
-npm run setup:local
+npm run deploy -- --preset local
 npm run dev
 ```
 
@@ -93,7 +95,7 @@ command above and run `npm run dev`; setup is only needed for the first deployme
 For interrupted setup, keep the same node data and run from the repository root:
 
 ```sh
-npm run setup:local -- --resume
+npm run deploy -- --preset local --resume
 ```
 
 For custom ports, data directories, or a fresh world, see
@@ -101,7 +103,7 @@ For custom ports, data directories, or a fresh world, see
 
 ## Run against Futurenet
 
-From the repository root, use CLI 0.43.0 for Futurenet's current runtime:
+From the repository root, with a [compatible CLI](#requirements):
 
 ```sh
 THRUPUT_CLI=/path/to/compatible/thruput npm run deploy -- --preset futurenet
@@ -110,7 +112,6 @@ npm run dev -- --config .env.futurenet
 
 This deploys a fixed **2,900 × 2,900** world. The contract rejects size changes,
 and the app hides the size control. The indexer and app run on your machine.
-`devnet` is an alias for `futurenet`.
 
 For custom sizes, build configuration, and recovery, see the
 [deployment guide](docs/development.md#deployment).
