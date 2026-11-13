@@ -132,80 +132,37 @@ pub struct SnapshotIdentity {
     pub state_digest: [u8; 32],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum EvidenceKind {
-    WorldInitializedEvent,
-    GenerationAdvancedEvent,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EventKind {
-    WorldInitialized,
-    GenerationAdvanced,
-}
-
+/// Verification record for one published snapshot. It binds the verified
+/// world identity to the block whose state was downloaded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifeProvenance {
-    pub epoch: String,
     pub schema_version: u8,
     pub network_id: String,
     pub contract_address: String,
+    pub epoch: String,
     pub generation: String,
     pub seed: String,
     pub population: String,
     pub state_digest: String,
     pub source_block_height: String,
     pub source_block_hash: String,
-    pub evidence_kind: EvidenceKind,
-    pub transaction_hash: Option<String>,
-    pub event_index: Option<u32>,
-    pub event_kind: Option<EventKind>,
-    pub request_id: Option<String>,
-    pub requester: Option<String>,
     pub verified_at: String,
 }
 
 impl LifeProvenance {
     pub fn validate(&self) -> Result<()> {
-        parse_u64("epoch", &self.epoch)?;
         require(self.schema_version == 2, "schemaVersion", "must be 2")?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
+        parse_u64("epoch", &self.epoch)?;
+        parse_u64("generation", &self.generation)?;
         parse_u64("seed", &self.seed)?;
-        let generation = parse_u64("generation", &self.generation)?;
         parse_u64("population", &self.population)?;
         validate_hex32("stateDigest", &self.state_digest)?;
         parse_u64("sourceBlockHeight", &self.source_block_height)?;
         validate_hex32("sourceBlockHash", &self.source_block_hash)?;
-        validate_timestamp("verifiedAt", &self.verified_at)?;
-
-        match self.evidence_kind {
-            EvidenceKind::WorldInitializedEvent => {
-                require(
-                    generation == 0,
-                    "generation",
-                    "WorldInitialized evidence requires generation 0",
-                )?;
-                validate_event_common(self, EventKind::WorldInitialized)?;
-                require(
-                    self.request_id.is_none() && self.requester.is_none(),
-                    "evidence",
-                    "initialization cannot contain request fields",
-                )
-            }
-            EvidenceKind::GenerationAdvancedEvent => {
-                require(
-                    generation > 0,
-                    "generation",
-                    "GenerationAdvanced evidence requires generation greater than 0",
-                )?;
-                validate_event_common(self, EventKind::GenerationAdvanced)?;
-                validate_hex32("requestId", required(&self.request_id, "requestId")?)?;
-                validate_hex32("requester", required(&self.requester, "requester")?)
-            }
-        }
+        validate_timestamp("verifiedAt", &self.verified_at)
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
@@ -221,19 +178,6 @@ impl LifeProvenance {
             && self.population == identity.population.to_string()
             && self.state_digest == hex32(&identity.state_digest)
     }
-}
-
-fn validate_event_common(value: &LifeProvenance, expected: EventKind) -> Result<()> {
-    validate_hex32(
-        "transactionHash",
-        required(&value.transaction_hash, "transactionHash")?,
-    )?;
-    required(&value.event_index, "eventIndex")?;
-    require(
-        value.event_kind == Some(expected),
-        "eventKind",
-        "does not match evidence kind",
-    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -385,13 +329,6 @@ pub(crate) fn parse_u64(field: &'static str, value: &str) -> Result<u64> {
     value.parse().map_err(|_| Error::Schema {
         field,
         reason: "must be a canonical decimal u64",
-    })
-}
-
-fn required<'a, T>(value: &'a Option<T>, field: &'static str) -> Result<&'a T> {
-    value.as_ref().ok_or(Error::Schema {
-        field,
-        reason: "is required",
     })
 }
 

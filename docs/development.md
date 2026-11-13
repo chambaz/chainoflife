@@ -14,9 +14,16 @@ npm run build -- --config .env.futurenet
 
 Local defaults to a resizable 10,000² world. Futurenet uses
 `https://rpc.thruput.network` and a fixed 2,900² world, with 950-million root gas
-and 945-million target gas. The contract enforces the fixed size.
+and 945-million target gas for each advance. Configurable worlds and worlds
+larger than 3,000² use 10.01-billion root gas and 10-billion target gas.
+The contract enforces the fixed size.
 Use the [required CLI](../README.md#requirements); set `THRUPUT_CLI` to select
-its executable. Deployment builds the contract and verifies three complete updates.
+its executable.
+
+Deployment creates and funds one deployment account, then deploys and
+initializes the world in one transaction. It verifies the committed
+generation-zero metadata and writes the environment file. It does not advance
+the world.
 
 Flags override presets: `--rpc-url`, `--mode configurable|fixed`, `--size`,
 `--seed`, `--output`, `--state-dir`, and `--runtime-manifest`.
@@ -29,8 +36,9 @@ npm run dev -- --config .env.small
 
 Use a separate state directory and output file for each deployment.
 After interruption, repeat the same command with `--resume`. Resume observes
-saved transaction hashes. It reuses a hashless funding attempt's saved nonce
-and amount only when explicitly requested. Keep the complete deployment directory.
+the saved transaction hash and never signs or submits that transaction again.
+It reuses a hashless funding attempt's saved nonce and amount only when
+explicitly requested. Keep the complete deployment directory.
 
 ## Configuration and state
 
@@ -43,8 +51,8 @@ separately. Remote RPC URLs can use HTTP or HTTPS.
 | State | Location |
 | --- | --- |
 | Local ledger | `data/` |
-| Deployment keys, journal, signed evidence | `.local/deployments/<preset>/` |
-| Indexer database and tiles | `.local/indexer/<network>/<contract>/` |
+| Deployment key, journal, signed evidence | `.local/deployments/<preset>/` |
+| Indexer tiles | `.local/indexer/<network>/<contract>/artifacts/` |
 | Reports and benchmarks | `.tmp/` |
 | Public app settings | `.env.local`, `.env.futurenet` |
 
@@ -57,8 +65,8 @@ Move complete state directories only while their services are stopped.
 | Indexer | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during deployment |
 | App | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` during `dev` |
 
-The indexer URL must be an origin root. Set `GAME_OF_LIFE_ARTIFACT_ROOT` and
-`GAME_OF_LIFE_INDEXER_DB` to override indexer storage. See the
+The indexer URL must be an origin root. Set `GAME_OF_LIFE_ARTIFACT_ROOT` to
+override indexer storage. See the
 [indexer README](../indexer/README.md) for standalone operation.
 
 Local deployment reads `data/runtime/runtime-manifest.json` for the public
@@ -107,12 +115,22 @@ cargo test --locked -p game-of-life-core --release \
 Live checks require the [required CLI](../README.md#requirements) and its runtime:
 
 ```sh
-# Creates an isolated ledger and restores .env.local on exit.
+# Creates an isolated ledger, deploys, resumes, runs the local integration
+# checks, and restores .env.local on exit.
 npm run test:clean-ledger
 # Uses an existing deployment and running app.
 RUN_GAME_OF_LIFE_LOCAL_INTEGRATION=1 npm run test:integration:local
 GAME_OF_LIFE_APP_URL=http://127.0.0.1:5173 npm run test:browser:local
 ```
+
+The local integration checks create and fund new test accounts from the local
+faucet. They save keys, funding intent, and signed transactions under
+`.local/deployments/<preset>/integration/`. They cover initialization and
+resize policy, concurrent advances, a rejected under-gassed advance, a
+full-size advance, and a reset of the deployed world. On the clean ledger, the
+full-size advance must match the core generation-one reference vector. These
+checks change the deployed world: they advance it and reset a configurable
+world to 100 cells per side.
 
 The live browser checks work with any world size. The resize check needs a
 configurable world: it advances at 100, 1,000, 10,000, and 100 cells per side,

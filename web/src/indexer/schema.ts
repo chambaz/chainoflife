@@ -46,26 +46,16 @@ export interface LatestPointer {
   readonly publishedAt: string;
 }
 
-export type EvidenceKind =
-  "world-initialized-event" | "generation-advanced-event";
-
 export interface LifeProvenance extends SnapshotIdentity {
   readonly schemaVersion: 2;
   readonly sourceBlockHeight: string;
   readonly sourceBlockHash: string;
-  readonly evidenceKind: EvidenceKind;
-  readonly transactionHash: string | null;
-  readonly eventIndex: number | null;
-  readonly eventKind: "WorldInitialized" | "GenerationAdvanced" | null;
-  readonly requestId: string | null;
-  readonly requester: string | null;
   readonly verifiedAt: string;
 }
 
 export interface CurrentWorldMetadata {
   readonly epoch: string;
-  readonly width: number;
-  readonly height: number;
+  readonly size: number;
   readonly generation: string;
   readonly seed: string;
   readonly population: string;
@@ -207,62 +197,14 @@ export function parseProvenance(input: unknown): LifeProvenance {
     "stateDigest",
     "sourceBlockHeight",
     "sourceBlockHash",
-    "evidenceKind",
-    "transactionHash",
-    "eventIndex",
-    "eventKind",
-    "requestId",
-    "requester",
     "verifiedAt",
   ]);
   literal(value.schemaVersion, 2, "schemaVersion");
-  const identity = parseIdentity(value);
-  const evidenceKind = oneOf(
-    value.evidenceKind,
-    ["world-initialized-event", "generation-advanced-event"] as const,
-    "evidenceKind",
-  );
-  const transactionHash = nullableHex(value.transactionHash, "transactionHash");
-  const eventIndex = nullableInteger(value.eventIndex, "eventIndex");
-  const eventKind = nullableOneOf(
-    value.eventKind,
-    ["WorldInitialized", "GenerationAdvanced"] as const,
-    "eventKind",
-  );
-  const requestId = nullableHex(value.requestId, "requestId");
-  const requester = nullableHex(value.requester, "requester");
-  if (evidenceKind === "world-initialized-event") {
-    if (
-      identity.generation !== "0" ||
-      transactionHash === null ||
-      eventIndex === null ||
-      eventKind !== "WorldInitialized" ||
-      requestId !== null ||
-      requester !== null
-    ) {
-      throw new SchemaError("WorldInitialized provenance fields disagree");
-    }
-  } else if (
-    identity.generation === "0" ||
-    transactionHash === null ||
-    eventIndex === null ||
-    eventKind !== "GenerationAdvanced" ||
-    requestId === null ||
-    requester === null
-  ) {
-    throw new SchemaError("GenerationAdvanced provenance fields disagree");
-  }
   return {
-    ...identity,
+    ...parseIdentity(value),
     schemaVersion: 2,
     sourceBlockHeight: decimal(value.sourceBlockHeight, "sourceBlockHeight"),
     sourceBlockHash: canonicalHex32(value.sourceBlockHash, "sourceBlockHash"),
-    evidenceKind,
-    transactionHash,
-    eventIndex,
-    eventKind,
-    requestId,
-    requester,
     verifiedAt: date(value.verifiedAt, "verifiedAt"),
   };
 }
@@ -311,10 +253,16 @@ export function assertSnapshotEligible(
   const order = compareWorldVersion(manifest, current);
   if (order > 0)
     throw new SchemaError("snapshot is ahead of accepted chain metadata");
-  if (order === 0)
-    for (const key of ["width", "height", "population", "stateDigest"] as const)
-      if (manifest[key] !== current[key])
-        throw new SchemaError(`snapshot and current chain ${key} disagree`);
+  if (order !== 0) return;
+  const mismatch = (
+    [
+      ["size", manifest.width, current.size],
+      ["population", manifest.population, current.population],
+      ["stateDigest", manifest.stateDigest, current.stateDigest],
+    ] as const
+  ).find(([, snapshot, chain]) => snapshot !== chain);
+  if (mismatch)
+    throw new SchemaError(`snapshot and current chain ${mismatch[0]} disagree`);
 }
 
 function canonicalHex32(input: unknown, field: string): string {
@@ -390,31 +338,4 @@ function literal<T extends string | number | boolean>(
 ): asserts input is T {
   if (input !== expected)
     throw new SchemaError(`${field} must be ${String(expected)}`);
-}
-function oneOf<const T extends readonly string[]>(
-  input: unknown,
-  values: T,
-  field: string,
-): T[number] {
-  const value = string(input, field);
-  if (!values.includes(value)) throw new SchemaError(`${field} is unsupported`);
-  return value as T[number];
-}
-function nullableOneOf<const T extends readonly string[]>(
-  input: unknown,
-  values: T,
-  field: string,
-): T[number] | null {
-  return input === null ? null : oneOf(input, values, field);
-}
-function nullableHex(input: unknown, field: string): string | null {
-  return input === null ? null : canonicalHex32(input, field);
-}
-function nullableInteger(input: unknown, field: string): number | null {
-  return input === null ? null : positiveIntegerOrZero(input, field);
-}
-function positiveIntegerOrZero(input: unknown, field: string): number {
-  if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0)
-    throw new SchemaError(`${field} must be a nonnegative safe integer`);
-  return input;
 }

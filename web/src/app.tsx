@@ -37,6 +37,7 @@ import {
   SchemaError,
 } from "@/indexer/schema";
 import { createVisiblePoller, type Poller } from "@/polling";
+import { useWorldWrite } from "@/transactions/use-world-write";
 import {
   INITIAL_SYNCHRONIZATION_STATE,
   synchronizationReducer,
@@ -57,7 +58,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   const [announcement, setAnnouncement] = useState("");
   const [wallet, setWallet] = useState<VisitorWallet | null>(null);
   const [previewSize, setPreviewSize] = useState<number | null>(null);
-  const [resetting, setResetting] = useState(false);
   const [rendererAvailability, setRendererAvailability] =
     useState<RendererAvailability>("initializing");
   const rendererAvailabilityRef = useRef(rendererAvailability);
@@ -72,6 +72,17 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
     }),
   );
   const chainRefresh = useRef<(() => void) | null>(null);
+  const writes = useWorldWrite(config, wallet, rpcClient, () =>
+    chainRefresh.current?.(),
+  );
+  const write = writes.write;
+  // A reset stays in progress until its new epoch is visible.
+  const resetting =
+    write?.kind === "resize" &&
+    (writes.busy ||
+      writes.pending ||
+      (write.status === "committed" &&
+        BigInt(state.visualized?.manifest.epoch ?? -1) < BigInt(write.epoch)));
 
   const send = (action: SynchronizationAction) => {
     stateRef.current = synchronizationReducer(stateRef.current, action);
@@ -249,17 +260,12 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   return (
     <main className="flex h-dvh min-w-80 flex-col overflow-hidden bg-background text-foreground">
       <TopBar state={state} rendererAvailability={rendererAvailability}>
-        {wallet && config.transactionProfiles && state.chain?.resizable ? (
+        {wallet && state.chain?.resizable ? (
           <BoardSizeControl
-            onResettingChange={setResetting}
-            visualizedEpoch={state.visualized?.manifest.epoch}
-            size={state.chain.width}
-            config={config}
-            profiles={config.transactionProfiles}
-            wallet={wallet}
-            client={rpcClient}
+            size={state.chain.size}
+            writes={writes}
+            resetting={resetting}
             onPreview={setPreviewSize}
-            onCommitted={() => chainRefresh.current?.()}
           />
         ) : null}
       </TopBar>
@@ -289,18 +295,15 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
             rendererAvailability={rendererAvailability}
           />
           <MobileSheets reader={chain} state={state} config={config} />
-          {config.transactionProfiles ? (
-            <VisitorControls
-              resetting={resetting}
-              key={`${config.networkId}:${config.contractAddress}`}
-              config={config}
-              profiles={config.transactionProfiles}
-              client={rpcClient}
-              onWalletReady={setWallet}
-              worldSize={state.chain?.width ?? null}
-              onCrankCommitted={() => chainRefresh.current?.()}
-            />
-          ) : null}
+          <VisitorControls
+            key={`${config.networkId}:${config.contractAddress}`}
+            config={config}
+            client={rpcClient}
+            onWalletReady={setWallet}
+            worldSize={state.chain?.size ?? null}
+            writes={writes}
+            resetting={resetting}
+          />
         </div>
         <aside className="hidden min-h-0 w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-panel/95 lg:flex">
           <DetailsContent state={state} config={config} />
@@ -343,7 +346,7 @@ function TopBar({
           <h1 className="truncate text-base font-semibold">Chain of Life</h1>
           <p className="truncate font-mono text-xs text-muted-foreground sm:text-sm">
             {state.chain
-              ? `${(state.chain.width ** 2).toLocaleString()} cells`
+              ? `${(state.chain.size ** 2).toLocaleString()} cells`
               : "Loading world"}
           </p>
         </div>

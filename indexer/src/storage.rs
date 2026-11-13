@@ -43,7 +43,6 @@ pub struct Publisher {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadyIdentity {
     pub epoch: u64,
-    pub source_block_height: u64,
     pub generation: u64,
     pub state_digest: String,
 }
@@ -93,6 +92,32 @@ impl Publisher {
                 self.verify_pointer_ready(network, contract, scope, &latest)?;
                 Ok(Some(latest))
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(io(path, source)),
+        }
+    }
+
+    /// Returns the provenance of an existing digest directory, complete or
+    /// interrupted. Provenance is installed before the manifest.
+    pub fn provenance(
+        &self,
+        network: &str,
+        contract: &str,
+        digest: &str,
+    ) -> Result<Option<LifeProvenance>, StorageError> {
+        validate_scope(network, contract)?;
+        if !is_hex32(digest) {
+            return Err(StorageError::InvalidPath(digest.into()));
+        }
+        let path = self
+            .root
+            .join("v1/worlds")
+            .join(network)
+            .join(contract)
+            .join(digest)
+            .join("provenance.json");
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(LifeProvenance::from_json(&bytes)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(io(path, source)),
         }
@@ -187,14 +212,9 @@ impl Publisher {
             {
                 continue;
             }
-            let (manifest, provenance) =
-                self.verify_ready(network, contract, &entry.path(), &digest)?;
+            let (manifest, _) = self.verify_ready(network, contract, &entry.path(), &digest)?;
             identities.push(ReadyIdentity {
                 epoch: parse_u64("epoch", &manifest.epoch)?,
-                source_block_height: parse_u64(
-                    "sourceBlockHeight",
-                    &provenance.source_block_height,
-                )?,
                 generation: parse_u64("generation", &manifest.generation)?,
                 state_digest: digest,
             });

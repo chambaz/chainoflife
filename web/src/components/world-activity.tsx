@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { abbreviate } from "@/lib/format-identifier";
 import type { GenerationEvent, LifeReadAdapter } from "@/chain/game-of-life";
 
+const ACTIVITY_LIMIT = 50;
+
 export function WorldActivity({
   reader,
 }: {
@@ -40,9 +42,9 @@ export function WorldActivity({
       if (running || document.visibilityState !== "visible") return;
       running = true;
       try {
-        const generations = await reader.generations(0n);
+        const generations = await reader.recentGenerations(ACTIVITY_LIMIT);
         if (disposed) return;
-        setEntries([...generations].reverse());
+        setEntries([...generations]);
         setLoaded(true);
         setError(null);
       } catch (cause) {
@@ -134,7 +136,15 @@ function GenerationActivityItem({
   };
   return (
     <li className="grid text-sm">
-      <p className="text-muted-foreground">Generation {generation}</p>
+      <p className="text-muted-foreground">
+        Generation {generation}
+        {entry.advancedBy ? (
+          <span title={toBase58(hashFromHex(entry.advancedBy))}>
+            {" "}
+            · by {abbreviate(toBase58(hashFromHex(entry.advancedBy)))}
+          </span>
+        ) : null}
+      </p>
       <div className="flex items-center gap-2">
         <p className="min-w-0 font-mono text-xs" title={hash}>
           {abbreviate(hash)}

@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use game_of_life_indexer::service::{IndexerService, ServiceConfig, ServiceError, initial_status};
 use game_of_life_indexer::source::{SourceConfig, SourceError, ThruputSource};
-use game_of_life_indexer::state::StateStore;
 use game_of_life_indexer::storage::Publisher;
 use game_of_life_indexer::web::HttpService;
 use game_of_life_indexer::{LatestPointer, LifeManifest, LifeProvenance};
@@ -29,10 +28,6 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
         .parse()
         .expect("GAME_OF_LIFE_EXPECT_GENERATION must be an integer");
     let root = PathBuf::from(required("GAME_OF_LIFE_ARTIFACT_ROOT"));
-    let database = PathBuf::from(required("GAME_OF_LIFE_INDEXER_DB"));
-    if let Some(parent) = database.parent() {
-        fs::create_dir_all(parent).expect("create SQLite parent");
-    }
 
     let status = Arc::new(RwLock::new(initial_status()));
     let mut service = live_service(
@@ -41,10 +36,9 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
         &network,
         &canonical_contract,
         &root,
-        &database,
         Arc::clone(&status),
     );
-    publish_when_events_catch_up(&mut service).await;
+    publish_when_stable(&mut service).await;
     drop(service);
 
     let scope = root
@@ -68,42 +62,6 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
     assert_eq!(provenance.state_digest, latest.state_digest);
     assert_eq!(latest.source_block_height, provenance.source_block_height);
     assert_eq!(latest.source_block_hash, provenance.source_block_hash);
-
-    let state = StateStore::open(&database).expect("open SQLite state");
-    let scope_key = format!("{network}:{canonical_contract}");
-    assert!(
-        state
-            .cursor(&scope_key)
-            .expect("read event cursor")
-            .is_some()
-    );
-    assert_eq!(
-        state
-            .evidence(&network, &canonical_contract, &latest.state_digest)
-            .expect("read verified evidence"),
-        Some(provenance.clone())
-    );
-    assert!(
-        state
-            .retained_digests(&network, &canonical_contract, i64::MIN)
-            .expect("read publications")
-            .contains(&latest.state_digest)
-    );
-    if expected_generation > 0 {
-        let (_, predecessor_digest, _) = state
-            .predecessor_publication(
-                &network,
-                &canonical_contract,
-                latest.source_block_height.parse().expect("source height"),
-            )
-            .expect("read predecessor publication")
-            .expect("previous generation remains recorded");
-        assert!(
-            scope.join(predecessor_digest).exists(),
-            "previous generation artifacts remain available"
-        );
-    }
-    drop(state);
 
     let http = HttpService::new(
         root.clone(),
@@ -144,7 +102,6 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
         &network,
         &canonical_contract,
         &root,
-        &database,
         Arc::new(RwLock::new(initial_status())),
     );
     restarted.cycle().await.expect("restart fast path");
@@ -158,7 +115,6 @@ fn live_service(
     network: &str,
     canonical_contract: &str,
     root: &Path,
-    database: &Path,
     status: Arc<RwLock<game_of_life_indexer::LifeStatus>>,
 ) -> IndexerService<ThruputSource> {
     IndexerService::new(
@@ -169,19 +125,18 @@ fn live_service(
             retention_grace: Duration::from_secs(300),
         },
         ThruputSource::new(rpc, contract, SourceConfig::default()).expect("RPC source"),
-        StateStore::open(database).expect("SQLite state"),
         Publisher::open(root.to_owned()).expect("artifact publisher"),
         status,
     )
 }
 
-async fn publish_when_events_catch_up(service: &mut IndexerService<ThruputSource>) {
+async fn publish_when_stable(service: &mut IndexerService<ThruputSource>) {
     tokio::time::timeout(Duration::from_secs(600), async {
         loop {
             match service.cycle().await {
                 Ok(()) => return,
-                Err(ServiceError::EventIndexBehind { .. })
-                | Err(ServiceError::Source(SourceError::Mixed(_))) => {
+                // The world changed during download; retry against the new state.
+                Err(ServiceError::Source(SourceError::Mixed(_))) => {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 Err(error) => panic!("live indexing failed: {error}"),

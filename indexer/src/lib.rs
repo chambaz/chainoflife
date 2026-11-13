@@ -4,13 +4,12 @@ mod schema;
 pub mod service;
 mod snapshot;
 pub mod source;
-pub mod state;
 pub mod storage;
 pub mod web;
 
 pub use schema::{
-    EventKind, EvidenceKind, IndexerState, LatestPointer, LifeManifest, LifeProvenance, LifeStatus,
-    Progress, ProgressUnit, PublishedIdentity, Retry, SnapshotIdentity, Verification,
+    IndexerState, LatestPointer, LifeManifest, LifeProvenance, LifeStatus, Progress, ProgressUnit,
+    PublishedIdentity, Retry, SnapshotIdentity, Verification,
 };
 pub use snapshot::{
     Artifact, ArtifactPath, ChunkResponse, Snapshot, SnapshotMetadata, TileCoordinate,
@@ -27,12 +26,6 @@ pub const DENSITY_TILE_BYTES: usize = 131_072;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
-    #[error("unsupported metadata field {field}: expected {expected}, got {actual}")]
-    UnsupportedMetadata {
-        field: &'static str,
-        expected: u32,
-        actual: u32,
-    },
     #[error("expected {expected} chunks, got {actual}")]
     ChunkCount { expected: usize, actual: usize },
     #[error("chunk coordinate ({row}, {part}) is out of range")]

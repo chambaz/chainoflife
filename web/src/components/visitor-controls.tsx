@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AppClient } from "@/chain/client";
-import type { AppConfig, LifeTransactionProfiles } from "@/config";
+import type { AppConfig } from "@/config";
+import type { WorldWriteState } from "@/transactions/use-world-write";
 import {
   prepareVisitorWallet,
   type VisitorWallet,
@@ -10,20 +11,18 @@ import { TransactionActivity } from "./transaction-activity";
 
 export function VisitorControls({
   config,
-  profiles,
   client,
-  onCrankCommitted,
   onWalletReady,
   worldSize,
-  resetting = false,
+  writes,
+  resetting,
 }: {
   readonly config: Readonly<AppConfig>;
-  readonly profiles: LifeTransactionProfiles;
   readonly client: Promise<AppClient>;
-  readonly onCrankCommitted: () => void;
   readonly onWalletReady?: (wallet: VisitorWallet) => void;
   readonly worldSize: number | null;
-  readonly resetting?: boolean;
+  readonly writes: WorldWriteState;
+  readonly resetting: boolean;
 }) {
   const [wallet, setWallet] = useState<VisitorWallet | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,10 +35,7 @@ export function VisitorControls({
         prepareVisitorWallet(
           config.networkId,
           connection,
-          (profiles.crank.transactionGasLimit >
-          profiles.request.transactionGasLimit
-            ? profiles.crank.transactionGasLimit
-            : profiles.request.transactionGasLimit) + 1_000_000n,
+          config.transactionPolicy.transactionGasLimit + 1_000_000n,
         ),
       )
       .then((ready) => {
@@ -57,17 +53,14 @@ export function VisitorControls({
     return () => {
       disposed = true;
     };
-  }, [client, config.networkId, profiles, attempt]);
+  }, [client, config.networkId, config.transactionPolicy, attempt]);
 
   if (wallet)
     return (
       <TransactionActivity
-        config={config}
-        profiles={profiles}
         wallet={wallet}
-        client={client}
-        onCrankCommitted={onCrankCommitted}
         worldSize={worldSize}
+        writes={writes}
         resetting={resetting}
       />
     );

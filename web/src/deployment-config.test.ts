@@ -6,13 +6,19 @@ describe("deployment presets", () => {
   test("separates local and public worlds and evidence", () => {
     const local = deploymentConfig([], {});
     const remote = deploymentConfig(["--preset", "futurenet"], {});
-    expect(local).toMatchObject({ mode: "configurable", size: 10000 });
+    expect(local).toMatchObject({
+      mode: "configurable",
+      size: 10000,
+      advanceGas: 10_010_000_000n,
+      advanceTargetGas: 10_000_000_000n,
+    });
     expect(remote).toMatchObject({
       preset: "futurenet",
       mode: "fixed",
       size: 2900,
       manifest: null,
-      crankTargetGas: 945_000_000n,
+      advanceGas: 950_000_000n,
+      advanceTargetGas: 945_000_000n,
     });
     expect(remote.output).not.toBe(local.output);
     expect(remote.stateDir).not.toBe(local.stateDir);

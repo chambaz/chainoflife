@@ -8,7 +8,7 @@ infrastructure unless explicitly requested.
 
 - `contract/`: atomic world contract.
 - `core/`: simulation, initialization, and digest.
-- `indexer/`: verified snapshots, tiles, SQLite state, HTTP.
+- `indexer/`: verified snapshots, immutable tiles, HTTP.
 - `web/`: React explorer and visitor wallets.
 - `scripts/`: setup, development, build, and benchmark commands.
 - `tests/browser/` and `tests/live/`: cross-component checks.
@@ -27,11 +27,11 @@ infrastructure unless explicitly requested.
   Preserve package versions unless an upgrade is requested.
 - Use official Thruput RPC and wallet APIs. Regenerate contract bindings with
   `npm run generate:contracts` from the root; never edit generated files.
-- Keep one full-world update atomic. Queue consumption, bank writes, metadata,
-  and events must roll back together on failure.
+- Keep one full-world update atomic. Bank writes, metadata, and events must
+  roll back together on failure.
 - The digest domain is `chain-of-life/world/v2`, including the reset epoch. Changes to it or the encoding
   require new reference vectors and a new deployment.
-- Distinguish submission, queue admission, and committed execution. Save signed
+- Distinguish submission and committed execution. Save signed
   evidence before broadcast; observe uncertain transactions by their original hash.
 - Recover interrupted resets under the cross-tab write lock and reload the record
   after acquiring it. A pending reset without a hash can become a retryable failure:

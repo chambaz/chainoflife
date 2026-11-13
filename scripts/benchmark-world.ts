@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile, rename, mkdtemp } from "node:fs/promises";
+import { mkdir, writeFile, rename, mkdtemp } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -10,23 +10,29 @@ import {
   createRpcClient,
   defineCluster,
   Ed25519Signer,
-  gasAmount,
   HttpTransport,
-  parseAddress,
   prepareContractDeployment,
   toBase58,
   toHex0x,
   UnsupportedRpcValue,
   TransactionExecutionError,
+  type ContractAddress,
   type SubmissionEvidence,
   type TransactionReceipt,
 } from "@thruputchain/client";
-import {
-  GameOfLife,
-  GenerationAdvanced,
-  TickRequested,
-} from "../web/src/contracts/game-of-life";
+import { GenerationAdvanced } from "../web/src/contracts/game-of-life";
 import { repoPath } from "./paths.mjs";
+import type { FundingRecord } from "./setup-funding";
+import {
+  advance,
+  contractArtifact,
+  deployAndInitialize,
+  fundAccount,
+  metadataAfter,
+  runtimeFaucet,
+  storageDeposit,
+  succeeded,
+} from "./world";
 
 const { values } = parseArgs({
   options: {
@@ -108,7 +114,7 @@ assert(
 );
 const costs = config.execution?.storageCosts;
 assert(costs, "Endpoint must publish storage costs");
-const artifact = await readFile(repoPath("target/thruput/game_of_life.rv32a"));
+const artifact = await contractArtifact();
 await mkdir(resolve(values.output), { recursive: true });
 const directory = await mkdtemp(resolve(values.output, "run-"));
 const serialize = (value: unknown) =>
@@ -144,18 +150,9 @@ await save("run.json", {
 });
 console.log(`Evidence: ${directory}`);
 const rpc = await createRpcClient({ transport });
-let faucet: ReturnType<typeof parseAddress> | undefined;
-if (values["runtime-manifest"]) {
-  const manifest = JSON.parse(
-    await readFile(resolve(values["runtime-manifest"]), "utf8"),
-  );
-  assert.equal(manifest.networkHash, networkHash);
-  const faucets = manifest.bootstrapAccounts.filter(
-    (account: { role: string }) => account.role === "faucet",
-  );
-  assert.equal(faucets.length, 1);
-  faucet = parseAddress(faucets[0].walletAddress);
-}
+const faucet: ContractAddress | undefined = values["runtime-manifest"]
+  ? await runtimeFaucet(resolve(values["runtime-manifest"]), networkHash)
+  : undefined;
 const results: unknown[] = [];
 for (const size of sizes) {
   for (const seed of seeds) {
@@ -178,63 +175,21 @@ for (const size of sizes) {
       });
     };
     const wallet = createWalletClient({ client, account, onSigned });
-    const nonce = randomBytes(16);
-    await save(`${name}-funding.json`, {
-      recipient: toBase58(account.address),
-      nonce: toHex0x(nonce),
-      rawAmount: faucet ? "100000000000" : null,
-      faucet: faucet ? toBase58(faucet) : null,
+    // Funding intent is saved before the request; a failed run is not retried.
+    const funding: Record<string, FundingRecord> = {};
+    await fundAccount({
+      client,
+      rpc,
+      faucet,
+      recipient: account.address,
+      records: funding,
+      save: () => save(`${name}-funding.json`, funding),
     });
-    const funded = faucet
-      ? await rpc.dev_fundAccount({
-          faucet,
-          recipient: account.address,
-          rawAmount: 100_000_000_000n,
-          clientNonce: nonce,
-        })
-      : await client.requestAirdropAttempt({
-          recipient: account.address,
-          clientNonce: nonce,
-        });
-    await save(`${name}-funding-response.json`, funded);
-    assert(
-      !(funded instanceof UnsupportedRpcValue),
-      "Unsupported funding response",
-    );
-    assert(
-      funded.transactionHash,
-      "Funding has no transaction hash; inspect the saved attempt before continuing",
-    );
-    const fundingReceipt = await client.waitForTransactionReceipt(
-      funded.transactionHash,
-      { timeoutMs: 120_000 },
-    );
-    assert(
-      !(fundingReceipt.execution instanceof UnsupportedRpcValue) &&
-        fundingReceipt.execution.result === "return",
-      "Funding did not succeed",
-    );
-    // Reserve both banks, code, queue, and metadata; round chunk storage upward.
-    const rowBytes = Math.ceil(size / 8);
-    const chunks = Math.ceil(rowBytes / 1000);
-    const storage =
-      BigInt(2 * size * chunks + 4) * costs.baseDataItemCost +
-      BigInt(
-        2 *
-          size *
-          chunks *
-          (chunks === 1 ? Math.ceil(rowBytes / 32) * 32 : 1024) +
-          1024,
-      ) *
-        costs.bytestringCostPerByte +
-      64n * costs.rcqCostPerEntry +
-      costs.baseContractDeploymentCost +
-      BigInt(artifact.length) * costs.contractDeploymentCostPerByte +
-      costs.balanceCost;
+    const storage = storageDeposit(costs, artifact.length, size);
     const balance = await wallet.getBalance();
     assert(
       balance.rawBalance >= rootGas + storage + 100_000n,
-      `Faucet balance ${balance.rawBalance} cannot cover ${rootGas} gas reservation plus ${storage} storage`,
+      `Balance ${balance.rawBalance} cannot cover ${rootGas} gas reservation plus ${storage} storage`,
     );
     const deployment = prepareContractDeployment({
       deployer: account.address,
@@ -283,87 +238,38 @@ for (const size of sizes) {
       return receipt;
     }
     const deployed = await measure(() =>
-      wallet.deployContractAndWait(
+      deployAndInitialize(
+        wallet,
         deployment,
-        {
-          amount: storage,
-          gasLimit: gasAmount(rootGas),
-          initializer: GameOfLife.v0_1.initializeSized.invocation(
-            address,
-            gasAmount(childGas),
-            { size: BigInt(size), seed, maxQueueLen: 64n },
-          ),
-        },
-        { timeoutMs: 120_000 },
+        { seed, size, resizable: false },
+        storage,
+        { root: rootGas, target: childGas },
       ),
     );
-    if (
-      deployed.execution instanceof UnsupportedRpcValue ||
-      deployed.execution.result !== "return"
-    )
-      continue;
-    const initial = await GameOfLife.v0_1.getMetadata.view({
-      client,
-      address,
-      minStateBlockHeight: deployed.blockHeight,
-    });
-    assert.equal(initial.value.width, BigInt(size));
-    assert.equal(initial.value.generation, 0n);
-    assert.equal(initial.value.seed, seed);
+    if (!succeeded(deployed)) continue;
+    const initial = await metadataAfter(client, address, deployed.blockHeight);
+    assert.equal(initial.size, BigInt(size));
+    assert.equal(initial.generation, 0n);
+    assert.equal(initial.seed, seed);
     for (let generation = 1; generation <= generations; generation++) {
-      step = `request-${generation}`;
-      const requestReceipt = await measure(() =>
-        wallet.executeAndWait(
-          {
-            invocation: GameOfLife.v0_1.requestTick.invocation(
-              address,
-              gasAmount(1_000_000n),
-            ),
-            gasLimit: gasAmount(2_000_000n),
-            expiryBlocks: 64n,
-          },
-          { timeoutMs: 120_000 },
-        ),
-      );
-      const request = TickRequested.singleFromReceipt(requestReceipt, {
-        address,
-      });
-      assert(request, "Request did not emit queue admission");
-      step = `crank-${generation}`;
+      step = `advance-${generation}`;
       const receipt = await measure(() =>
-        wallet.executeAndWait(
-          {
-            invocation: GameOfLife.v0_1.processNextTick.invocation(
-              address,
-              gasAmount(childGas),
-            ),
-            gasLimit: gasAmount(rootGas),
-            expiryBlocks: 64n,
-          },
-          { timeoutMs: 120_000 },
-        ),
+        advance(wallet, address, { root: rootGas, target: childGas }),
       );
-      if (
-        receipt.execution instanceof UnsupportedRpcValue ||
-        receipt.execution.result !== "return"
-      )
-        break;
+      if (!succeeded(receipt)) break;
       const advanced = GenerationAdvanced.singleFromReceipt(receipt, {
         address,
       });
-      assert(advanced, "Crank did not advance the world");
+      assert(advanced, "Advance did not emit GenerationAdvanced");
       assert.equal(advanced.fields.generation, BigInt(generation));
-      assert.deepEqual(advanced.topics.request_id, request.topics.request_id);
-      const metadata = await GameOfLife.v0_1.getMetadata.view({
+      assert.deepEqual(advanced.topics.advanced_by, account.address);
+      const metadata = await metadataAfter(
         client,
         address,
-        minStateBlockHeight: receipt.blockHeight,
-      });
-      assert.equal(metadata.value.generation, BigInt(generation));
-      assert.deepEqual(
-        metadata.value.state_digest,
-        advanced.fields.state_digest,
+        receipt.blockHeight,
       );
+      assert.equal(metadata.generation, BigInt(generation));
+      assert.deepEqual(metadata.state_digest, advanced.fields.state_digest);
     }
   }
 }

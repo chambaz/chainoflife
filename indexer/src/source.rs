@@ -3,19 +3,15 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{StreamExt, TryStreamExt, stream};
-use serde::{Deserialize, Serialize};
-use thruput_contract_util::{NormalizedMethodSignature, contract_entrypoint_id, event_signature};
+use thruput_contract_util::{NormalizedMethodSignature, contract_entrypoint_id};
 use thruput_json_rpc_client::{
     DecodedResponse, HttpClient, HttpClientBuilder, NativeClient, NativeClientError,
 };
 use thruput_json_rpc_types::base58::Base58;
 use thruput_json_rpc_types::hex::HexBytes;
-use thruput_json_rpc_types::requests::{
-    BlockQuery, EventQuery, SimulateInvocationRequest as ViewRequest,
-};
+use thruput_json_rpc_types::requests::{BlockQuery, SimulateInvocationRequest as ViewRequest};
 use thruput_json_rpc_types::responses::{
-    EventPage, IdentifiedEvent, InvocationOutput as RootInvocationOutput,
-    SimulationResult as ViewResponse,
+    InvocationOutput as RootInvocationOutput, SimulationResult as ViewResponse,
 };
 use thruput_xdr::types::{ContractAddress, SHA256Hash};
 
@@ -23,7 +19,6 @@ use crate::{CHUNK_BYTES, ChunkResponse, SnapshotMetadata};
 
 const INTERFACE: &str = "GameOfLife";
 const VERSION: &str = "0.1.0";
-const CONTRACT_CRATE: &str = "game-of-life";
 
 #[derive(Clone, Debug)]
 pub struct SourceConfig {
@@ -52,33 +47,6 @@ pub struct CoherentDownload {
     pub source_block_hash: [u8; 32],
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ChainEvent {
-    pub epoch: u64,
-    pub size: Option<u32>,
-    pub generation: u64,
-    pub seed: Option<u64>,
-    pub max_queue_len: Option<u32>,
-    pub population: u64,
-    pub state_digest: [u8; 32],
-    pub block_height: u64,
-    pub transaction_hash: String,
-    pub event_index: u32,
-    pub request_id: Option<String>,
-    pub requester: Option<String>,
-    pub initialized: bool,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct EventBatch {
-    pub events: Vec<ChainEvent>,
-    pub cursor: Vec<u8>,
-    pub exhausted: bool,
-    pub latest_block: u64,
-    pub oldest_block: u64,
-    pub retention_gap: bool,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
     #[error("build RPC client: {0}")]
@@ -94,17 +62,14 @@ pub enum SourceError {
     View(&'static str),
     #[error("decode {0}: {1}")]
     Decode(&'static str, String),
-    #[error("mixed-generation quiet-window download: {0}")]
+    #[error("mixed-generation download: {0}")]
     Mixed(String),
-    #[error("event response is malformed: {0}")]
-    Event(String),
 }
 
 #[async_trait]
 pub trait ChainSource: Send + Sync {
     async fn metadata(&self) -> Result<SnapshotMetadata, SourceError>;
     async fn download(&self) -> Result<CoherentDownload, SourceError>;
-    async fn events(&self, cursor: Vec<u8>) -> Result<EventBatch, SourceError>;
 }
 
 pub struct ThruputSource {
@@ -209,7 +174,7 @@ impl ChainSource for ThruputSource {
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
         let (before, height) = self.metadata_response().await?;
         let source = self;
-        let parts = before.chunks_per_row;
+        let parts = before.chunks_per_row();
         let download = stream::iter(0..before.chunk_count() as u32)
             .map(|key| async move {
                 let row = key / parts;
@@ -261,89 +226,17 @@ impl ChainSource for ThruputSource {
             source_block_hash,
         })
     }
-
-    async fn events(&self, cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        let rpc_address: thruput_json_rpc_types::ContractAddress = Base58((*self.contract).into());
-        let address = serde_json::to_value(rpc_address)
-            .map_err(|error| SourceError::Event(error.to_string()))?;
-        let initial_scan = cursor.is_empty();
-        let (anchor, rpc_cursor, resume_height) = decode_resume(&cursor);
-        let mut query = serde_json::json!({ "filters": [{"addresses": [address]}], "limit": 200 });
-        if rpc_cursor.is_empty() {
-            query["start"] = serde_json::json!({"order": "ascending", "anchor": anchor});
-        } else {
-            query["cursor"] = format!("0x{}", hex::encode(rpc_cursor)).into();
-        }
-        let query: EventQuery =
-            serde_json::from_value(query).map_err(|error| SourceError::Event(error.to_string()))?;
-        let page: EventPage = self
-            .retry("getEvents", || self.client.get_events(query.clone()))
-            .await?;
-        let events = page
-            .events
-            .iter()
-            .filter_map(decode_life_event)
-            .collect::<Result<Vec<_>, _>>()?;
-        let latest_block = u64::try_from(*page.latest_indexed_block_height)
-            .map_err(|_| SourceError::Event("negative latest event block".into()))?;
-        let oldest_block = u64::try_from(*page.oldest_indexed_block_height)
-            .map_err(|_| SourceError::Event("negative oldest event block".into()))?;
-        let retention_gap = has_retention_gap(initial_scan, resume_height, oldest_block);
-        let exhausted = page.next_cursor.is_none();
-        let cursor = page.next_cursor.map_or_else(
-            || encode_resume(*page.latest_indexed_block_height),
-            |cursor| cursor.0,
-        );
-        Ok(EventBatch {
-            events,
-            cursor,
-            exhausted,
-            latest_block,
-            oldest_block,
-            retention_gap,
-        })
-    }
-}
-
-const RESUME_PREFIX: &[u8] = b"life-height:";
-
-fn decode_resume(cursor: &[u8]) -> (serde_json::Value, &[u8], Option<u64>) {
-    if let Some(bytes) = cursor.strip_prefix(RESUME_PREFIX)
-        && let Ok(bytes) = <[u8; 8]>::try_from(bytes)
-    {
-        let height = i64::from_be_bytes(bytes);
-        return (
-            serde_json::json!({"kind": "atHeight", "blockHeight": height.to_string()}),
-            &[],
-            u64::try_from(height).ok(),
-        );
-    }
-    (serde_json::json!({"kind": "atBeginning"}), cursor, None)
-}
-
-fn encode_resume(height: i64) -> Vec<u8> {
-    [RESUME_PREFIX, &height.to_be_bytes()].concat()
-}
-
-fn has_retention_gap(initial_scan: bool, resume_height: Option<u64>, oldest_block: u64) -> bool {
-    resume_height.map_or(initial_scan && oldest_block > 0, |height| {
-        height < oldest_block
-    })
 }
 
 #[derive(Debug, PartialEq, Eq, xdrs::ReadXDR)]
 #[xdrs(crate = "::xdrs")]
 struct WireMetadata {
     epoch: u64,
-    width: u32,
-    height: u32,
+    size: u32,
     generation: u64,
     seed: u64,
     population: u64,
     state_digest: SHA256Hash,
-    chunk_bytes: u32,
-    chunks_per_row: u32,
-    max_queue_len: u32,
     // Deployment policy is not part of the world digest or tile schema.
     resizable: bool,
 }
@@ -352,15 +245,11 @@ impl From<WireMetadata> for SnapshotMetadata {
     fn from(value: WireMetadata) -> Self {
         Self {
             epoch: value.epoch,
-            width: value.width,
-            height: value.height,
+            size: value.size,
             generation: value.generation,
             seed: value.seed,
             population: value.population,
             state_digest: value.state_digest.into_inner(),
-            chunk_bytes: value.chunk_bytes,
-            chunks_per_row: value.chunks_per_row,
-            max_queue_len: value.max_queue_len,
         }
     }
 }
@@ -378,176 +267,33 @@ fn encode<T: xdrs::WriteXDR>(value: &T) -> Result<Vec<u8>, SourceError> {
     xdrs::cxs::encode(value).map_err(|error| SourceError::Decode("calldata", error.to_string()))
 }
 
-fn decode_life_event(event: &IdentifiedEvent) -> Option<Result<ChainEvent, SourceError>> {
-    let topic = event.event.topics.first()?.0;
-    let initialized = event_signature(VERSION, CONTRACT_CRATE, "WorldInitialized");
-    let advanced = event_signature(VERSION, CONTRACT_CRATE, "GenerationAdvanced");
-    let tx = format!("0x{}", hex::encode(event.transaction_hash.0.as_ref()));
-    let block_height = match u64::try_from(*event.block_height) {
-        Ok(value) => value,
-        Err(_) => return Some(Err(SourceError::Event("negative block height".into()))),
-    };
-    if topic == initialized {
-        if event.event.topics.len() != 1 {
-            return Some(Err(SourceError::Event(
-                "WorldInitialized must contain only its signature topic".into(),
-            )));
-        }
-        let decoded: Result<(u64, u32, u64, u32, u64, SHA256Hash), _> =
-            xdrs::cxs::decode(&event.event.data.0);
-        Some(
-            decoded
-                .map(
-                    |(epoch, size, seed, max_queue_len, population, digest)| ChainEvent {
-                        epoch,
-                        size: Some(size),
-                        generation: 0,
-                        seed: Some(seed),
-                        max_queue_len: Some(max_queue_len),
-                        population,
-                        state_digest: digest.into_inner(),
-                        block_height,
-                        transaction_hash: tx,
-                        event_index: event.sequence_number,
-                        request_id: None,
-                        requester: None,
-                        initialized: true,
-                    },
-                )
-                .map_err(|error| SourceError::Decode("WorldInitialized event", error.to_string())),
-        )
-    } else if topic == advanced {
-        let Some(request_topic) = event.event.topics.get(1) else {
-            return Some(Err(SourceError::Event(
-                "GenerationAdvanced is missing its request ID topic".into(),
-            )));
-        };
-        if event.event.topics.len() != 2 {
-            return Some(Err(SourceError::Event(
-                "GenerationAdvanced has an invalid topic count".into(),
-            )));
-        }
-        let request = format!("0x{}", hex::encode(request_topic.0));
-        let decoded: Result<(u64, u64, ContractAddress, u64, SHA256Hash), _> =
-            xdrs::cxs::decode(&event.event.data.0);
-        Some(
-            decoded
-                .map(
-                    |(epoch, generation, requester, population, digest)| ChainEvent {
-                        epoch,
-                        size: None,
-                        generation,
-                        seed: None,
-                        max_queue_len: None,
-                        population,
-                        state_digest: digest.into_inner(),
-                        block_height,
-                        transaction_hash: tx,
-                        event_index: event.sequence_number,
-                        request_id: Some(request),
-                        requester: Some(format!("0x{}", hex::encode(requester.as_ref()))),
-                        initialized: false,
-                    },
-                )
-                .map_err(|error| {
-                    SourceError::Decode("GenerationAdvanced event", error.to_string())
-                }),
-        )
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use thruput_json_rpc_types::BlockHeight;
-    use thruput_json_rpc_types::hex::{HexBytes, Topic};
-    use thruput_json_rpc_types::responses::{EmittedEvent, IdentifiedEvent};
-    use thruput_json_rpc_types::transaction::TxHash;
-
     use super::*;
 
     #[test]
-    fn lifecycle_decoder_requires_exact_topics_and_payloads() {
-        let initialized = event_signature(VERSION, CONTRACT_CRATE, "WorldInitialized");
-        let initialized_data = xdrs::cxs::encode(&(
-            0u64,
+    fn metadata_decoder_reads_the_contract_layout() {
+        let bytes = xdrs::cxs::encode(&(
+            3u64,
             10_000u32,
             7u64,
-            64u32,
-            9u64,
-            SHA256Hash::from([3; 32]),
-        ))
-        .expect("initialized payload");
-        let decoded = decode_life_event(&event(vec![Topic(initialized)], initialized_data))
-            .expect("recognized")
-            .expect("valid initialized event");
-        assert_eq!(decoded.seed, Some(7));
-        assert_eq!(decoded.max_queue_len, Some(64));
-
-        assert!(matches!(
-            decode_life_event(&event(vec![Topic(initialized), Topic([1; 32])], Vec::new())),
-            Some(Err(SourceError::Event(_)))
-        ));
-        assert!(matches!(
-            decode_life_event(&event(vec![Topic(initialized)], vec![1])),
-            Some(Err(SourceError::Decode("WorldInitialized event", _)))
-        ));
-        let mut trailing_initialized = xdrs::cxs::encode(&(
             0u64,
-            10_000u32,
-            7u64,
-            64u32,
-            9u64,
-            SHA256Hash::from([3; 32]),
+            49_999_272u64,
+            SHA256Hash::from([5; 32]),
+            true,
         ))
-        .expect("initialized payload");
-        trailing_initialized.push(0);
-        assert!(matches!(
-            decode_life_event(&event(vec![Topic(initialized)], trailing_initialized)),
-            Some(Err(SourceError::Decode("WorldInitialized event", _)))
-        ));
-
-        let advanced = event_signature(VERSION, CONTRACT_CRATE, "GenerationAdvanced");
-        assert!(matches!(
-            decode_life_event(&event(vec![Topic(advanced)], Vec::new())),
-            Some(Err(SourceError::Event(_)))
-        ));
-        assert!(matches!(
-            decode_life_event(&event(
-                vec![Topic(advanced), Topic([1; 32]), Topic([2; 32])],
-                Vec::new()
-            )),
-            Some(Err(SourceError::Event(_)))
-        ));
-        assert!(matches!(
-            decode_life_event(&event(vec![Topic(advanced), Topic([1; 32])], vec![1])),
-            Some(Err(SourceError::Decode("GenerationAdvanced event", _)))
-        ));
-    }
-
-    #[test]
-    fn opaque_pagination_cursor_is_not_an_initial_scan() {
-        let cursor = b"opaque server cursor";
-        let (_, rpc_cursor, resume_height) = decode_resume(cursor);
-        assert_eq!(rpc_cursor, cursor);
-        assert_eq!(resume_height, None);
-        assert!(!has_retention_gap(false, resume_height, 10));
-        assert!(has_retention_gap(true, None, 10));
-        assert!(has_retention_gap(false, Some(9), 10));
-        assert!(!has_retention_gap(false, Some(10), 10));
-    }
-
-    fn event(topics: Vec<Topic>, data: Vec<u8>) -> IdentifiedEvent {
-        IdentifiedEvent {
-            transaction_hash: TxHash(Base58([1; 32].into())),
-            block_height: BlockHeight::from(1i64),
-            sequence_number: 0,
-            event: EmittedEvent {
-                address: Base58([2; 32].into()),
-                topics,
-                data: HexBytes(data),
-            },
-        }
+        .expect("metadata payload");
+        let wire: WireMetadata = xdrs::cxs::decode(&bytes).expect("decode metadata");
+        assert!(wire.resizable);
+        let metadata = SnapshotMetadata::from(wire);
+        assert_eq!(metadata.epoch, 3);
+        assert_eq!(metadata.size, 10_000);
+        assert_eq!(metadata.generation, 7);
+        assert_eq!(metadata.population, 49_999_272);
+        assert_eq!(metadata.chunks_per_row(), 2);
+        assert_eq!(metadata.chunk_count(), 20_000);
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(xdrs::cxs::decode::<WireMetadata>(&trailing).is_err());
     }
 }

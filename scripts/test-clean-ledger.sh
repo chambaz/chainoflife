@@ -54,6 +54,6 @@ for (;;) {
   await new Promise(resolve => setTimeout(resolve, 250));
 }
 JS
-node_modules/.bin/tsx scripts/index.ts
-node_modules/.bin/tsx scripts/index.ts --resume
-RUN_GAME_OF_LIFE_LOCAL_INTEGRATION=1 npm run test:integration:local -- --maxWorkers=1
+node_modules/.bin/tsx scripts/deploy.ts
+node_modules/.bin/tsx scripts/deploy.ts --resume
+GAME_OF_LIFE_EXPECT_REFERENCE_WORLD=1 RUN_GAME_OF_LIFE_LOCAL_INTEGRATION=1 npm run test:integration:local -- --maxWorkers=1

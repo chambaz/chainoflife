@@ -4,9 +4,14 @@ import { createLifeReadAdapter } from "./game-of-life";
 
 const contract = `0x${"22".repeat(32)}`;
 
-describe("typed Life generation read adapter", () => {
-  test("queries generated event filters from a bounded anchor", async () => {
-    const getEvents = vi.fn(async () => page());
+describe("typed Life read adapter", () => {
+  test("reads one bounded page of the newest generation events", async () => {
+    const getEvents = vi.fn(async () => ({
+      nextCursor: "0x01",
+      events: [],
+      latestIndexedBlockHeight: 10n,
+      oldestIndexedBlockHeight: 0n,
+    }));
     const adapter = createLifeReadAdapter({
       client: { getEvents } as unknown as Pick<
         ThruputClient,
@@ -14,40 +19,13 @@ describe("typed Life generation read adapter", () => {
       >,
       contractAddress: contract,
     });
-    await expect(adapter.generations(9n)).resolves.toEqual([]);
+    await expect(adapter.recentGenerations(50)).resolves.toEqual([]);
+    expect(getEvents).toHaveBeenCalledOnce();
     expect(getEvents).toHaveBeenCalledWith(
       expect.objectContaining({
-        start: {
-          order: "ascending",
-          anchor: { kind: "atHeight", blockHeight: 9n },
-        },
-        limit: 200,
+        start: { order: "descending", anchor: { kind: "atEnd" } },
+        limit: 50,
       }),
     );
   });
-
-  test("rejects repeated pagination cursors", async () => {
-    const cursor = "0x01";
-    const getEvents = vi
-      .fn()
-      .mockResolvedValueOnce(page(cursor))
-      .mockResolvedValueOnce(page(cursor));
-    const adapter = createLifeReadAdapter({
-      client: { getEvents } as unknown as Pick<
-        ThruputClient,
-        "simulateInvocation" | "getEvents"
-      >,
-      contractAddress: contract,
-    });
-    await expect(adapter.generations(0n)).rejects.toThrow(/repeated cursor/);
-  });
 });
-
-function page(cursor: string | null = null) {
-  return {
-    nextCursor: cursor,
-    events: [],
-    latestIndexedBlockHeight: 10n,
-    oldestIndexedBlockHeight: 0n,
-  };
-}

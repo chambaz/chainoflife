@@ -13,7 +13,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
     `0x${"ee".repeat(32)}`,
   ] as const;
   const block = `0x${"bb".repeat(32)}`;
-  const transaction = `0x${"cc".repeat(32)}`;
   const base = `/v1/worlds/${network}/${contract}`;
   const fixture = {
     resizable: true,
@@ -82,16 +81,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
           ...value,
           sourceBlockHeight: String(9 + generation),
           sourceBlockHash: block,
-          evidenceKind:
-            generation === 0
-              ? "world-initialized-event"
-              : "generation-advanced-event",
-          transactionHash: transaction,
-          eventIndex: generation,
-          eventKind:
-            generation === 0 ? "WorldInitialized" : "GenerationAdvanced",
-          requestId: generation === 0 ? null : `0x${"ef".repeat(32)}`,
-          requester: generation === 0 ? null : contract,
           verifiedAt: "2026-08-28T01:02:03Z",
         };
     }
@@ -107,18 +96,14 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
   const metadataBytes = (generation: number) =>
     serializeCxs(
       {
-        width: 10_000n,
         epoch: 0n,
-        height: 10_000n,
+        size: 10_000n,
         generation: BigInt(generation),
         seed: 7n,
         population: BigInt(32_768 + generation),
         state_digest: new Uint8Array(32).fill(
           generation === 0 ? 0xaa : generation === 1 ? 0xdd : 0xee,
         ),
-        chunk_bytes: 1_000n,
-        chunks_per_row: 2n,
-        max_queue_len: 16n,
         resizable: fixture.resizable,
       },
       metadataCodec,

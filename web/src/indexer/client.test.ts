@@ -49,12 +49,6 @@ const provenance = {
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,
-  evidenceKind: "world-initialized-event",
-  transactionHash: `0x${"cc".repeat(32)}`,
-  eventIndex: 0,
-  eventKind: "WorldInitialized",
-  requestId: null,
-  requester: null,
   verifiedAt: "2026-08-28T01:02:03Z",
 };
 describe("immutable indexer client", () => {

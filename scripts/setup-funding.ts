@@ -20,7 +20,7 @@ export interface FundingRecord {
   complete: boolean;
 }
 
-// Enough for deployment storage, full-world cranks, and local acceptance checks.
+// Enough for deployment storage, full-world advances, and local integration checks.
 const setupBalance = 100_000_000_000n;
 
 export async function fundSetupAccount({

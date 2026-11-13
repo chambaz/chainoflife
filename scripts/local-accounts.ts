@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { repoPath } from "./paths.mjs";
+import { dirname } from "node:path";
 import {
   createPubkeyAccount,
   Ed25519Signer,
@@ -9,34 +8,34 @@ import {
   toHex0x,
 } from "@thruputchain/client";
 
-export const localRoot = resolve(
-  process.env.CHAIN_OF_LIFE_LOCAL_DIR ?? repoPath(".local/deployments/local"),
-);
-export const rpcUrl = process.env.THRUPUT_RPC_URL ?? "http://127.0.0.1:9545";
-
-export async function localAccounts(create = false, directory = localRoot) {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const path = resolve(directory, "accounts.json");
-  let seeds: string[];
+/**
+ * Loads `count` private accounts from a JSON file of hex seeds. With
+ * `create`, a missing file is created with new random seeds; an existing file
+ * is never replaced.
+ */
+export async function loadAccounts(
+  path: string,
+  count: number,
+  create = false,
+) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let seeds: unknown;
   try {
     seeds = JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
     if (!create || (error as NodeJS.ErrnoException).code !== "ENOENT")
       throw error;
-    seeds = Array.from({ length: 3 }, () => toHex0x(randomBytes(32)));
+    seeds = Array.from({ length: count }, () => toHex0x(randomBytes(32)));
     await writeFile(path, JSON.stringify(seeds), { mode: 0o600, flag: "wx" });
   }
   if (
     !Array.isArray(seeds) ||
-    seeds.length !== 3 ||
-    !seeds.every((s) => /^0x[0-9a-f]{64}$/.test(s))
+    seeds.length !== count ||
+    !seeds.every((seed) => /^0x[0-9a-f]{64}$/.test(seed))
   )
-    throw new Error("Invalid local account file");
-  return seeds.map((seed) => {
+    throw new Error(`Invalid account file: ${path}`);
+  return seeds.map((seed: string) => {
     const signer = Ed25519Signer.fromSeed(fromHex0x(seed));
-    return {
-      signer,
-      account: createPubkeyAccount({ signer }),
-    };
+    return { signer, account: createPubkeyAccount({ signer }) };
   });
 }

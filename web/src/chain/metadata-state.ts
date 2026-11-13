@@ -54,8 +54,7 @@ function integrityFailure<T extends ChainState>(current: T, error: string): T {
 
 function sameChainIdentity(left: ChainMetadata, right: ChainMetadata): boolean {
   return (
-    left.width === right.width &&
-    left.height === right.height &&
+    left.size === right.size &&
     left.generation === right.generation &&
     left.seed === right.seed &&
     left.population === right.population &&

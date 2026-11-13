@@ -118,9 +118,8 @@ describe("generation synchronization", () => {
       {
         ...state,
         chain: {
-          width: 10000,
+          size: 10000,
           epoch: "0",
-          height: 10000,
           generation: "5",
           seed: "7",
           population: "1",
@@ -134,8 +133,7 @@ describe("generation synchronization", () => {
         value: {
           resizable: true,
           epoch: "0",
-          width: 10000,
-          height: 10000,
+          size: 10000,
           generation: "5",
           seed: "7",
           population: "2",

@@ -1,5 +1,6 @@
 import {
   addressFromHex,
+  bytesEqual,
   toHex0x,
   type ContractView,
   type CoreThruputClient,
@@ -12,12 +13,10 @@ import {
 } from "@/contracts/game-of-life";
 import { WORLD_SIZE } from "@/indexer/schema";
 import { isHex32 } from "@/lib/validation";
-import { contractEventPages } from "./events";
 
 export interface ChainMetadata {
   readonly epoch: string;
-  readonly width: number;
-  readonly height: number;
+  readonly size: number;
   readonly generation: string;
   readonly seed: string;
   readonly population: string;
@@ -29,15 +28,15 @@ export interface ChainMetadata {
 export interface GenerationEvent {
   readonly epoch: string;
   readonly generation: string;
-  readonly blockHeight: string;
+  /** The wallet that advanced the world; null for a reset. */
+  readonly advancedBy: string | null;
   readonly transactionHash: string;
-  readonly sequenceNumber: number;
 }
 
 export interface LifeReadAdapter {
   metadata(): Promise<ContractView<ChainMetadata>>;
-  /** Generation events in ascending chain order. */
-  generations(fromBlock: bigint): Promise<readonly GenerationEvent[]>;
+  /** The newest generation events, newest first. */
+  recentGenerations(limit: number): Promise<readonly GenerationEvent[]>;
 }
 
 export function createLifeReadAdapter(params: {
@@ -57,24 +56,17 @@ export function createLifeReadAdapter(params: {
       });
       const value = result.value;
       if (
-        value.width < 100n ||
-        value.width > BigInt(WORLD_SIZE) ||
-        value.width % 100n !== 0n ||
-        value.height !== value.width ||
-        value.chunk_bytes !== 1_000n ||
-        value.chunks_per_row !== ((value.width + 7n) / 8n + 999n) / 1_000n ||
-        value.population > value.width * value.height ||
-        value.max_queue_len <= 0n ||
-        value.max_queue_len > 0xffff_ffffn
-      ) {
-        throw new Error("Contract returned an unsupported world schema");
-      }
+        value.size < 100n ||
+        value.size > BigInt(WORLD_SIZE) ||
+        value.size % 100n !== 0n ||
+        value.population > value.size * value.size
+      )
+        throw new Error("Contract returned an unsupported world");
       return {
         ...result,
         value: {
           epoch: value.epoch.toString(),
-          width: Number(value.width),
-          height: Number(value.height),
+          size: Number(value.size),
           generation: value.generation.toString(),
           seed: value.seed.toString(),
           population: value.population.toString(),
@@ -83,34 +75,29 @@ export function createLifeReadAdapter(params: {
         },
       };
     },
-    async generations(fromBlock) {
-      const output: GenerationEvent[] = [];
-      for await (const { events } of contractEventPages(
-        params.client,
-        contract,
-        [
+    async recentGenerations(limit) {
+      const page = await (
+        await params.client
+      ).getEvents({
+        filters: [
           WorldInitialized.filter({ addresses: [contract] }),
           GenerationAdvanced.filter({ addresses: [contract] }),
         ],
-        fromBlock,
-      )) {
-        for (const identified of events) {
-          const event = decodeEvent(identified.event);
-          if (!event || event.name === "TickRequested") continue;
-          const generation =
-            event.name === "WorldInitialized" ? 0n : event.fields.generation;
-          if (event.name === "GenerationAdvanced" && generation === 0n)
-            throw new Error("Invalid GenerationAdvanced event");
-          output.push({
-            epoch: event.fields.epoch.toString(),
-            generation: generation.toString(),
-            blockHeight: identified.blockHeight.toString(),
-            transactionHash: toHex0x(identified.transactionHash),
-            sequenceNumber: identified.sequenceNumber,
-          });
-        }
-      }
-      return output;
+        limit,
+        start: { order: "descending", anchor: { kind: "atEnd" } },
+      });
+      return page.events.flatMap((identified) => {
+        if (!bytesEqual(identified.event.address, contract)) return [];
+        const event = decodeEvent(identified.event);
+        if (!event) return [];
+        const advance = event.name === "GenerationAdvanced";
+        return {
+          epoch: event.fields.epoch.toString(),
+          generation: advance ? event.fields.generation.toString() : "0",
+          advancedBy: advance ? toHex0x(event.topics.advanced_by) : null,
+          transactionHash: toHex0x(identified.transactionHash),
+        };
+      });
     },
   };
 }

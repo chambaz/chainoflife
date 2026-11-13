@@ -7,8 +7,7 @@ import {
 
 const metadata = {
   epoch: "0",
-  width: 10_000,
-  height: 10_000,
+  size: 10_000,
   generation: "4",
   seed: "7",
   population: "12",
@@ -26,8 +25,7 @@ test("a reset epoch accepts generation zero and rejects a late old-epoch read", 
     ...metadata,
     epoch: "1",
     generation: "0",
-    width: 100,
-    height: 100,
+    size: 100,
     population: "1",
     stateDigest: `0x${"bb".repeat(32)}`,
   };

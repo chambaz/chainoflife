@@ -86,7 +86,7 @@ test("renders one immutable generation with accessible controls", async ({
   expect(writes).toEqual([]);
 });
 
-test("keeps the visitor wallet and accepted requests across reloads", async ({
+test("keeps the visitor wallet and its latest write across reloads", async ({
   page,
   browser,
 }) => {
@@ -96,40 +96,33 @@ test("keeps the visitor wallet and accepted requests across reloads", async ({
   ).toBeEnabled();
   const address = await page.getByLabel("Your wallet").getAttribute("title");
   const { parseAddress, toHex0x } = await import("@thruputchain/client");
-  const caller = toHex0x(parseAddress(address!));
   const key = [
-    "chain-of-life:requests:v2",
+    "chain-of-life:write:v3",
     "aa".repeat(32),
-    caller,
+    toHex0x(parseAddress(address!)),
     `0x${"22".repeat(32)}`,
   ].join(":");
   await page.evaluate((key) => {
     localStorage.setItem(
       key,
-      JSON.stringify([
-        {
-          localId: "accepted-request",
-          status: "accepted",
-          transactionHash: `0x${"44".repeat(32)}`,
-          requestId: `0x${"55".repeat(32)}`,
-          epoch: "0",
-          receiptBlock: "7",
-          observedThroughBlock: null,
-        },
-      ]),
+      JSON.stringify({
+        kind: "advance",
+        status: "failed",
+        message: "Signing was interrupted. Try again.",
+      }),
     );
   }, key);
   await page.reload();
-  expect(
-    await page.evaluate(
-      (key) => JSON.parse(localStorage.getItem(key)!)[0].status,
-      key,
-    ),
-  ).toBe("accepted");
   await expect(page.getByLabel("Your wallet")).toHaveAttribute(
     "title",
     address!,
   );
+  await expect(page.getByRole("alert")).toContainText(
+    "Signing was interrupted.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Advance 100,000,000 cells" }),
+  ).toBeEnabled();
   const other = await browser.newPage();
   try {
     await other.goto(page.url());
@@ -140,13 +133,9 @@ test("keeps the visitor wallet and accepted requests across reloads", async ({
       "title",
       address!,
     );
-    await expect(other.getByText("Inspect durable history")).toHaveCount(0);
   } finally {
     await other.close();
   }
-  await expect(
-    page.getByRole("button", { name: "Advance 100,000,000 cells" }),
-  ).toBeEnabled();
 });
 
 test("does not claim initial ownership until visible GPU coverage renders", async ({

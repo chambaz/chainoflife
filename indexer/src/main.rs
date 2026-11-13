@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use game_of_life_indexer::service::{IndexerService, ServiceConfig, initial_status};
 use game_of_life_indexer::source::{SourceConfig, ThruputSource};
-use game_of_life_indexer::state::StateStore;
 use game_of_life_indexer::storage::Publisher;
 use game_of_life_indexer::web::{HttpService, heartbeat};
 use thruput_xdr::types::ContractAddress;
@@ -21,14 +20,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("GAME_OF_LIFE_ARTIFACT_ROOT")
             .unwrap_or_else(|_| format!(".local/indexer/{network}/{contract_text}/artifacts")),
     );
-    let database = PathBuf::from(
-        std::env::var("GAME_OF_LIFE_INDEXER_DB").unwrap_or_else(|_| {
-            format!(".local/indexer/{network}/{contract_text}/indexer.sqlite3")
-        }),
-    );
-    if let Some(parent) = database.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let listen: SocketAddr = std::env::var("GAME_OF_LIFE_INDEXER_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:8787".into())
         .parse()?;
@@ -48,7 +39,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let publisher = Publisher::open(root.clone())?;
-    let state = StateStore::open(&database)?;
     let source = ThruputSource::new(&rpc, contract, SourceConfig::default())?;
     let status = Arc::new(RwLock::new(initial_status()));
     let contract_address = canonical_address(&contract);
@@ -60,7 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             retention_grace,
         },
         source,
-        state,
         publisher,
         Arc::clone(&status),
     );

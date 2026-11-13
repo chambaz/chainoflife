@@ -24,7 +24,6 @@ const snapshot = {
   provenance: {
     sourceBlockHeight: "12",
     sourceBlockHash: `0x${"bb".repeat(32)}`,
-    evidenceKind: "generation-advanced-event",
   },
 } as ImmutableSnapshot;
 
@@ -32,8 +31,7 @@ const state = {
   ...INITIAL_SYNCHRONIZATION_STATE,
   chain: {
     epoch: "0",
-    width: 10000,
-    height: 10000,
+    size: 10000,
     generation: "5",
     seed: "7",
     population: "32770",

@@ -25,16 +25,11 @@ describe("Life write boundary", () => {
     const onSigned = vi.fn();
     await expect(
       boundary.execute(
-        GameOfLife.v0_1.processNextTick.invocation(
+        GameOfLife.v0_1.advance.invocation(
           wallet.account.address,
           gasAmount(100n),
         ),
-        {
-          transactionGasLimit: 200n,
-          targetGasLimit: 100n,
-          expiryBlocks: 64n,
-          observationTimeoutMs: 1000,
-        },
+        { transactionGasLimit: 200n, targetGasLimit: 100n },
         { onSigned },
       ),
     ).resolves.toEqual({
@@ -52,7 +47,7 @@ describe("Life write boundary", () => {
       wallet,
       {} as ThruputClient,
     );
-    const invocation = GameOfLife.v0_1.processNextTick.invocation(
+    const invocation = GameOfLife.v0_1.advance.invocation(
       wallet.account.address,
       gasAmount(10_000_000_000n),
     );
@@ -61,14 +56,12 @@ describe("Life write boundary", () => {
       {
         transactionGasLimit: 10_010_000_000n,
         targetGasLimit: 10_000_000_000n,
-        expiryBlocks: 64n,
-        observationTimeoutMs: 300_000,
       },
       { onSigned: vi.fn() },
     );
     expect(execute).toHaveBeenCalledWith(
       { invocation, gasLimit: 10_010_000_000n, expiryBlocks: 64n },
-      { timeoutMs: 300_000 },
+      { timeoutMs: 60_000 },
     );
     expect(invocation.gas_limit).toBe(10_000_000_000n);
     expect(result.kind).toBe("preSubmissionFailure");

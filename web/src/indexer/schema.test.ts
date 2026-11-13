@@ -49,12 +49,6 @@ const provenance = {
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,
-  evidenceKind: "world-initialized-event",
-  transactionHash: `0x${"cc".repeat(32)}`,
-  eventIndex: 0,
-  eventKind: "WorldInitialized",
-  requestId: null,
-  requester: null,
   verifiedAt: "2026-08-28T01:02:03.456Z",
 };
 describe("artifact schemas", () => {
@@ -98,27 +92,11 @@ describe("artifact schemas", () => {
         contract,
       ),
     ).toThrow(/date/));
-  test("enforces initialization provenance fields", () => {
-    expect(() => parseProvenance({ ...provenance, generation: "1" })).toThrow(
-      /disagree/,
-    );
-    expect(() => parseProvenance({ ...provenance, requestId: digest })).toThrow(
-      /disagree/,
-    );
-  });
-  test("enforces advanced provenance fields", () => {
-    const advanced = {
-      ...provenance,
-      generation: "1",
-      evidenceKind: "generation-advanced-event",
-      eventKind: "GenerationAdvanced",
-      requestId: digest,
-      requester: contract,
-    };
-    expect(parseProvenance(advanced).eventKind).toBe("GenerationAdvanced");
-    expect(() => parseProvenance({ ...advanced, requester: null })).toThrow(
-      /disagree/,
-    );
+  test("accepts only the exact provenance fields", () => {
+    expect(parseProvenance(provenance).sourceBlockHeight).toBe("9");
+    expect(() =>
+      parseProvenance({ ...provenance, transactionHash: digest }),
+    ).toThrow(/unknown fields/);
   });
   test("detects cross-document disagreement", () => {
     const l = parseLatest(latest, network, contract);
@@ -130,8 +108,7 @@ describe("artifact schemas", () => {
     const m = parseManifest(manifest);
     const current = {
       epoch: "0",
-      width: 10000,
-      height: 10000,
+      size: 10000,
       generation: "0",
       seed: "7",
       population: "1",
@@ -142,11 +119,10 @@ describe("artifact schemas", () => {
       /seed/,
     );
   });
-  test("accepts historical event evidence and rejects metadata evidence", () => {
+  test("accepts an older indexer-verified snapshot", () => {
     const current = {
       epoch: "0",
-      width: 10000,
-      height: 10000,
+      size: 10000,
       generation: "1",
       seed: "7",
       population: "2",
@@ -155,23 +131,13 @@ describe("artifact schemas", () => {
     expect(() =>
       assertSnapshotEligible(parseManifest(manifest), current),
     ).not.toThrow();
-    expect(() =>
-      parseProvenance({
-        ...provenance,
-        evidenceKind: "metadata-observation",
-        transactionHash: null,
-        eventIndex: null,
-        eventKind: null,
-      }),
-    ).toThrow(/evidenceKind/);
   });
   test("rejects candidates ahead of accepted chain metadata", () => {
     const aheadManifest = parseManifest({ ...manifest, generation: "1" });
     expect(() =>
       assertSnapshotEligible(aheadManifest, {
         epoch: "0",
-        width: 10000,
-        height: 10000,
+        size: 10000,
         generation: "0",
         seed: "7",
         population: "1",
@@ -184,8 +150,7 @@ describe("artifact schemas", () => {
     expect(() =>
       assertSnapshotEligible(parseManifest(manifest), {
         epoch: "0",
-        width: 10000,
-        height: 10000,
+        size: 10000,
         generation: "0",
         seed: "7",
         population: "2",

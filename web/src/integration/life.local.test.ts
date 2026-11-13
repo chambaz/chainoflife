@@ -1,325 +1,284 @@
 // @vitest-environment node
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { parseEnv } from "node:util";
 import {
   addressFromHex,
-  createThruputClient,
-  createWalletClient,
   gasAmount,
-  localnet,
-  toBase58,
+  prepareContractDeployment,
   toHex0x,
   TransactionExecutionError,
-  prepareContractDeployment,
+  TransactionObservationError,
+  type ContractAddress,
+  type TransactionReceipt,
 } from "@thruputchain/client";
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
+import { GameOfLife, GenerationAdvanced } from "@/contracts/game-of-life";
 import {
-  localAccounts,
-  localRoot,
-  rpcUrl,
-} from "../../../scripts/local-accounts";
-import { repoPath } from "../../../scripts/paths.mjs";
-import {
-  GameOfLife,
-  GenerationAdvanced,
-  TickRequested,
-} from "@/contracts/game-of-life";
+  advance,
+  contractArtifact,
+  deployAndInitialize,
+  referenceWorld,
+  type GasBudget,
+} from "../../../scripts/world";
+import { deployedEnvironment, fundedTestAccounts } from "./test-accounts";
+
+type Harness = Awaited<ReturnType<typeof fundedTestAccounts>>;
+type TestWallet = Harness["accounts"][number]["wallet"];
+
+// Enough for any operation on a 100- or 200-cell world.
+const smallGas: GasBudget = { root: 50_000_000n, target: 45_000_000n };
+const smallDeposit = 100_000_000n;
+const underGassed: GasBudget = { root: 2_000_000n, target: 100_000n };
 
 describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
   "live atomic world",
   () => {
+    let harness: Harness;
+    let deployed: ContractAddress;
+    let deployedGas: GasBudget;
+
+    beforeAll(async () => {
+      harness = await fundedTestAccounts(3);
+      const env = await deployedEnvironment();
+      deployed = addressFromHex(env.VITE_GAME_OF_LIFE_CONTRACT_ADDRESS!);
+      deployedGas = {
+        root: BigInt(env.VITE_GAME_OF_LIFE_GAS_LIMIT!),
+        target: BigInt(env.VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT!),
+      };
+    }, 300_000);
+
+    const metadata = async (address: ContractAddress) =>
+      (
+        await GameOfLife.v0_1.getMetadata.view({
+          client: harness.client,
+          address,
+        })
+      ).value;
+    // A receipt can be visible before the read endpoint serves its block.
+    const pollMetadata = (address: ContractAddress) =>
+      expect.poll(() => metadata(address), { timeout: 30_000 });
+    const advancedEvent = (
+      receipt: TransactionReceipt,
+      address: ContractAddress,
+    ) => {
+      const event = GenerationAdvanced.singleFromReceipt(receipt, { address });
+      expect(event).toBeTruthy();
+      return event!;
+    };
+    const resize = (
+      wallet: TestWallet,
+      address: ContractAddress,
+      size: bigint,
+      gas: GasBudget,
+    ) =>
+      wallet.executeAndWait(
+        {
+          invocation: GameOfLife.v0_1.resize.invocation(
+            address,
+            gasAmount(gas.target),
+            { size },
+          ),
+          gasLimit: gasAmount(gas.root),
+          expiryBlocks: 64n,
+        },
+        { timeoutMs: 1_200_000 },
+      );
+    const initialize = (
+      wallet: TestWallet,
+      address: ContractAddress,
+      size: bigint,
+      resizable: boolean,
+    ) =>
+      wallet.executeAndWait({
+        invocation: GameOfLife.v0_1.initialize.invocation(
+          address,
+          gasAmount(smallGas.target),
+          { seed: 42n, size, resizable },
+        ),
+        gasLimit: gasAmount(smallGas.root),
+      });
+
     test.each([true, false])(
-      "configured initialization and resize policy (resizable=%s)",
+      "initialization validation and resize policy (resizable=%s)",
       async (resizable) => {
-        const client = await createThruputClient({
-          cluster: localnet({ rpcUrl }),
-        });
-        const accounts = await localAccounts();
-        const account = accounts[0]!.account;
-        const wallet = createWalletClient({
-          client,
-          account,
-          onSigned: async (evidence) => {
-            await writeFile(
-              resolve(
-                localRoot,
-                `sized-${toBase58(evidence.transactionHash)}.json`,
-              ),
-              JSON.stringify({
-                hash: toBase58(evidence.transactionHash),
-                networkHash: toBase58(evidence.networkHash),
-                signedTransaction: toHex0x(evidence.signedTransaction),
-              }),
-              { mode: 0o600, flag: "wx" },
-            );
-          },
-        });
+        const { account, wallet } = harness.accounts[0]!;
         const deployment = prepareContractDeployment({
           deployer: account.address,
-          contract: await readFile(
-            repoPath("target/thruput/game_of_life.rv32a"),
-          ),
+          contract: await contractArtifact(),
         });
         const address = deployment.address;
         await wallet.deployContractAndWait(deployment, {
-          amount: 100_000_000n,
+          amount: smallDeposit,
           gasLimit: gasAmount(20_000_000n),
         });
-        const initialize = (size: bigint, maxQueueLen = 64n) =>
-          wallet.executeAndWait({
-            invocation: GameOfLife.v0_1.initializeConfigured.invocation(
-              address,
-              gasAmount(9_000_000n),
-              { size, maxQueueLen, seed: 42n, resizable },
-            ),
-            gasLimit: gasAmount(10_000_000n),
-          });
         for (const size of [0n, 99n, 101n, 10_100n]) {
-          await expect(initialize(size)).rejects.toBeInstanceOf(
-            TransactionExecutionError,
-          );
+          await expect(
+            initialize(wallet, address, size, resizable),
+          ).rejects.toBeInstanceOf(TransactionExecutionError);
         }
-        await expect(initialize(100n, 0n)).rejects.toBeInstanceOf(
-          TransactionExecutionError,
-        );
-        await initialize(100n);
-        await expect
-          .poll(
-            async () =>
-              (await GameOfLife.v0_1.getMetadata.view({ client, address }))
-                .value,
-            { timeout: 30_000 },
-          )
-          .toMatchObject({ width: 100n, epoch: 0n, resizable });
-        const before = (
-          await GameOfLife.v0_1.getMetadata.view({ client, address })
-        ).value;
-        expect(before).toMatchObject({
-          width: 100n,
-          height: 100n,
+        await initialize(wallet, address, 100n, resizable);
+        await pollMetadata(address).toMatchObject({
+          size: 100n,
           seed: 42n,
           epoch: 0n,
           generation: 0n,
-          max_queue_len: 64n,
           resizable,
         });
-        await expect(initialize(200n)).rejects.toBeInstanceOf(
-          TransactionExecutionError,
-        );
-        expect(
-          (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
-        ).toEqual(before);
-        const reset = wallet.executeAndWait({
-          invocation: GameOfLife.v0_1.resize.invocation(
-            address,
-            gasAmount(19_000_000n),
-            { size: 200n },
-          ),
-          gasLimit: gasAmount(20_000_000n),
-        });
+        const before = await metadata(address);
+        await expect(
+          initialize(wallet, address, 200n, resizable),
+        ).rejects.toBeInstanceOf(TransactionExecutionError);
+        expect(await metadata(address)).toEqual(before);
+
+        const reset = resize(wallet, address, 200n, smallGas);
         if (resizable) {
           await reset;
-          await expect
-            .poll(
-              async () =>
-                (await GameOfLife.v0_1.getMetadata.view({ client, address }))
-                  .value,
-              { timeout: 30_000 },
-            )
-            .toMatchObject({
-              width: 200n,
-              epoch: 1n,
-              resizable: true,
-              seed: 42n,
-            });
+          await pollMetadata(address).toMatchObject({
+            size: 200n,
+            seed: 42n,
+            epoch: 1n,
+            generation: 0n,
+            resizable: true,
+          });
         } else {
           await expect(reset).rejects.toBeInstanceOf(TransactionExecutionError);
-          expect(
-            (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
-          ).toEqual(before);
+          expect(await metadata(address)).toEqual(before);
         }
       },
       120_000,
     );
 
-    test("failed crank preserves the world and admitted request; another caller can complete it", async () => {
-      const env = parseEnv(await readFile(".env.local", "utf8"));
-      const address = addressFromHex(env.VITE_GAME_OF_LIFE_CONTRACT_ADDRESS!);
-      const client = await createThruputClient({
-        cluster: localnet({ rpcUrl }),
+    test("concurrent advances commit distinct generations", async () => {
+      const [first, second] = harness.accounts;
+      const deployment = prepareContractDeployment({
+        deployer: first!.account.address,
+        contract: await contractArtifact(),
       });
-      const accounts = await localAccounts();
-      const wallets = accounts.map(({ account }) =>
-        createWalletClient({
-          client,
-          account,
-          onSigned: async (evidence) =>
-            writeFile(
-              resolve(
-                localRoot,
-                `test-${toBase58(evidence.transactionHash)}.json`,
-              ),
-              JSON.stringify({
-                transactionHash: toBase58(evidence.transactionHash),
-                networkHash: toBase58(evidence.networkHash),
-                signedTransaction: toHex0x(evidence.signedTransaction),
-              }),
-              { mode: 0o600, flag: "wx" },
-            ),
-        }),
+      const address = deployment.address;
+      await deployAndInitialize(
+        first!.wallet,
+        deployment,
+        { seed: 42n, size: 100, resizable: false },
+        smallDeposit,
+        smallGas,
       );
-      const before = (
-        await GameOfLife.v0_1.getMetadata.view({ client, address })
-      ).value;
-      const admission = await wallets[0]!.executeAndWait({
-        invocation: GameOfLife.v0_1.requestTick.invocation(
-          address,
-          gasAmount(1_000_000n),
-        ),
-        gasLimit: gasAmount(2_000_000n),
+      await pollMetadata(address).toMatchObject({ generation: 0n });
+
+      // Expiry is 64 one-second blocks, so a dropped transaction cannot
+      // commit after this wait ends.
+      const receiptWaitMs = 120_000;
+      const results = await Promise.allSettled([
+        advance(first!.wallet, address, smallGas, receiptWaitMs),
+        advance(second!.wallet, address, smallGas, receiptWaitMs),
+      ]);
+      const generations: bigint[] = [];
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          generations.push(
+            advancedEvent(result.value.receipt, address).fields.generation,
+          );
+        } else if (result.reason instanceof TransactionObservationError) {
+          // The lock loser is dropped without a receipt. Its 64-block expiry
+          // passed during the wait, so it can never commit.
+          expect(result.reason.phase).toBe("observation");
+          expect(result.reason.knownCommitment).toBeUndefined();
+        } else {
+          expect(result.reason).toBeInstanceOf(TransactionExecutionError);
+        }
+      }
+      expect(generations.length).toBeGreaterThan(0);
+      expect(new Set(generations).size).toBe(generations.length);
+      await pollMetadata(address).toMatchObject({
+        generation: BigInt(generations.length),
       });
-      const requested = TickRequested.singleFromReceipt(admission.receipt, {
-        address,
-      });
-      await expect(
-        wallets[1]!.executeAndWait({
-          invocation: GameOfLife.v0_1.resize.invocation(
-            address,
-            gasAmount(1_000_000n),
-            { size: 100n },
-          ),
-          gasLimit: gasAmount(2_000_000n),
-        }),
-      ).rejects.toBeInstanceOf(TransactionExecutionError);
-      expect(
-        (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
-      ).toEqual(before);
-      await expect(
-        wallets[1]!.executeAndWait({
-          invocation: GameOfLife.v0_1.processNextTick.invocation(
-            address,
-            gasAmount(100_000n),
-          ),
-          gasLimit: gasAmount(2_000_000n),
-        }),
-      ).rejects.toBeInstanceOf(TransactionExecutionError);
-      expect(
-        (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
-      ).toEqual(before);
-      const completed = await wallets[1]!.executeAndWait(
-        {
-          invocation: GameOfLife.v0_1.processNextTick.invocation(
-            address,
-            gasAmount(10_000_000_000n),
-          ),
-          gasLimit: gasAmount(10_010_000_000n),
-          expiryBlocks: 64n,
-        },
-        { timeoutMs: 300_000 },
+      console.log(
+        `Concurrent advances: ${generations.length} of 2 committed successfully`,
       );
-      const event = GenerationAdvanced.singleFromReceipt(completed.receipt, {
-        address,
-      });
-      expect(event.topics.request_id).toEqual(requested.topics.request_id);
-      expect(event.fields.requested_by).toEqual(accounts[0]!.account.address);
+    }, 400_000);
+
+    test("full-size advance matches the core reference vector", async () => {
+      const { account, wallet } = harness.accounts[0]!;
+      const before = await metadata(deployed);
+      const reference =
+        before.epoch === 0n &&
+        before.generation === 0n &&
+        before.size === BigInt(referenceWorld.size) &&
+        before.seed === BigInt(referenceWorld.seed);
+      // The clean-ledger harness deploys a fresh reference world.
+      if (process.env.GAME_OF_LIFE_EXPECT_REFERENCE_WORLD === "1")
+        expect(reference).toBe(true);
+
+      const { receipt } = await advance(wallet, deployed, deployedGas);
+      const event = advancedEvent(receipt, deployed);
+      expect(event.topics.advanced_by).toEqual(account.address);
+      expect(event.fields.epoch).toBe(before.epoch);
       expect(event.fields.generation).toBe(before.generation + 1n);
-      // Receipt visibility can precede the read endpoint's committed snapshot.
-      await expect
-        .poll(
-          async () =>
-            (await GameOfLife.v0_1.getMetadata.view({ client, address })).value
-              .generation,
-          { timeout: 30_000 },
-        )
-        .toBe(event.fields.generation);
-      const after = (
-        await GameOfLife.v0_1.getMetadata.view({ client, address })
-      ).value;
-      const empty = await wallets[2]!.executeCallsAndWait({
-        calls: [
-          GameOfLife.v0_1.processNextTick.call({
-            address,
-            gasLimit: gasAmount(1_000_000n),
-          }),
-        ],
-        gasLimit: gasAmount(2_000_000n),
+      if (reference) {
+        expect(event.fields.population).toBe(
+          referenceWorld.generationOne.population,
+        );
+        expect(toHex0x(event.fields.state_digest)).toBe(
+          referenceWorld.generationOne.stateDigest,
+        );
+      }
+      await pollMetadata(deployed).toMatchObject({
+        generation: event.fields.generation,
+        population: event.fields.population,
+        state_digest: event.fields.state_digest,
       });
-      expect(empty.values).toEqual([null]);
-      expect(
-        (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
-      ).toEqual(after);
+      console.log(`Full-world advance used ${receipt.gasUsed} root gas`);
+    }, 1_200_000);
+
+    test("failed advance leaves the world unchanged; another caller advances", async () => {
+      const [first, second] = harness.accounts;
+      const before = await metadata(deployed);
       await expect(
-        GameOfLife.v0_1.getCell.view({
-          client,
-          address,
-          args: { x: 10_000n, y: 0n },
-        }),
-      ).rejects.toThrow();
-      await expect(
-        wallets[0]!.executeAndWait({
-          invocation: GameOfLife.v0_1.initialize.invocation(
-            address,
-            gasAmount(1_000_000n),
-            { seed: 1n, maxQueueLen: 64n },
-          ),
-          gasLimit: gasAmount(2_000_000n),
-        }),
+        advance(first!.wallet, deployed, underGassed),
       ).rejects.toBeInstanceOf(TransactionExecutionError);
-      await wallets[0]!.executeAndWait({
-        invocation: GameOfLife.v0_1.resize.invocation(
-          address,
-          gasAmount(10_000_000_000n),
-          { size: 100n },
-        ),
-        gasLimit: gasAmount(10_010_000_000n),
-        expiryBlocks: 64n,
+      expect(await metadata(deployed)).toEqual(before);
+
+      const { receipt } = await advance(second!.wallet, deployed, deployedGas);
+      const event = advancedEvent(receipt, deployed);
+      expect(event.topics.advanced_by).toEqual(second!.account.address);
+      expect(event.fields.generation).toBe(before.generation + 1n);
+      await pollMetadata(deployed).toMatchObject({
+        generation: event.fields.generation,
       });
-      const reset = (
-        await GameOfLife.v0_1.getMetadata.view({ client, address })
-      ).value;
-      expect(reset.epoch).toBe(before.epoch + 1n);
-      expect(reset.generation).toBe(0n);
-      expect(reset.seed).toBe(before.seed);
+    }, 1_200_000);
+
+    test("deployed configurable world resizes atomically", async (context) => {
+      const before = await metadata(deployed);
+      if (!before.resizable) context.skip();
+      const { wallet } = harness.accounts[2]!;
       await expect(
-        wallets[0]!.executeAndWait({
-          invocation: GameOfLife.v0_1.resize.invocation(
-            address,
-            gasAmount(1_000_000n),
-            { size: 101n },
-          ),
-          gasLimit: gasAmount(2_000_000n),
-        }),
+        initialize(wallet, deployed, 100n, true),
       ).rejects.toBeInstanceOf(TransactionExecutionError);
-      const chunk = (
-        await GameOfLife.v0_1.getChunk.view({
-          client,
-          address,
-          args: { row: 0n, part: 0n },
-        })
-      ).value;
       await expect(
-        wallets[0]!.executeAndWait({
-          invocation: GameOfLife.v0_1.resize.invocation(
-            address,
-            gasAmount(1_000_000n),
-            { size: 10_000n },
-          ),
-          gasLimit: gasAmount(2_000_000n),
-        }),
+        resize(wallet, deployed, 101n, smallGas),
       ).rejects.toBeInstanceOf(TransactionExecutionError);
-      expect(
-        (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
-      ).toEqual(reset);
-      expect(
+      expect(await metadata(deployed)).toEqual(before);
+
+      await resize(wallet, deployed, 100n, deployedGas);
+      await pollMetadata(deployed).toMatchObject({
+        size: 100n,
+        seed: before.seed,
+        epoch: before.epoch + 1n,
+        generation: 0n,
+      });
+      const reset = await metadata(deployed);
+      const chunk = async () =>
         (
           await GameOfLife.v0_1.getChunk.view({
-            client,
-            address,
+            client: harness.client,
+            address: deployed,
             args: { row: 0n, part: 0n },
           })
-        ).value,
-      ).toEqual(chunk);
-    }, 420_000);
+        ).value;
+      const resetChunk = await chunk();
+      // Growing to full size needs far more gas than this.
+      await expect(
+        resize(wallet, deployed, 10_000n, smallGas),
+      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      expect(await metadata(deployed)).toEqual(reset);
+      expect(await chunk()).toEqual(resetChunk);
+    }, 1_200_000);
   },
 );

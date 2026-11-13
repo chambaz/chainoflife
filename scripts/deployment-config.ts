@@ -80,8 +80,8 @@ export function deploymentConfig(
     journal: resolve(stateDir, "deployment.json"),
     deploymentGas: fullBudget ? 60_000_000_000n : 950_000_000n,
     deploymentTargetGas: fullBudget ? 59_000_000_000n : 945_000_000n,
-    crankGas: fullBudget ? 10_010_000_000n : 950_000_000n,
-    crankTargetGas: fullBudget ? 10_000_000_000n : 945_000_000n,
+    advanceGas: fullBudget ? 10_010_000_000n : 950_000_000n,
+    advanceTargetGas: fullBudget ? 10_000_000_000n : 945_000_000n,
     resume: values.resume,
     help: values.help,
   };

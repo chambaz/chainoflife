@@ -10,9 +10,11 @@ explorer to view the world and advance generations.
 
 ## How it works
 
-The contract stores the complete grid. Clicking **Advance** submits a request,
-then the app sends a second transaction to compute and store the next generation.
-The update is atomic: if it fails, the world and queued request remain unchanged.
+The contract stores the complete grid. Clicking **Advance** submits one
+transaction that computes and stores the next generation. The update is atomic:
+if it fails, the world remains unchanged. If two visitors advance in the same
+block, one commits. The node drops the other without effect, and that visitor
+can advance again.
 
 A Rust indexer reads the world from the contract, verifies its population and
 digest (a hash of the world state), and serves tiles for the browser to display.
@@ -70,9 +72,9 @@ npm run deploy -- --preset local
 npm run dev
 ```
 
-Setup creates and funds its accounts through the local faucet, then deploys and
-verifies a full-size world. `npm run dev` builds and starts the indexer and browser
-app. The first build can take several minutes.
+Setup creates and funds a deployment account through the local faucet, then
+deploys and verifies a full-size world at generation zero. `npm run dev` builds
+and starts the indexer and browser app. The first build can take several minutes.
 
 Open **http://127.0.0.1:5173** and wait for **Ready**. Click **Advance** to run one
 generation, or drag and release the board-size slider to resize the world.
@@ -123,7 +125,7 @@ For custom sizes, build configuration, and recovery, see the
 | [web](web) | Explorer and browser wallet |
 | [contract](contract) | Atomic world contract and storage layout |
 | [core](core) | Simulation, initialization, and digest |
-| [indexer](indexer) | Verified snapshots, SQLite state, and tile HTTP service |
+| [indexer](indexer) | Verified snapshots and tile HTTP service |
 | [scripts](scripts) | Deployment, development, build, and benchmarks |
 | [tests](tests) | Browser checks, live checks, and isolated fixtures |
 

@@ -1,8 +1,8 @@
 use game_of_life_core::digest::WorldDigest;
 use game_of_life_core::prng::SplitMix64;
 use game_of_life_indexer::{
-    CHUNK_BYTES, ChunkResponse, Error, EventKind, EvidenceKind, LifeManifest, LifeProvenance,
-    SnapshotMetadata, build_snapshot, reconstruct_canonical_world,
+    CHUNK_BYTES, ChunkResponse, Error, LifeManifest, LifeProvenance, SnapshotMetadata,
+    build_snapshot, reconstruct_canonical_world,
 };
 use sha2::{Digest, Sha256};
 
@@ -29,15 +29,11 @@ fn small_padded_world_has_exact_tiles_and_distinct_reset_identity() {
     }
     let metadata = SnapshotMetadata {
         epoch: 2,
-        width: 100,
-        height: 100,
+        size: 100,
         generation: 0,
         seed: 0,
         population: 10_000,
         state_digest: digest.finish(),
-        chunk_bytes: 1000,
-        chunks_per_row: 1,
-        max_queue_len: 16,
     };
     let snapshot = build_snapshot(
         &metadata,
@@ -202,37 +198,21 @@ fn reconstruction_rejects_wrong_digest() {
 }
 
 #[test]
-fn metadata_rejects_every_unsupported_layout_field() {
+fn metadata_rejects_unsupported_sizes_and_derives_layout() {
     let (metadata, _) = dead_fixture();
-    for (field, mut candidate) in [
-        ("width", metadata.clone()),
-        ("height", metadata.clone()),
-        ("chunk_bytes", metadata.clone()),
-        ("chunks_per_row", metadata.clone()),
-        ("max_queue_len", metadata.clone()),
-    ] {
-        match field {
-            "width" => candidate.width -= 1,
-            "height" => candidate.height -= 1,
-            "chunk_bytes" => candidate.chunk_bytes -= 1,
-            "chunks_per_row" => candidate.chunks_per_row -= 1,
-            "max_queue_len" => candidate.max_queue_len = 0,
-            _ => unreachable!(),
-        }
-        if matches!(field, "width" | "height") {
-            assert!(matches!(
-                candidate.validate(),
-                Err(Error::Schema {
-                    field: "dimensions",
-                    ..
-                })
-            ));
-        } else {
-            assert!(
-                matches!(candidate.validate(), Err(Error::UnsupportedMetadata { field: actual, .. }) if actual == field)
-            );
-        }
+    assert_eq!(metadata.chunks_per_row(), CHUNKS_PER_ROW);
+    for size in [0, 99, 150, 10_100] {
+        let mut candidate = metadata.clone();
+        candidate.size = size;
+        assert!(matches!(
+            candidate.validate(),
+            Err(Error::Schema { field: "size", .. })
+        ));
     }
+    let mut small = metadata;
+    small.size = 100;
+    assert_eq!(small.chunks_per_row(), 1);
+    assert_eq!(small.chunk_count(), 100);
 }
 
 #[test]
@@ -336,8 +316,8 @@ fn manifest_json_is_compact_strict_and_confined() {
     let (metadata, _) = dead_fixture();
     let identity = game_of_life_indexer::SnapshotIdentity {
         epoch: 0,
-        width: metadata.width,
-        height: metadata.height,
+        width: metadata.size,
+        height: metadata.size,
         network_id: NETWORK_ID.into(),
         contract_address: CONTRACT.into(),
         generation: metadata.generation,
@@ -424,15 +404,11 @@ fn fixture_with_fill(mut fill: impl FnMut(&mut [u8])) -> (SnapshotMetadata, Vec<
     (
         SnapshotMetadata {
             epoch: 0,
-            width: WORLD_WIDTH,
-            height: WORLD_HEIGHT,
+            size: WORLD_WIDTH,
             generation: 0,
             seed: 0,
             population,
             state_digest: digest.finish(),
-            chunk_bytes: CHUNK_BYTES as u32,
-            chunks_per_row: CHUNKS_PER_ROW,
-            max_queue_len: 16,
         },
         chunks,
     )
@@ -460,15 +436,11 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
     (
         SnapshotMetadata {
             epoch: 0,
-            width: WORLD_WIDTH,
-            height: WORLD_HEIGHT,
+            size: WORLD_WIDTH,
             generation: 0,
             seed: 0,
             population,
             state_digest: digest.finish(),
-            chunk_bytes: CHUNK_BYTES as u32,
-            chunks_per_row: CHUNKS_PER_ROW,
-            max_queue_len: 16,
         },
         chunks,
     )
@@ -486,14 +458,6 @@ fn provenance(metadata: &SnapshotMetadata) -> LifeProvenance {
         state_digest: format!("0x{}", hex::encode(metadata.state_digest)),
         source_block_height: "42".into(),
         source_block_hash: BLOCK_HASH.into(),
-        evidence_kind: EvidenceKind::WorldInitializedEvent,
-        transaction_hash: Some(
-            "0x4444444444444444444444444444444444444444444444444444444444444444".into(),
-        ),
-        event_index: Some(0),
-        event_kind: Some(EventKind::WorldInitialized),
-        request_id: None,
-        requester: None,
         verified_at: "2026-08-28T12:00:00Z".into(),
     }
 }

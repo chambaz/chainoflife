@@ -1,21 +1,18 @@
 use std::fs::{self, File};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use game_of_life_core::digest::WorldDigest;
-use game_of_life_indexer::service::initial_status;
-use game_of_life_indexer::service::{FailurePoint, IndexerService, ServiceConfig, ServiceError};
-use game_of_life_indexer::source::{
-    ChainEvent, ChainSource, CoherentDownload, EventBatch, SourceError,
-};
-use game_of_life_indexer::state::StateStore;
+use game_of_life_indexer::service::{IndexerService, ServiceConfig, ServiceError, initial_status};
+use game_of_life_indexer::source::{ChainSource, CoherentDownload, SourceError};
 use game_of_life_indexer::storage::{Publisher, StorageError};
 use game_of_life_indexer::web::{HttpService, heartbeat_with_interval};
 use game_of_life_indexer::{
-    CHUNK_BYTES, ChunkResponse, EventKind, EvidenceKind, LatestPointer, LifeManifest,
-    LifeProvenance, MAX_ZOOM, ProgressUnit, PublishedIdentity, SnapshotIdentity, SnapshotMetadata,
+    CHUNK_BYTES, ChunkResponse, IndexerState, LatestPointer, LifeManifest, LifeProvenance,
+    LifeStatus, MAX_ZOOM, ProgressUnit, SnapshotIdentity, SnapshotMetadata, build_snapshot,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -26,8 +23,8 @@ const CONTRACT: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 const DIGEST0: &str = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const DIGEST1: &str = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const DIGEST2: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-const WORLD_WIDTH: u32 = 10_000;
-const WORLD_HEIGHT: u32 = 10_000;
+const DIGEST3: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+const WORLD_SIZE: u32 = 10_000;
 const CHUNKS_PER_ROW: u32 = 2;
 const TAIL_BYTES: usize = 250;
 
@@ -46,31 +43,14 @@ fn second_writer_is_refused() {
 async fn mixed_generation_download_is_rejected_before_publication() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path().join("artifacts");
-    let publisher = Publisher::open(root.clone()).expect("publisher");
-    let state = StateStore::open(&temp.path().join("state.sqlite3")).expect("state");
-    let status = Arc::new(RwLock::new(initial_status()));
-    let mut service = IndexerService::new(
-        ServiceConfig {
-            network_id: NETWORK.into(),
-            contract_address: CONTRACT.into(),
-            poll_interval: Duration::from_millis(1),
-            retention_grace: Duration::from_secs(60),
-        },
+    let mut service = service(
         MixedSource,
-        state,
-        publisher,
-        status,
+        Publisher::open(root.clone()).expect("publisher"),
+        Duration::from_secs(60),
     );
     let error = service.cycle().await.expect_err("mixed generation");
     assert!(matches!(error, ServiceError::Source(SourceError::Mixed(_))));
-    assert!(
-        !root
-            .join("v1/worlds")
-            .join(NETWORK)
-            .join(CONTRACT)
-            .join("latest.json")
-            .exists()
-    );
+    assert!(!scope(&root).join("latest.json").exists());
 }
 
 #[test]
@@ -238,227 +218,13 @@ fn repeated_promotion_is_idempotent() {
     );
 }
 
-#[test]
-fn restart_restores_cursor_and_verified_evidence() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let database = temp.path().join("state.sqlite3");
-    let provenance = provenance(0, DIGEST0);
-    {
-        let state = StateStore::open(&database).expect("open state");
-        state
-            .save_event_batch("scope", &[], b"cursor")
-            .expect("save cursor");
-        state.persist_evidence(&provenance).expect("save evidence");
-    }
-    let state = StateStore::open(&database).expect("reopen state");
-    assert_eq!(
-        state.cursor("scope").expect("load cursor"),
-        Some(b"cursor".to_vec())
-    );
-    assert_eq!(
-        state
-            .evidence(NETWORK, CONTRACT, DIGEST0)
-            .expect("load evidence"),
-        Some(provenance)
-    );
-}
-
-#[test]
-fn evidence_selection_reuses_bytes_and_rejects_conflicts() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let state = StateStore::open(&temp.path().join("state.sqlite3")).expect("state");
-    let original = event_provenance(0, DIGEST0, "2026-08-28T12:00:00.000Z");
-    assert_eq!(
-        state.resolve_evidence(&original).expect("resolve evidence"),
-        None
-    );
-    assert_eq!(
-        state
-            .evidence(NETWORK, CONTRACT, DIGEST0)
-            .expect("evidence remains absent"),
-        None
-    );
-    state.persist_evidence(&original).expect("persist evidence");
-    let mut retry = original.clone();
-    retry.verified_at = "2026-08-28T13:00:00.000Z".into();
-    retry.source_block_height = "10".into();
-    retry.source_block_hash = format!("0x{}", "e".repeat(64));
-    assert_eq!(
-        state.resolve_evidence(&retry).expect("reuse evidence"),
-        Some(original)
-    );
-    retry.transaction_hash = Some(format!("0x{}", "1".repeat(64)));
-    assert!(matches!(
-        state.resolve_evidence(&retry),
-        Err(game_of_life_indexer::state::StateError::EvidenceConflict { .. })
-    ));
-}
-
 #[tokio::test]
-async fn artifact_interruption_retries_with_identical_immutable_evidence() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path().join("artifacts");
-    let database = temp.path().join("state.sqlite3");
-    let metadata = dead_metadata(0);
-    let digest = format!("0x{}", hex::encode(metadata.state_digest));
-    let downloads = Arc::new(AtomicUsize::new(0));
-    let source = ChangingAnchorSource {
-        inner: DeadSource::new(metadata.clone()),
-        downloads: Arc::clone(&downloads),
-    };
-    let status = Arc::new(RwLock::new(initial_status()));
-    let mut service = IndexerService::new(
-        service_config(),
-        source,
-        StateStore::open(&database).expect("state"),
-        Publisher::open(root.clone()).expect("publisher"),
-        status,
-    );
-    service.inject_failure(FailurePoint::AfterArtifacts);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::Injected(FailurePoint::AfterArtifacts))
-    ));
-    let candidate = root
-        .join("v1/worlds")
-        .join(NETWORK)
-        .join(CONTRACT)
-        .join(&digest);
-    let manifest_before = fs::read(candidate.join("manifest.json")).expect("manifest");
-    let provenance_before = fs::read(candidate.join("provenance.json")).expect("provenance");
-    let original_provenance = StateStore::open(&database)
-        .expect("observer")
-        .evidence(NETWORK, CONTRACT, &digest)
-        .expect("evidence lookup")
-        .expect("verified evidence");
-    assert_eq!(original_provenance.source_block_height, "1");
-    assert!(
-        !candidate
-            .parent()
-            .expect("scope")
-            .join("latest.json")
-            .exists()
-    );
-    service.cycle().await.expect("resume publication");
-    assert_eq!(
-        fs::read(candidate.join("manifest.json")).expect("manifest after retry"),
-        manifest_before
-    );
-    assert_eq!(
-        fs::read(candidate.join("provenance.json")).expect("provenance after retry"),
-        provenance_before
-    );
-    assert_eq!(downloads.load(Ordering::SeqCst), 2);
-    let latest = LatestPointer::from_json_for(
-        &fs::read(candidate.parent().expect("scope").join("latest.json")).expect("latest"),
-        NETWORK,
-        CONTRACT,
-    )
-    .expect("valid latest");
-    assert_eq!(latest.source_block_height, "1");
-    assert_eq!(
-        latest.source_block_hash,
-        original_provenance.source_block_hash
-    );
-    assert!(
-        candidate
-            .parent()
-            .expect("scope")
-            .join("latest.json")
-            .exists()
-    );
-}
-
-#[tokio::test]
-async fn failed_snapshot_verification_does_not_persist_evidence() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let database = temp.path().join("state.sqlite3");
-    let mut metadata = dead_metadata(0);
-    metadata.state_digest = [9; 32];
-    let digest = format!("0x{}", hex::encode(metadata.state_digest));
-    let mut service = IndexerService::new(
-        service_config(),
-        DeadSource::new(metadata),
-        StateStore::open(&database).expect("state"),
-        Publisher::open(temp.path().join("artifacts")).expect("publisher"),
-        Arc::new(RwLock::new(initial_status())),
-    );
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::Snapshot(_))
-    ));
-    assert!(
-        StateStore::open(&database)
-            .expect("observer")
-            .evidence(NETWORK, CONTRACT, &digest)
-            .expect("evidence lookup")
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn event_lag_retains_one_download_and_publishes_fixed_historical_candidate() {
+async fn publishes_verified_world_with_chain_provenance() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path().join("artifacts");
     let metadata = dead_metadata(0);
-    let digest = format!("0x{}", hex::encode(metadata.state_digest));
-    let metadata_calls = Arc::new(AtomicUsize::new(0));
-    let downloads = Arc::new(AtomicUsize::new(0));
-    let event_calls = Arc::new(AtomicUsize::new(0));
-    let source = MovingTipSource {
-        initial: metadata.clone(),
-        advanced: dead_metadata(1),
-        event: DeadSource::new(metadata).event,
-        metadata_calls: Arc::clone(&metadata_calls),
-        downloads: Arc::clone(&downloads),
-        event_calls: Arc::clone(&event_calls),
-    };
-    let mut service = IndexerService::new(
-        service_config(),
-        source,
-        StateStore::open(&temp.path().join("state.sqlite3")).expect("state"),
-        Publisher::open(root.clone()).expect("publisher"),
-        Arc::new(RwLock::new(initial_status())),
-    );
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::EventIndexBehind {
-            latest_block: 4,
-            source_block: 5
-        })
-    ));
-    service
-        .cycle()
-        .await
-        .expect("publish retained historical candidate");
-    assert_eq!(metadata_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(downloads.load(Ordering::SeqCst), 1);
-    assert_eq!(event_calls.load(Ordering::SeqCst), 2);
-    let latest = fs::read(
-        root.join("v1/worlds")
-            .join(NETWORK)
-            .join(CONTRACT)
-            .join("latest.json"),
-    )
-    .expect("latest");
-    let latest = LatestPointer::from_json_for(&latest, NETWORK, CONTRACT).expect("valid latest");
-    assert_eq!(latest.generation, "0");
-    assert_eq!(latest.state_digest, digest);
-    assert_eq!(latest.source_block_height, "5");
-}
-
-#[tokio::test]
-async fn status_reports_chunk_tile_and_file_preparation_boundaries() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let metadata = dead_metadata(0);
-    let digest = format!("0x{}", hex::encode(metadata.state_digest));
+    let digest = hex_digest(&metadata);
     let status = Arc::new(RwLock::new(initial_status()));
-    let previous = PublishedIdentity {
-        epoch: "0".into(),
-        generation: "9".into(),
-        state_digest: DIGEST0.into(),
-    };
-    status.write().await.published = Some(previous.clone());
     let downloads = Arc::new(AtomicUsize::new(0));
     let source = StatusObservingSource {
         inner: DeadSource::new(metadata),
@@ -466,224 +232,228 @@ async fn status_reports_chunk_tile_and_file_preparation_boundaries() {
         downloads: Arc::clone(&downloads),
     };
     let mut service = IndexerService::new(
-        service_config(),
+        config(Duration::from_secs(60)),
         source,
-        StateStore::open(&temp.path().join("state.sqlite3")).expect("state"),
-        Publisher::open(temp.path().join("artifacts")).expect("publisher"),
+        Publisher::open(root.clone()).expect("publisher"),
         Arc::clone(&status),
     );
-
-    service.inject_failure(FailurePoint::AfterDownload);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::Injected(FailurePoint::AfterDownload))
-    ));
-    assert_progress(
-        &status,
-        ProgressUnit::Chunks,
-        20_000,
-        20_000,
-        &digest,
-        &previous,
-    )
-    .await;
-
-    service.inject_failure(FailurePoint::BeforeBuild);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::Injected(FailurePoint::BeforeBuild))
-    ));
-    assert_progress(&status, ProgressUnit::Tiles, 0, 2_139, &digest, &previous).await;
-
-    service.inject_failure(FailurePoint::BeforeArtifacts);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::Injected(FailurePoint::BeforeArtifacts))
-    ));
-    assert_progress(&status, ProgressUnit::Files, 0, 2_141, &digest, &previous).await;
+    service.cycle().await.expect("publish");
     assert_eq!(downloads.load(Ordering::SeqCst), 1);
-}
 
-async fn assert_progress(
-    status: &Arc<RwLock<game_of_life_indexer::LifeStatus>>,
-    unit: ProgressUnit,
-    completed: u32,
-    total: u32,
-    digest: &str,
-    published: &PublishedIdentity,
-) {
-    let status = status.read().await;
-    let progress = status.preparing.as_ref().expect("preparing progress");
-    assert_eq!(status.state, game_of_life_indexer::IndexerState::Preparing);
-    assert_eq!(status.observed.as_ref().expect("observed").generation, "0");
+    let latest = read_latest(&root);
+    assert_eq!(latest.generation, "0");
+    assert_eq!(latest.state_digest, digest);
+    assert_eq!(latest.source_block_height, "1");
+    let provenance = LifeProvenance::from_json(
+        &fs::read(scope(&root).join(&digest).join("provenance.json")).expect("provenance"),
+    )
+    .expect("valid provenance");
+    assert_eq!(provenance.source_block_height, "1");
     assert_eq!(
-        status.observed.as_ref().expect("observed").state_digest,
+        provenance.source_block_hash,
+        format!("0x{}", "04".repeat(32))
+    );
+    assert_eq!(provenance.population, "0");
+
+    let status = status.read().await;
+    assert_eq!(status.state, IndexerState::Idle);
+    assert_eq!(status.preparing, None);
+    assert_eq!(
+        status.published.as_ref().expect("published").state_digest,
         digest
     );
-    assert_eq!(status.published.as_ref(), Some(published));
-    assert_eq!(status.error_code, None);
-    assert_eq!(status.retry, None);
-    assert_eq!(progress.unit, unit);
-    assert_eq!(progress.completed_units, completed);
-    assert_eq!(progress.total_units, total);
 }
 
 #[tokio::test]
-async fn promotion_crash_is_reconciled_before_fast_path_cleanup() {
-    let fixture = Fixture::new();
-    fixture.ready(0, DIGEST0);
-    fixture.ready(1, DIGEST1);
-    let Fixture { temp, publisher } = fixture;
-    let root = publisher.root().to_owned();
-    let database = temp.path().join("state.sqlite3");
-    let state = StateStore::open(&database).expect("state");
-    let old = pointer(0, DIGEST0);
-    publisher
-        .promote(NETWORK, CONTRACT, &old)
-        .expect("promote predecessor");
-    state
-        .record_publications(NETWORK, CONTRACT, &[(0, DIGEST0.into(), 1)])
-        .expect("record predecessor");
-    let metadata = dead_metadata(2);
-    let digest = format!("0x{}", hex::encode(metadata.state_digest));
-    let mut service = IndexerService::new(
-        service_config(),
+async fn failed_verification_writes_no_artifacts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("artifacts");
+    let mut metadata = dead_metadata(0);
+    metadata.state_digest = [9; 32];
+    let digest = hex_digest(&metadata);
+    let mut service = service(
         DeadSource::new(metadata),
-        state,
+        Publisher::open(root.clone()).expect("publisher"),
+        Duration::from_secs(60),
+    );
+    assert!(matches!(
+        service.cycle().await,
+        Err(ServiceError::Snapshot(
+            game_of_life_indexer::Error::Digest { .. }
+        ))
+    ));
+    assert!(!scope(&root).join(digest).exists());
+    assert!(!scope(&root).join("latest.json").exists());
+}
+
+/// A crash after the immutable install but before promotion leaves a complete,
+/// unpromoted directory. The restarted indexer reuses its provenance, so it
+/// promotes identical bytes even though it downloaded from a later block.
+#[tokio::test]
+async fn install_interrupted_before_promotion_recovers_identical_bytes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("artifacts");
+    let metadata = dead_metadata(0);
+    let digest = hex_digest(&metadata);
+    install_without_promotion(&root, &metadata, 1);
+    let directory = scope(&root).join(&digest);
+    let manifest_before = fs::read(directory.join("manifest.json")).expect("manifest");
+    let provenance_before = fs::read(directory.join("provenance.json")).expect("provenance");
+
+    let mut source = DeadSource::new(metadata);
+    source.height = 2;
+    let mut service = service(
+        source,
+        Publisher::open(root.clone()).expect("restarted publisher"),
+        Duration::from_secs(60),
+    );
+    service.cycle().await.expect("recover publication");
+    assert_eq!(
+        fs::read(directory.join("manifest.json")).unwrap(),
+        manifest_before
+    );
+    assert_eq!(
+        fs::read(directory.join("provenance.json")).unwrap(),
+        provenance_before
+    );
+    let latest = read_latest(&root);
+    assert_eq!(latest.state_digest, digest);
+    assert_eq!(latest.source_block_height, "1");
+}
+
+/// A crash during the install can leave provenance and tiles without a manifest.
+#[tokio::test]
+async fn partial_install_without_manifest_completes_with_saved_provenance() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("artifacts");
+    let metadata = dead_metadata(0);
+    let digest = hex_digest(&metadata);
+    install_without_promotion(&root, &metadata, 1);
+    let directory = scope(&root).join(&digest);
+    fs::remove_file(directory.join("manifest.json")).expect("simulate interrupted install");
+    fs::remove_file(directory.join("tiles/6/0/0.bin")).expect("simulate missing tile");
+
+    let mut source = DeadSource::new(metadata);
+    source.height = 2;
+    let mut service = service(
+        source,
+        Publisher::open(root.clone()).expect("restarted publisher"),
+        Duration::from_secs(60),
+    );
+    service.cycle().await.expect("complete publication");
+    assert_eq!(read_latest(&root).source_block_height, "1");
+    assert!(directory.join("tiles/6/0/0.bin").exists());
+}
+
+#[tokio::test]
+async fn retention_keeps_latest_and_previous_after_grace() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("artifacts");
+    let generation = Arc::new(AtomicUsize::new(0));
+    let mut service = service(
+        SequenceSource {
+            generation: Arc::clone(&generation),
+        },
+        Publisher::open(root.clone()).expect("publisher"),
+        Duration::ZERO,
+    );
+    let digests = (0..3)
+        .map(|value| hex_digest(&dead_metadata(value)))
+        .collect::<Vec<_>>();
+    for value in 0..3 {
+        generation.store(value, Ordering::SeqCst);
+        service.cycle().await.expect("publish generation");
+    }
+    assert_eq!(read_latest(&root).generation, "2");
+    assert!(!scope(&root).join(&digests[0]).exists());
+    assert!(scope(&root).join(&digests[1]).exists());
+    assert!(scope(&root).join(&digests[2]).exists());
+}
+
+#[tokio::test]
+async fn retention_grace_keeps_recent_publications() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("artifacts");
+    let generation = Arc::new(AtomicUsize::new(0));
+    let mut service = service(
+        SequenceSource {
+            generation: Arc::clone(&generation),
+        },
+        Publisher::open(root.clone()).expect("publisher"),
+        Duration::from_secs(60),
+    );
+    for value in 0..3 {
+        generation.store(value, Ordering::SeqCst);
+        service.cycle().await.expect("publish generation");
+    }
+    for value in 0..3 {
+        assert!(
+            scope(&root)
+                .join(hex_digest(&dead_metadata(value as u64)))
+                .exists()
+        );
+    }
+}
+
+/// After a crash between promotion and cleanup, a restart keeps the latest
+/// publication and the one before it, and removes unpromoted candidates.
+#[tokio::test]
+async fn restart_after_promotion_keeps_previous_publication() {
+    let fixture = Fixture::new();
+    for (generation, digest) in [(0, DIGEST0), (1, DIGEST1), (2, DIGEST2), (3, DIGEST3)] {
+        fixture.ready(generation, digest);
+    }
+    let Fixture {
+        temp: _temp,
         publisher,
-        Arc::new(RwLock::new(initial_status())),
+    } = fixture;
+    let root = publisher.root().to_owned();
+    publisher
+        .promote(NETWORK, CONTRACT, &pointer(1, DIGEST1))
+        .expect("promote previous");
+    publisher
+        .promote(NETWORK, CONTRACT, &pointer(2, DIGEST2))
+        .expect("promote latest");
+    let mut service = service(
+        FixedMetadata(fixed_metadata(2, DIGEST2)),
+        publisher,
+        Duration::ZERO,
     );
-    service.inject_failure(FailurePoint::AfterPromotion);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::Injected(FailurePoint::AfterPromotion))
-    ));
-    let recorded = |database: &std::path::Path| {
-        StateStore::open(database)
-            .expect("observer")
-            .retained_digests(NETWORK, CONTRACT, i64::MIN)
-            .expect("publication lookup")
-    };
-    assert!(!recorded(&database).contains(&digest));
-    service.cycle().await.expect("repair promoted publication");
-    let publications = recorded(&database);
-    assert!(publications.contains(&digest));
-    assert!(publications.contains(&DIGEST0.to_owned()));
-    assert!(
-        root.join("v1/worlds")
-            .join(NETWORK)
-            .join(CONTRACT)
-            .join(DIGEST0)
-            .exists()
-    );
-    assert!(
-        !root
-            .join("v1/worlds")
-            .join(NETWORK)
-            .join(CONTRACT)
-            .join(DIGEST1)
-            .exists()
-    );
-}
-
-#[tokio::test]
-async fn event_retention_gap_and_index_lag_block_publication() {
-    let gap = EventBatch {
-        events: Vec::new(),
-        cursor: b"gap".to_vec(),
-        exhausted: true,
-        latest_block: 10,
-        oldest_block: 5,
-        retention_gap: true,
-    };
-    let (_temp, mut service) = gate_service(gap, 10);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::EventRetentionGap { oldest_block: 5 })
-    ));
-    let behind = EventBatch {
-        events: Vec::new(),
-        cursor: b"behind".to_vec(),
-        exhausted: true,
-        latest_block: 9,
-        oldest_block: 0,
-        retention_gap: false,
-    };
-    let (_temp, mut service) = gate_service(behind, 10);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::EventIndexBehind {
-            latest_block: 9,
-            source_block: 10
-        })
-    ));
-}
-
-#[tokio::test]
-async fn missing_matching_lifecycle_event_blocks_publication() {
-    let batch = EventBatch {
-        events: Vec::new(),
-        cursor: b"done".to_vec(),
-        exhausted: true,
-        latest_block: 10,
-        oldest_block: 0,
-        retention_gap: false,
-    };
-    let (_temp, mut service) = gate_service(batch, 10);
-    assert!(matches!(
-        service.cycle().await,
-        Err(ServiceError::MissingLifecycleEvidence { generation: 0 })
-    ));
+    service.cycle().await.expect("unchanged cycle");
+    assert!(!scope(&root).join(DIGEST0).exists());
+    assert!(scope(&root).join(DIGEST1).exists());
+    assert!(scope(&root).join(DIGEST2).exists());
+    assert!(!scope(&root).join(DIGEST3).exists());
 }
 
 #[tokio::test]
 async fn failed_cycles_retry_each_poll_and_preserve_published_status() {
     let fixture = Fixture::new();
     fixture.ready(0, DIGEST0);
-    let Fixture { temp, publisher } = fixture;
+    let Fixture {
+        temp: _temp,
+        publisher,
+    } = fixture;
     publisher
         .promote(NETWORK, CONTRACT, &pointer(0, DIGEST0))
         .expect("promote ready fixture");
-    let attempts = Arc::new(AtomicUsize::new(0));
     let status = Arc::new(RwLock::new(initial_status()));
     let mut service = IndexerService::new(
-        ServiceConfig {
-            network_id: NETWORK.into(),
-            contract_address: CONTRACT.into(),
-            poll_interval: Duration::from_millis(10),
-            retention_grace: Duration::from_secs(60),
-        },
+        config(Duration::from_secs(60)),
         FailThenMetadata {
-            attempts: Arc::clone(&attempts),
+            attempts: Arc::new(AtomicUsize::new(0)),
         },
-        StateStore::open(&temp.path().join("state.sqlite3")).expect("state"),
         publisher,
         Arc::clone(&status),
     );
-    assert_eq!(service.step().await, Duration::from_millis(10));
-    assert_eq!(
-        status
-            .read()
-            .await
-            .retry
-            .as_ref()
-            .expect("retry one")
-            .attempt,
-        1
-    );
-    assert!(status.read().await.published.is_some());
-    assert_eq!(service.step().await, Duration::from_millis(10));
-    assert_eq!(
-        status
-            .read()
-            .await
-            .retry
-            .as_ref()
-            .expect("retry two")
-            .attempt,
-        2
-    );
-    assert_eq!(service.step().await, Duration::from_millis(10));
+    for attempt in 1..=2 {
+        assert_eq!(service.step().await, Duration::from_millis(1));
+        let status = status.read().await;
+        assert_eq!(status.retry.as_ref().expect("retry").attempt, attempt);
+        assert_eq!(status.error_code.as_deref(), Some("SOURCE_ERROR"));
+        assert!(status.published.is_some());
+    }
+    assert_eq!(service.step().await, Duration::from_millis(1));
     assert!(status.read().await.retry.is_none());
 }
 
@@ -691,54 +461,25 @@ async fn failed_cycles_retry_each_poll_and_preserve_published_status() {
 async fn unchanged_cycles_do_not_repeat_ready_inventory_discovery() {
     let fixture = Fixture::new();
     fixture.ready(0, DIGEST0);
-    let Fixture { temp, publisher } = fixture;
+    let Fixture {
+        temp: _temp,
+        publisher,
+    } = fixture;
     publisher
         .promote(NETWORK, CONTRACT, &pointer(0, DIGEST0))
         .expect("promote ready fixture");
-    let missing_after_startup = publisher
-        .root()
-        .join("v1/worlds")
-        .join(NETWORK)
-        .join(CONTRACT)
+    let missing_after_startup = scope(publisher.root())
         .join(DIGEST0)
         .join(format!("tiles/{MAX_ZOOM}/0/0.bin"));
-    let mut service = IndexerService::new(
-        service_config(),
-        FailThenMetadata {
-            attempts: Arc::new(AtomicUsize::new(2)),
-        },
-        StateStore::open(&temp.path().join("state.sqlite3")).expect("state"),
+    let mut service = service(
+        FixedMetadata(fixed_metadata(0, DIGEST0)),
         publisher,
-        Arc::new(RwLock::new(initial_status())),
+        Duration::from_secs(60),
     );
-
     service.cycle().await.expect("startup reconciliation");
     fs::remove_file(missing_after_startup).expect("remove tile after startup validation");
     service.cycle().await.expect("first unchanged cycle");
     service.cycle().await.expect("second unchanged cycle");
-}
-
-#[test]
-fn cleanup_retains_current_predecessor_and_grace() {
-    let fixture = Fixture::new();
-    let database = fixture.temp.path().join("state.sqlite3");
-    let state = StateStore::open(&database).expect("state");
-    let mut publications = Vec::new();
-    for (height, digest, promoted) in [(0, DIGEST0, 1), (1, DIGEST1, 1), (2, DIGEST2, 100)] {
-        fs::create_dir_all(fixture.digest_dir(digest)).expect("digest dir");
-        publications.push((height, digest.to_owned(), promoted));
-    }
-    state
-        .record_publications(NETWORK, CONTRACT, &publications)
-        .expect("record");
-    let retained = state
-        .retained_digests(NETWORK, CONTRACT, 50)
-        .expect("retained");
-    let removed = fixture
-        .publisher
-        .cleanup(NETWORK, CONTRACT, &retained)
-        .expect("cleanup");
-    assert_eq!(removed, vec![DIGEST0.to_owned()]);
 }
 
 #[tokio::test]
@@ -1013,37 +754,18 @@ fn pointer(generation: u64, digest: &str) -> LatestPointer {
     }
 }
 fn provenance(generation: u64, digest: &str) -> LifeProvenance {
-    let provenance = event_provenance(generation, digest, "2026-08-28T12:00:00.000Z");
-    if generation == 0 {
-        return provenance;
-    }
     LifeProvenance {
-        evidence_kind: EvidenceKind::GenerationAdvancedEvent,
-        event_kind: Some(EventKind::GenerationAdvanced),
-        request_id: Some(format!("0x{}", "2".repeat(64))),
-        requester: Some(format!("0x{}", "3".repeat(64))),
-        ..provenance
-    }
-}
-fn event_provenance(generation: u64, digest: &str, verified_at: &str) -> LifeProvenance {
-    LifeProvenance {
-        epoch: "0".into(),
         schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
+        epoch: "0".into(),
         generation: generation.to_string(),
         seed: "7".into(),
         population: "0".into(),
         state_digest: digest.into(),
         source_block_height: "9".into(),
         source_block_hash: format!("0x{}", "f".repeat(64)),
-        evidence_kind: EvidenceKind::WorldInitializedEvent,
-        transaction_hash: Some(format!("0x{}", "0".repeat(64))),
-        event_index: Some(0),
-        event_kind: Some(EventKind::WorldInitialized),
-        request_id: None,
-        requester: None,
-        verified_at: verified_at.into(),
+        verified_at: "2026-08-28T12:00:00.000Z".into(),
     }
 }
 fn decode_digest(value: &str) -> [u8; 32] {
@@ -1052,86 +774,148 @@ fn decode_digest(value: &str) -> [u8; 32] {
         .try_into()
         .expect("digest")
 }
+fn hex_digest(metadata: &SnapshotMetadata) -> String {
+    format!("0x{}", hex::encode(metadata.state_digest))
+}
+fn scope(root: &std::path::Path) -> PathBuf {
+    root.join("v1/worlds").join(NETWORK).join(CONTRACT)
+}
+fn read_latest(root: &std::path::Path) -> LatestPointer {
+    LatestPointer::from_json_for(
+        &fs::read(scope(root).join("latest.json")).expect("latest"),
+        NETWORK,
+        CONTRACT,
+    )
+    .expect("valid latest")
+}
+
+fn config(retention_grace: Duration) -> ServiceConfig {
+    ServiceConfig {
+        network_id: NETWORK.into(),
+        contract_address: CONTRACT.into(),
+        poll_interval: Duration::from_millis(1),
+        retention_grace,
+    }
+}
+
+fn service<S: ChainSource>(
+    source: S,
+    publisher: Publisher,
+    retention_grace: Duration,
+) -> IndexerService<S> {
+    IndexerService::new(
+        config(retention_grace),
+        source,
+        publisher,
+        Arc::new(RwLock::new(initial_status())),
+    )
+}
+
+/// Installs a verified snapshot without promoting it, as a crash would leave it.
+fn install_without_promotion(root: &std::path::Path, metadata: &SnapshotMetadata, height: u64) {
+    let provenance = LifeProvenance {
+        schema_version: 2,
+        network_id: NETWORK.into(),
+        contract_address: CONTRACT.into(),
+        epoch: metadata.epoch.to_string(),
+        generation: metadata.generation.to_string(),
+        seed: metadata.seed.to_string(),
+        population: metadata.population.to_string(),
+        state_digest: hex_digest(metadata),
+        source_block_height: height.to_string(),
+        source_block_hash: format!("0x{}", "01".repeat(32)),
+        verified_at: "2026-08-28T12:00:00.000Z".into(),
+    };
+    let snapshot = build_snapshot(
+        metadata,
+        NETWORK.into(),
+        CONTRACT.into(),
+        dead_chunks(),
+        provenance,
+    )
+    .expect("snapshot");
+    let publisher = Publisher::open(root.to_owned()).expect("first publisher");
+    publisher
+        .publish_snapshot(
+            NETWORK,
+            CONTRACT,
+            &hex_digest(metadata),
+            &snapshot.artifacts,
+        )
+        .expect("install");
+}
+
+fn fixed_metadata(generation: u64, digest: &str) -> SnapshotMetadata {
+    SnapshotMetadata {
+        epoch: 0,
+        size: WORLD_SIZE,
+        generation,
+        seed: 7,
+        population: 0,
+        state_digest: decode_digest(digest),
+    }
+}
+
+fn dead_metadata(generation: u64) -> SnapshotMetadata {
+    let head = vec![0; CHUNK_BYTES];
+    let tail = vec![0; TAIL_BYTES];
+    let mut digest = WorldDigest::for_epoch(WORLD_SIZE, WORLD_SIZE, 0, generation);
+    for row in 0..WORLD_SIZE {
+        digest.update(row * CHUNKS_PER_ROW, &head);
+        digest.update(row * CHUNKS_PER_ROW + 1, &tail);
+    }
+    SnapshotMetadata {
+        epoch: 0,
+        size: WORLD_SIZE,
+        generation,
+        seed: 0,
+        population: 0,
+        state_digest: digest.finish(),
+    }
+}
+
+fn dead_chunks() -> Vec<ChunkResponse> {
+    let mut chunks = Vec::with_capacity((WORLD_SIZE * CHUNKS_PER_ROW) as usize);
+    for row in 0..WORLD_SIZE {
+        for part in 0..CHUNKS_PER_ROW {
+            chunks.push(ChunkResponse {
+                row,
+                part,
+                bytes: vec![0; if part == 0 { CHUNK_BYTES } else { TAIL_BYTES }],
+            });
+        }
+    }
+    chunks
+}
 
 struct MixedSource;
 
 #[async_trait]
 impl ChainSource for MixedSource {
     async fn metadata(&self) -> Result<SnapshotMetadata, SourceError> {
-        Ok(metadata(0))
+        Ok(dead_metadata(0))
     }
 
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
         Ok(CoherentDownload {
-            metadata: metadata(1),
+            metadata: dead_metadata(1),
             chunks: Vec::new(),
             source_block_height: 1,
             source_block_hash: [1; 32],
         })
     }
-
-    async fn events(&self, _cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        Ok(EventBatch {
-            events: Vec::new(),
-            cursor: b"done".to_vec(),
-            exhausted: true,
-            latest_block: 1,
-            oldest_block: 0,
-            retention_gap: false,
-        })
-    }
 }
 
-fn metadata(generation: u64) -> SnapshotMetadata {
-    SnapshotMetadata {
-        epoch: 0,
-        width: WORLD_WIDTH,
-        height: WORLD_HEIGHT,
-        generation,
-        seed: 0,
-        population: 0,
-        state_digest: [0; 32],
-        chunk_bytes: CHUNK_BYTES as u32,
-        chunks_per_row: CHUNKS_PER_ROW,
-        max_queue_len: 64,
-    }
-}
-
-fn service_config() -> ServiceConfig {
-    ServiceConfig {
-        network_id: NETWORK.into(),
-        contract_address: CONTRACT.into(),
-        poll_interval: Duration::from_millis(1),
-        retention_grace: Duration::from_secs(60),
-    }
-}
-
-#[derive(Clone)]
 struct DeadSource {
     metadata: SnapshotMetadata,
-    event: ChainEvent,
+    height: u64,
 }
 
 impl DeadSource {
     fn new(metadata: SnapshotMetadata) -> Self {
-        let initialized = metadata.generation == 0;
         Self {
-            event: ChainEvent {
-                epoch: 0,
-                size: Some(10_000),
-                generation: metadata.generation,
-                seed: initialized.then_some(metadata.seed),
-                max_queue_len: initialized.then_some(metadata.max_queue_len),
-                population: metadata.population,
-                state_digest: metadata.state_digest,
-                block_height: 1,
-                transaction_hash: format!("0x{}", "1".repeat(64)),
-                event_index: 0,
-                request_id: (!initialized).then(|| format!("0x{}", "2".repeat(64))),
-                requester: (!initialized).then(|| format!("0x{}", "3".repeat(64))),
-                initialized,
-            },
             metadata,
+            height: 1,
         }
     }
 }
@@ -1146,26 +930,37 @@ impl ChainSource for DeadSource {
         Ok(CoherentDownload {
             metadata: self.metadata.clone(),
             chunks: dead_chunks(),
-            source_block_height: 1,
-            source_block_hash: [4; 32],
+            source_block_height: self.height,
+            source_block_hash: [self.height as u8 * 4; 32],
         })
     }
+}
 
-    async fn events(&self, _cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        Ok(EventBatch {
-            events: vec![self.event.clone()],
-            cursor: b"done".to_vec(),
-            exhausted: true,
-            latest_block: 1,
-            oldest_block: 0,
-            retention_gap: false,
+/// Serves a dead world whose generation the test controls.
+struct SequenceSource {
+    generation: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ChainSource for SequenceSource {
+    async fn metadata(&self) -> Result<SnapshotMetadata, SourceError> {
+        Ok(dead_metadata(self.generation.load(Ordering::SeqCst) as u64))
+    }
+
+    async fn download(&self) -> Result<CoherentDownload, SourceError> {
+        let generation = self.generation.load(Ordering::SeqCst) as u64;
+        Ok(CoherentDownload {
+            metadata: dead_metadata(generation),
+            chunks: dead_chunks(),
+            source_block_height: generation + 1,
+            source_block_hash: [generation as u8 + 1; 32],
         })
     }
 }
 
 struct StatusObservingSource {
     inner: DeadSource,
-    status: Arc<RwLock<game_of_life_indexer::LifeStatus>>,
+    status: Arc<RwLock<LifeStatus>>,
     downloads: Arc<AtomicUsize>,
 }
 
@@ -1178,7 +973,7 @@ impl ChainSource for StatusObservingSource {
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
         let status = self.status.read().await;
         let progress = status.preparing.as_ref().expect("download progress");
-        assert_eq!(status.state, game_of_life_indexer::IndexerState::Preparing);
+        assert_eq!(status.state, IndexerState::Preparing);
         assert_eq!(progress.unit, ProgressUnit::Chunks);
         assert_eq!(progress.completed_units, 0);
         assert_eq!(progress.total_units, 20_000);
@@ -1186,158 +981,20 @@ impl ChainSource for StatusObservingSource {
         self.downloads.fetch_add(1, Ordering::SeqCst);
         self.inner.download().await
     }
-
-    async fn events(&self, cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        self.inner.events(cursor).await
-    }
 }
 
-struct ChangingAnchorSource {
-    inner: DeadSource,
-    downloads: Arc<AtomicUsize>,
-}
+/// Reports fixed metadata. Downloads fail, so only unchanged cycles succeed.
+struct FixedMetadata(SnapshotMetadata);
 
 #[async_trait]
-impl ChainSource for ChangingAnchorSource {
+impl ChainSource for FixedMetadata {
     async fn metadata(&self) -> Result<SnapshotMetadata, SourceError> {
-        self.inner.metadata().await
+        Ok(self.0.clone())
     }
 
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
-        let anchor = self.downloads.fetch_add(1, Ordering::SeqCst) as u64 + 1;
-        let mut download = self.inner.download().await?;
-        download.source_block_height = anchor;
-        download.source_block_hash = [anchor as u8; 32];
-        Ok(download)
+        Err(SourceError::Mixed("download should not run".into()))
     }
-
-    async fn events(&self, cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        let mut batch = self.inner.events(cursor).await?;
-        batch.latest_block = self.downloads.load(Ordering::SeqCst) as u64;
-        Ok(batch)
-    }
-}
-
-struct MovingTipSource {
-    initial: SnapshotMetadata,
-    advanced: SnapshotMetadata,
-    event: ChainEvent,
-    metadata_calls: Arc<AtomicUsize>,
-    downloads: Arc<AtomicUsize>,
-    event_calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl ChainSource for MovingTipSource {
-    async fn metadata(&self) -> Result<SnapshotMetadata, SourceError> {
-        if self.metadata_calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            Ok(self.initial.clone())
-        } else {
-            Ok(self.advanced.clone())
-        }
-    }
-
-    async fn download(&self) -> Result<CoherentDownload, SourceError> {
-        self.downloads.fetch_add(1, Ordering::SeqCst);
-        Ok(CoherentDownload {
-            metadata: self.initial.clone(),
-            chunks: dead_chunks(),
-            source_block_height: 5,
-            source_block_hash: [5; 32],
-        })
-    }
-
-    async fn events(&self, _cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        let caught_up = self.event_calls.fetch_add(1, Ordering::SeqCst) > 0;
-        Ok(EventBatch {
-            events: caught_up.then(|| self.event.clone()).into_iter().collect(),
-            cursor: if caught_up { &b"done"[..] } else { &b"lag"[..] }.to_vec(),
-            exhausted: true,
-            latest_block: if caught_up { 5 } else { 4 },
-            oldest_block: 0,
-            retention_gap: false,
-        })
-    }
-}
-
-fn dead_metadata(generation: u64) -> SnapshotMetadata {
-    let head = vec![0; CHUNK_BYTES];
-    let tail = vec![0; TAIL_BYTES];
-    let mut digest = WorldDigest::for_epoch(WORLD_WIDTH, WORLD_HEIGHT, 0, generation);
-    for row in 0..WORLD_HEIGHT {
-        digest.update(row * CHUNKS_PER_ROW, &head);
-        digest.update(row * CHUNKS_PER_ROW + 1, &tail);
-    }
-    SnapshotMetadata {
-        epoch: 0,
-        width: WORLD_WIDTH,
-        height: WORLD_HEIGHT,
-        generation,
-        seed: 0,
-        population: 0,
-        state_digest: digest.finish(),
-        chunk_bytes: CHUNK_BYTES as u32,
-        chunks_per_row: CHUNKS_PER_ROW,
-        max_queue_len: 64,
-    }
-}
-
-fn dead_chunks() -> Vec<ChunkResponse> {
-    let mut chunks = Vec::with_capacity((WORLD_HEIGHT * CHUNKS_PER_ROW) as usize);
-    for row in 0..WORLD_HEIGHT {
-        for part in 0..CHUNKS_PER_ROW {
-            chunks.push(ChunkResponse {
-                row,
-                part,
-                bytes: vec![0; if part == 0 { CHUNK_BYTES } else { TAIL_BYTES }],
-            });
-        }
-    }
-    chunks
-}
-
-#[derive(Clone)]
-struct GateSource {
-    batch: EventBatch,
-    source_block: u64,
-}
-
-#[async_trait]
-impl ChainSource for GateSource {
-    async fn metadata(&self) -> Result<SnapshotMetadata, SourceError> {
-        Ok(metadata(0))
-    }
-
-    async fn download(&self) -> Result<CoherentDownload, SourceError> {
-        Ok(CoherentDownload {
-            metadata: metadata(0),
-            chunks: Vec::new(),
-            source_block_height: self.source_block,
-            source_block_hash: [1; 32],
-        })
-    }
-
-    async fn events(&self, _cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        Ok(self.batch.clone())
-    }
-}
-
-fn gate_service(
-    batch: EventBatch,
-    source_block: u64,
-) -> (tempfile::TempDir, IndexerService<GateSource>) {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let service = IndexerService::new(
-        service_config(),
-        GateSource {
-            batch,
-            source_block,
-        },
-        StateStore::open(&temp.path().join("state.sqlite3")).expect("state"),
-        Publisher::open(temp.path().join("artifacts")).expect("publisher"),
-        Arc::new(RwLock::new(initial_status())),
-    );
-    (temp, service)
 }
 
 struct FailThenMetadata {
@@ -1353,26 +1010,11 @@ impl ChainSource for FailThenMetadata {
                 message: "injected".into(),
             })
         } else {
-            Ok(SnapshotMetadata {
-                epoch: 0,
-                width: WORLD_WIDTH,
-                height: WORLD_HEIGHT,
-                generation: 0,
-                seed: 7,
-                population: 0,
-                state_digest: decode_digest(DIGEST0),
-                chunk_bytes: CHUNK_BYTES as u32,
-                chunks_per_row: CHUNKS_PER_ROW,
-                max_queue_len: 64,
-            })
+            Ok(fixed_metadata(0, DIGEST0))
         }
     }
 
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
-        Err(SourceError::Event("download should not run".into()))
-    }
-
-    async fn events(&self, _cursor: Vec<u8>) -> Result<EventBatch, SourceError> {
-        Err(SourceError::Event("events should not run".into()))
+        Err(SourceError::Mixed("download should not run".into()))
     }
 }

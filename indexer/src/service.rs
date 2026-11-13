@@ -1,16 +1,15 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 
-use crate::schema::{EvidenceKind, hex32, now, parse_u64, timestamp};
+use crate::schema::{hex32, now, timestamp};
 use crate::snapshot::tile_count;
-use crate::source::{ChainEvent, ChainSource, CoherentDownload, SourceError};
-use crate::state::{StateError, StateStore};
+use crate::source::{ChainSource, CoherentDownload, SourceError};
 use crate::storage::{Publisher, StorageError};
 use crate::{
-    EventKind as PublicEventKind, IndexerState, LatestPointer, LifeProvenance, LifeStatus,
-    Progress, ProgressUnit, PublishedIdentity, build_snapshot,
+    IndexerState, LatestPointer, LifeProvenance, LifeStatus, Progress, ProgressUnit,
+    PublishedIdentity, SnapshotMetadata, build_snapshot,
 };
 
 #[derive(Clone, Debug)]
@@ -26,75 +25,51 @@ pub enum ServiceError {
     #[error(transparent)]
     Source(#[from] SourceError),
     #[error(transparent)]
-    State(#[from] StateError),
-    #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
     Snapshot(#[from] crate::Error),
-    #[error("event history has a retention gap (oldest retained block {oldest_block})")]
-    EventRetentionGap { oldest_block: u64 },
-    #[error(
-        "event index is caught through block {latest_block}, before source block {source_block}"
-    )]
-    EventIndexBehind {
-        latest_block: u64,
-        source_block: u64,
-    },
-    #[error("no valid committed lifecycle event matches generation {generation}")]
-    MissingLifecycleEvidence { generation: u64 },
-    #[error("injected service interruption at {0:?}")]
-    Injected(FailurePoint),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailurePoint {
-    AfterDownload,
-    BeforeBuild,
-    BeforeArtifacts,
-    AfterArtifacts,
-    AfterPromotion,
+/// A publication that `latest.json` has replaced. Browsers can still
+/// be loading it, so it stays on disk for the retention grace period.
+struct Superseded {
+    digest: String,
+    since: Instant,
 }
 
+/// Polls the chain, verifies changed worlds, and publishes them.
+///
+/// All durable state is on the filesystem: immutable digest directories and
+/// `latest.json`. The publisher's writer lock makes this the only writer.
 pub struct IndexerService<S> {
     config: ServiceConfig,
     source: S,
-    state: StateStore,
     publisher: Publisher,
     status: Arc<RwLock<LifeStatus>>,
-    events: Vec<ChainEvent>,
-    pending: Option<CoherentDownload>,
-    latest_publication: Option<LatestPointer>,
-    publication_reconciled: bool,
+    latest: Option<LatestPointer>,
+    reconciled: bool,
+    /// Oldest first. The last entry is the previous publication.
+    superseded: Vec<Superseded>,
     retry_attempt: u32,
-    failure_point: Option<FailurePoint>,
 }
 
 impl<S: ChainSource> IndexerService<S> {
     pub fn new(
         config: ServiceConfig,
         source: S,
-        state: StateStore,
         publisher: Publisher,
         status: Arc<RwLock<LifeStatus>>,
     ) -> Self {
         Self {
             config,
             source,
-            state,
             publisher,
             status,
-            events: Vec::new(),
-            pending: None,
-            latest_publication: None,
-            publication_reconciled: false,
+            latest: None,
+            reconciled: false,
+            superseded: Vec::new(),
             retry_attempt: 0,
-            failure_point: None,
         }
-    }
-
-    #[doc(hidden)]
-    pub fn inject_failure(&mut self, point: FailurePoint) {
-        self.failure_point = Some(point);
     }
 
     pub async fn run(mut self) -> Result<(), ServiceError> {
@@ -131,36 +106,59 @@ impl<S: ChainSource> IndexerService<S> {
     }
 
     pub async fn cycle(&mut self) -> Result<(), ServiceError> {
-        let cycle_started = std::time::Instant::now();
-        if !self.publication_reconciled {
-            self.reconcile_publication().await?;
+        let cycle_started = Instant::now();
+        if !self.reconciled {
+            self.reconcile().await?;
         }
-        let download = match self.pending.take() {
-            Some(download) => download,
-            None => match self.download_changed_world().await? {
-                Some(download) => download,
-                None => return Ok(()),
-            },
-        };
-        // Keep the download for the next cycle until verification consumes it.
-        let (provenance, stored) = match self.prepare(&download).await {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.pending = Some(download);
-                return Err(error);
-            }
-        };
+        let observed = self.source.metadata().await?;
+        let digest = hex32(&observed.state_digest);
+        if self.is_latest(&observed, &digest) {
+            self.cleanup()?;
+            self.set_idle(&observed, &digest).await;
+            return Ok(());
+        }
+
+        self.set_preparing(&observed, &digest, ProgressUnit::Chunks, 0)
+            .await;
+        let download_started = Instant::now();
+        let download = self.source.download().await?;
+        eprintln!(
+            "game_of_life_indexer_metric stage=download generation={} elapsed_ms={}",
+            observed.generation,
+            download_started.elapsed().as_millis()
+        );
+        if download.metadata != observed {
+            return Err(
+                SourceError::Mixed("world changed between poll and download".into()).into(),
+            );
+        }
         let CoherentDownload {
-            metadata, chunks, ..
+            metadata,
+            chunks,
+            source_block_height,
+            source_block_hash,
         } = download;
-        let digest = hex32(&metadata.state_digest);
-        let build_started = std::time::Instant::now();
+
+        // Reuse the provenance of an interrupted install of the same digest,
+        // so retried immutable files keep identical bytes.
+        let provenance = match self.publisher.provenance(
+            &self.config.network_id,
+            &self.config.contract_address,
+            &digest,
+        )? {
+            Some(existing) => existing,
+            None => self.provenance(&metadata, source_block_height, source_block_hash),
+        };
+        self.set_preparing(&metadata, &digest, ProgressUnit::Tiles, 0)
+            .await;
+        let build_started = Instant::now();
+        // Verifies population and digest before any artifact is written.
         let snapshot = build_snapshot(
             &metadata,
             self.config.network_id.clone(),
             self.config.contract_address.clone(),
             chunks,
-            provenance.clone(),
+            provenance,
         )?;
         let generated_bytes = snapshot
             .artifacts
@@ -172,25 +170,16 @@ impl<S: ChainSource> IndexerService<S> {
             metadata.generation,
             build_started.elapsed().as_millis()
         );
-        let artifact_count =
-            u32::try_from(snapshot.artifacts.len()).map_err(|_| crate::Error::Schema {
-                field: "artifacts",
-                reason: "artifact count exceeds status capacity",
-            })?;
-        self.set_preparing(&metadata, &digest, 0, artifact_count, ProgressUnit::Files)
+
+        self.set_preparing(&metadata, &digest, ProgressUnit::Files, 0)
             .await;
-        if !stored {
-            self.state.persist_evidence(&provenance)?;
-        }
-        self.fail_if(FailurePoint::BeforeArtifacts)?;
-        let publication_started = std::time::Instant::now();
+        let publication_started = Instant::now();
         self.publisher.publish_snapshot(
             &self.config.network_id,
             &self.config.contract_address,
             &digest,
             &snapshot.artifacts,
         )?;
-        self.fail_if(FailurePoint::AfterArtifacts)?;
         let pointer = LatestPointer {
             epoch: metadata.epoch.to_string(),
             schema_version: 2,
@@ -200,19 +189,26 @@ impl<S: ChainSource> IndexerService<S> {
                 "/v1/worlds/{}/{}/{digest}/manifest.json",
                 self.config.network_id, self.config.contract_address
             ),
-            source_block_height: provenance.source_block_height.clone(),
-            source_block_hash: provenance.source_block_hash.clone(),
+            source_block_height: snapshot.provenance.source_block_height.clone(),
+            source_block_hash: snapshot.provenance.source_block_hash.clone(),
             published_at: now(),
         };
-        // Promotion can become visible before a final directory sync reports failure.
-        self.publication_reconciled = false;
+        // A failed promotion can still have replaced latest.json; reload it next cycle.
+        self.reconciled = false;
         self.publisher.promote(
             &self.config.network_id,
             &self.config.contract_address,
             &pointer,
         )?;
-        self.fail_if(FailurePoint::AfterPromotion)?;
-        self.reconcile_publication().await?;
+        if let Some(previous) = self.latest.replace(pointer)
+            && previous.state_digest != digest
+        {
+            self.superseded.push(Superseded {
+                digest: previous.state_digest,
+                since: Instant::now(),
+            });
+        }
+        self.reconciled = true;
         eprintln!(
             "game_of_life_indexer_metric stage=publication generation={} elapsed_ms={} total_ms={}",
             metadata.generation,
@@ -220,108 +216,120 @@ impl<S: ChainSource> IndexerService<S> {
             cycle_started.elapsed().as_millis()
         );
         self.cleanup()?;
-        let mut status = self.status.write().await;
-        status.state = IndexerState::Idle;
-        status.preparing = None;
-        status.published = Some(identity(metadata.epoch, metadata.generation, &digest));
-        status.error_code = None;
-        status.retry = None;
+        self.set_idle(&metadata, &digest).await;
         Ok(())
     }
 
-    /// Returns a coherent download when the chain differs from the latest
-    /// publication, or `None` after refreshing status for an unchanged world.
-    async fn download_changed_world(&mut self) -> Result<Option<CoherentDownload>, ServiceError> {
-        let observed = self.source.metadata().await?;
-        let digest = hex32(&observed.state_digest);
-        if self.latest_publication.as_ref().is_some_and(|latest| {
-            latest.epoch == observed.epoch.to_string()
-                && latest.generation == observed.generation.to_string()
+    fn is_latest(&self, metadata: &SnapshotMetadata, digest: &str) -> bool {
+        self.latest.as_ref().is_some_and(|latest| {
+            latest.epoch == metadata.epoch.to_string()
+                && latest.generation == metadata.generation.to_string()
                 && latest.state_digest == digest
-        }) {
-            self.cleanup()?;
-            let mut status = self.status.write().await;
-            status.observed = Some(identity(observed.epoch, observed.generation, &digest));
-            status.published = Some(identity(observed.epoch, observed.generation, &digest));
-            status.state = IndexerState::Idle;
-            status.preparing = None;
-            status.error_code = None;
-            status.retry = None;
-            return Ok(None);
-        }
-        self.set_preparing(
-            &observed,
-            &digest,
-            0,
-            observed.chunk_count() as u32,
-            ProgressUnit::Chunks,
-        )
-        .await;
-        let download_started = std::time::Instant::now();
-        let download = self.source.download().await?;
-        eprintln!(
-            "game_of_life_indexer_metric stage=download generation={} elapsed_ms={}",
-            observed.generation,
-            download_started.elapsed().as_millis()
-        );
-        if download.metadata != observed {
-            return Err(SourceError::Mixed(
-                "poll observation changed before quiet-window acquisition".into(),
-            )
-            .into());
-        }
-        Ok(Some(download))
+        })
     }
 
-    /// Resolves lifecycle evidence for a download. Returns the provenance and
-    /// whether it is already stored.
-    async fn prepare(
-        &mut self,
-        download: &CoherentDownload,
-    ) -> Result<(LifeProvenance, bool), ServiceError> {
-        let metadata = &download.metadata;
-        let chunk_count = metadata.chunk_count() as u32;
-        let digest = hex32(&metadata.state_digest);
-        self.set_preparing(
-            metadata,
-            &digest,
-            chunk_count,
-            chunk_count,
-            ProgressUnit::Chunks,
-        )
-        .await;
-        self.fail_if(FailurePoint::AfterDownload)?;
-        self.observe_events_through(download.source_block_height)
-            .await?;
-        let candidate = self.provenance(
-            metadata,
-            download.source_block_height,
-            download.source_block_hash,
-        )?;
-        let prepared = match self.state.resolve_evidence(&candidate)? {
-            Some(stored) => (stored, true),
-            None => (candidate, false),
+    fn provenance(
+        &self,
+        metadata: &SnapshotMetadata,
+        height: u64,
+        hash: [u8; 32],
+    ) -> LifeProvenance {
+        LifeProvenance {
+            schema_version: 2,
+            network_id: self.config.network_id.clone(),
+            contract_address: self.config.contract_address.clone(),
+            epoch: metadata.epoch.to_string(),
+            generation: metadata.generation.to_string(),
+            seed: metadata.seed.to_string(),
+            population: metadata.population.to_string(),
+            state_digest: hex32(&metadata.state_digest),
+            source_block_height: height.to_string(),
+            source_block_hash: hex32(&hash),
+            verified_at: now(),
+        }
+    }
+
+    /// Loads `latest.json`. On startup, every older complete publication is
+    /// treated as just superseded, so a restart keeps it for one grace period.
+    async fn reconcile(&mut self) -> Result<(), ServiceError> {
+        let network = &self.config.network_id;
+        let contract = &self.config.contract_address;
+        let loaded = self.publisher.latest(network, contract)?;
+        // A failed promotion can still have replaced latest.json.
+        if let Some(previous) = std::mem::replace(&mut self.latest, loaded)
+            && self
+                .latest
+                .as_ref()
+                .is_some_and(|latest| latest.state_digest != previous.state_digest)
+        {
+            self.superseded.push(Superseded {
+                digest: previous.state_digest,
+                since: Instant::now(),
+            });
+        }
+        if self.superseded.is_empty()
+            && let Some(latest) = &self.latest
+        {
+            // Ready directories above latest are unpromoted candidates, not
+            // publications. The next cycle can reuse or remove them.
+            let order = latest.order()?;
+            self.superseded = self
+                .publisher
+                .ready_identities(network, contract)?
+                .into_iter()
+                .filter(|identity| (identity.epoch, identity.generation) < order)
+                .map(|identity| Superseded {
+                    digest: identity.state_digest,
+                    since: Instant::now(),
+                })
+                .collect();
+        }
+        if let Some(latest) = &self.latest {
+            let (epoch, generation) = latest.order()?;
+            self.status.write().await.published =
+                Some(identity(epoch, generation, &latest.state_digest));
+        }
+        self.reconciled = true;
+        Ok(())
+    }
+
+    /// Keeps the latest publication, the previous publication, and anything
+    /// superseded within the grace period. Removes every other digest directory.
+    fn cleanup(&mut self) -> Result<(), ServiceError> {
+        let Some(latest) = &self.latest else {
+            return Ok(());
         };
-        self.set_preparing(
-            metadata,
-            &digest,
-            0,
-            tile_count(metadata.width),
-            ProgressUnit::Tiles,
-        )
-        .await;
-        self.fail_if(FailurePoint::BeforeBuild)?;
-        Ok(prepared)
+        let grace = self.config.retention_grace;
+        let previous = self.superseded.len().saturating_sub(1);
+        let mut index = 0;
+        self.superseded.retain(|entry| {
+            let keep = index == previous || entry.since.elapsed() < grace;
+            index += 1;
+            keep && entry.digest != latest.state_digest
+        });
+        let mut retained = vec![latest.state_digest.clone()];
+        retained.extend(self.superseded.iter().map(|entry| entry.digest.clone()));
+        self.publisher.cleanup(
+            &self.config.network_id,
+            &self.config.contract_address,
+            &retained,
+        )?;
+        Ok(())
     }
 
     async fn set_preparing(
         &self,
-        metadata: &crate::SnapshotMetadata,
+        metadata: &SnapshotMetadata,
         digest: &str,
-        completed_units: u32,
-        total_units: u32,
         unit: ProgressUnit,
+        completed_units: u32,
     ) {
+        let total_units = match unit {
+            ProgressUnit::Chunks => metadata.chunk_count() as u32,
+            ProgressUnit::Tiles => tile_count(metadata.size),
+            // Every tile plus manifest.json and provenance.json.
+            ProgressUnit::Files => tile_count(metadata.size) + 2,
+        };
         let mut status = self.status.write().await;
         status.observed = Some(identity(metadata.epoch, metadata.generation, digest));
         status.state = IndexerState::Preparing;
@@ -337,196 +345,15 @@ impl<S: ChainSource> IndexerService<S> {
         status.retry = None;
     }
 
-    fn cleanup(&self) -> Result<(), ServiceError> {
-        let grace = chrono::Utc::now()
-            .timestamp()
-            .saturating_sub(self.config.retention_grace.as_secs() as i64);
-        let retained = self.state.retained_digests(
-            &self.config.network_id,
-            &self.config.contract_address,
-            grace,
-        )?;
-        self.publisher.cleanup(
-            &self.config.network_id,
-            &self.config.contract_address,
-            &retained,
-        )?;
-        Ok(())
-    }
-
-    async fn observe_events_through(&mut self, source_block: u64) -> Result<(), ServiceError> {
-        let scope = format!(
-            "{}:{}",
-            self.config.network_id, self.config.contract_address
-        );
-        let mut cursor = self.state.cursor(&scope)?.unwrap_or_default();
-        for _ in 0..10_000 {
-            let batch = self.source.events(cursor.clone()).await?;
-            if batch.retention_gap {
-                return Err(ServiceError::EventRetentionGap {
-                    oldest_block: batch.oldest_block,
-                });
-            }
-            if batch.cursor == cursor && !batch.exhausted {
-                return Err(
-                    SourceError::Event("event pagination repeated its cursor".into()).into(),
-                );
-            }
-            self.state
-                .save_event_batch(&scope, &batch.events, &batch.cursor)?;
-            cursor = batch.cursor;
-            if batch.exhausted {
-                if batch.latest_block < source_block {
-                    return Err(ServiceError::EventIndexBehind {
-                        latest_block: batch.latest_block,
-                        source_block,
-                    });
-                }
-                self.events = self.state.chain_events(&scope)?;
-                self.events
-                    .sort_by_key(|event| (event.generation, event.event_index));
-                return Ok(());
-            }
-        }
-        Err(SourceError::Event("event pagination exceeded 10000 pages".into()).into())
-    }
-
-    fn provenance(
-        &self,
-        metadata: &crate::SnapshotMetadata,
-        height: u64,
-        hash: [u8; 32],
-    ) -> Result<LifeProvenance, ServiceError> {
-        // decode_life_event guarantees each kind's optional fields.
-        let event = self.events.iter().rev().find(|event| {
-            let event_specific_match = if metadata.generation == 0 {
-                event.initialized
-                    && event.size == Some(metadata.width)
-                    && event.seed == Some(metadata.seed)
-                    && event.max_queue_len == Some(metadata.max_queue_len)
-            } else {
-                !event.initialized
-            };
-            event.epoch == metadata.epoch
-                && event.generation == metadata.generation
-                && event.population == metadata.population
-                && event.state_digest == metadata.state_digest
-                && event.block_height <= height
-                && event_specific_match
-        });
-        let (evidence_kind, transaction_hash, event_index, event_kind, request_id, requester) =
-            match event {
-                Some(event) if event.initialized => (
-                    EvidenceKind::WorldInitializedEvent,
-                    Some(event.transaction_hash.clone()),
-                    Some(event.event_index),
-                    Some(PublicEventKind::WorldInitialized),
-                    None,
-                    None,
-                ),
-                Some(event) => (
-                    EvidenceKind::GenerationAdvancedEvent,
-                    Some(event.transaction_hash.clone()),
-                    Some(event.event_index),
-                    Some(PublicEventKind::GenerationAdvanced),
-                    event.request_id.clone(),
-                    event.requester.clone(),
-                ),
-                None => {
-                    return Err(ServiceError::MissingLifecycleEvidence {
-                        generation: metadata.generation,
-                    });
-                }
-            };
-        Ok(LifeProvenance {
-            epoch: metadata.epoch.to_string(),
-            schema_version: 2,
-            network_id: self.config.network_id.clone(),
-            contract_address: self.config.contract_address.clone(),
-            generation: metadata.generation.to_string(),
-            seed: metadata.seed.to_string(),
-            population: metadata.population.to_string(),
-            state_digest: hex32(&metadata.state_digest),
-            source_block_height: height.to_string(),
-            source_block_hash: hex32(&hash),
-            evidence_kind,
-            transaction_hash,
-            event_index,
-            event_kind,
-            request_id,
-            requester,
-            verified_at: now(),
-        })
-    }
-
-    async fn reconcile_publication(&mut self) -> Result<Option<LatestPointer>, ServiceError> {
-        let latest = self
-            .publisher
-            .latest(&self.config.network_id, &self.config.contract_address)?;
-        let Some(latest) = latest else {
-            self.latest_publication = None;
-            self.publication_reconciled = true;
-            return Ok(None);
-        };
-        let (epoch, generation) = latest.order()?;
-        let promoted_at = chrono::DateTime::parse_from_rfc3339(&latest.published_at)
-            .map_err(|_| crate::Error::Schema {
-                field: "publishedAt",
-                reason: "latest publication timestamp is invalid",
-            })?
-            .timestamp();
-        let ready = self
-            .publisher
-            .ready_identities(&self.config.network_id, &self.config.contract_address)?;
-        // Publication retention follows source heights across generation-zero resets.
-        let revision = parse_u64("sourceBlockHeight", &latest.source_block_height)?;
-        let mut publications = vec![(revision, latest.state_digest.clone(), promoted_at)];
-        let recorded_predecessor = self.state.predecessor_publication(
-            &self.config.network_id,
-            &self.config.contract_address,
-            revision,
-        )?;
-        let predecessor = recorded_predecessor
-            .filter(|(source_height, digest, _)| {
-                ready.iter().any(|identity| {
-                    identity.source_block_height == *source_height
-                        && identity.state_digest == *digest
-                })
-            })
-            .or_else(|| {
-                ready
-                    .iter()
-                    .filter(|identity| identity.source_block_height < revision)
-                    .max_by_key(|identity| identity.source_block_height)
-                    .map(|identity| {
-                        (
-                            identity.source_block_height,
-                            identity.state_digest.clone(),
-                            promoted_at,
-                        )
-                    })
-            });
-        if let Some(predecessor) = predecessor {
-            publications.push(predecessor);
-        }
-        self.state.record_publications(
-            &self.config.network_id,
-            &self.config.contract_address,
-            &publications,
-        )?;
-        self.status.write().await.published =
-            Some(identity(epoch, generation, &latest.state_digest));
-        self.latest_publication = Some(latest.clone());
-        self.publication_reconciled = true;
-        Ok(Some(latest))
-    }
-
-    fn fail_if(&mut self, point: FailurePoint) -> Result<(), ServiceError> {
-        if self.failure_point == Some(point) {
-            self.failure_point = None;
-            return Err(ServiceError::Injected(point));
-        }
-        Ok(())
+    async fn set_idle(&self, metadata: &SnapshotMetadata, digest: &str) {
+        let published = identity(metadata.epoch, metadata.generation, digest);
+        let mut status = self.status.write().await;
+        status.observed = Some(published.clone());
+        status.published = Some(published);
+        status.state = IndexerState::Idle;
+        status.preparing = None;
+        status.error_code = None;
+        status.retry = None;
     }
 }
 
@@ -552,13 +379,8 @@ fn identity(epoch: u64, generation: u64, digest: &str) -> PublishedIdentity {
 fn error_code(error: &ServiceError) -> &'static str {
     match error {
         ServiceError::Source(_) => "SOURCE_ERROR",
-        ServiceError::State(_) => "STATE_ERROR",
         ServiceError::Storage(_) => "PUBLICATION_ERROR",
         ServiceError::Snapshot(crate::Error::Digest { .. }) => "DIGEST_MISMATCH",
         ServiceError::Snapshot(_) => "SNAPSHOT_INVALID",
-        ServiceError::EventRetentionGap { .. } => "EVENT_RETENTION_GAP",
-        ServiceError::EventIndexBehind { .. } => "EVENT_INDEX_BEHIND",
-        ServiceError::MissingLifecycleEvidence { .. } => "EVENT_EVIDENCE_MISSING",
-        ServiceError::Injected(_) => "INJECTED_FAILURE",
     }
 }

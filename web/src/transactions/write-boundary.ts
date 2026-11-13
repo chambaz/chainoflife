@@ -41,8 +41,13 @@ export type WriteResult =
       readonly message: string;
     };
 
-// Each observation is one quick check; the user can check again later.
+// Each observation is one quick check; pending writes are checked again later.
 const OBSERVATION_TIMEOUT_MS = 10_000;
+// Wait briefly for a receipt; a pending write is then observed by its hash
+// until it commits or expires. A write that loses a concurrent advance or
+// reset to the exclusive state lock is dropped and expires.
+const EXECUTION_TIMEOUT_MS = 60_000;
+const EXPIRY_BLOCKS = 64n;
 
 export interface WriteBoundary {
   execute(
@@ -102,9 +107,9 @@ export function createWriteBoundary(
           {
             invocation,
             gasLimit: gasAmount(policy.transactionGasLimit),
-            expiryBlocks: policy.expiryBlocks,
+            expiryBlocks: EXPIRY_BLOCKS,
           },
-          { timeoutMs: policy.observationTimeoutMs },
+          { timeoutMs: EXECUTION_TIMEOUT_MS },
         );
         return committed(result.receipt, toHex0x(result.transactionHash));
       } catch (error) {
@@ -175,7 +180,7 @@ export function createWriteBoundary(
             kind: "invalid",
             hash,
             message:
-              "The signed transaction expired without committing. You can try again.",
+              "The transaction expired without committing. Another visitor may have changed the world first. You can try again.",
           };
         return {
           kind: "indeterminate",

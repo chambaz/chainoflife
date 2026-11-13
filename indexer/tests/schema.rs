@@ -1,14 +1,9 @@
-use game_of_life_indexer::{
-    EventKind, EvidenceKind, LatestPointer, LifeManifest, LifeProvenance, SnapshotIdentity,
-};
+use game_of_life_indexer::{LatestPointer, LifeManifest, LifeProvenance, SnapshotIdentity};
 
 const NETWORK: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const CONTRACT: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const DIGEST: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const BLOCK: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const TRANSACTION: &str = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-const REQUEST: &str = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-const REQUESTER: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 #[test]
 fn latest_pointer_context_validation_requires_exact_canonical_scope() {
@@ -46,34 +41,50 @@ fn latest_pointer_context_validation_requires_exact_canonical_scope() {
 }
 
 #[test]
-fn provenance_parser_enforces_event_generation_and_cross_fields() {
-    let initialized = initialized_provenance();
-    let bytes = serde_json::to_vec(&initialized).unwrap();
-    assert_eq!(LifeProvenance::from_json(&bytes).unwrap(), initialized);
+fn provenance_has_exact_fields_and_rejects_noncanonical_values() {
+    let valid = provenance();
+    let bytes = serde_json::to_vec(&valid).unwrap();
+    assert_eq!(LifeProvenance::from_json(&bytes).unwrap(), valid);
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let mut keys = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "contractAddress",
+            "epoch",
+            "generation",
+            "networkId",
+            "population",
+            "schemaVersion",
+            "seed",
+            "sourceBlockHash",
+            "sourceBlockHeight",
+            "stateDigest",
+            "verifiedAt",
+        ]
+    );
 
-    let mut invalid = initialized.clone();
-    invalid.generation = "1".into();
-    assert!(invalid.validate().is_err());
-    invalid = initialized.clone();
-    invalid.event_kind = Some(EventKind::GenerationAdvanced);
-    assert!(invalid.validate().is_err());
-    invalid = initialized.clone();
-    invalid.request_id = Some(REQUEST.into());
-    assert!(invalid.validate().is_err());
-
-    let advanced = advanced_provenance();
-    let bytes = serde_json::to_vec(&advanced).unwrap();
-    assert_eq!(LifeProvenance::from_json(&bytes).unwrap(), advanced);
-    let mut invalid = advanced.clone();
-    invalid.generation = "0".into();
-    assert!(invalid.validate().is_err());
-    invalid = advanced.clone();
-    invalid.requester = None;
-    assert!(invalid.validate().is_err());
-
-    let mut value = serde_json::to_value(advanced).unwrap();
-    value["unknown"] = true.into();
-    assert!(LifeProvenance::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
+    for (field, invalid) in [
+        ("schemaVersion", serde_json::json!(1)),
+        ("generation", serde_json::json!("01")),
+        ("stateDigest", serde_json::json!(DIGEST.to_uppercase())),
+        ("sourceBlockHash", serde_json::json!("0x01")),
+        ("verifiedAt", serde_json::json!("2026-08-28")),
+        ("transactionHash", serde_json::json!(DIGEST)),
+    ] {
+        let mut candidate = value.clone();
+        candidate[field] = invalid;
+        assert!(
+            LifeProvenance::from_json(&serde_json::to_vec(&candidate).unwrap()).is_err(),
+            "accepted {field}"
+        );
+    }
 }
 
 #[test]
@@ -129,35 +140,18 @@ fn latest(manifest_url: String) -> LatestPointer {
     }
 }
 
-fn initialized_provenance() -> LifeProvenance {
+fn provenance() -> LifeProvenance {
     LifeProvenance {
-        epoch: "0".into(),
         schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
-        generation: "0".into(),
+        epoch: "0".into(),
+        generation: "1".into(),
         seed: "0".into(),
         population: "1".into(),
         state_digest: DIGEST.into(),
         source_block_height: "9".into(),
         source_block_hash: BLOCK.into(),
-        evidence_kind: EvidenceKind::WorldInitializedEvent,
-        transaction_hash: Some(TRANSACTION.into()),
-        event_index: Some(0),
-        event_kind: Some(EventKind::WorldInitialized),
-        request_id: None,
-        requester: None,
         verified_at: "2026-08-28T01:02:03Z".into(),
-    }
-}
-
-fn advanced_provenance() -> LifeProvenance {
-    LifeProvenance {
-        generation: "1".into(),
-        evidence_kind: EvidenceKind::GenerationAdvancedEvent,
-        event_kind: Some(EventKind::GenerationAdvanced),
-        request_id: Some(REQUEST.into()),
-        requester: Some(REQUESTER.into()),
-        ..initialized_provenance()
     }
 }

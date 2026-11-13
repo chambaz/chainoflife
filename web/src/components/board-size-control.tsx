@@ -1,132 +1,40 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { CoreThruputClient } from "@thruputchain/client";
-import type { AppConfig, LifeTransactionProfiles } from "@/config";
-import type { VisitorWallet } from "@/wallet/visitor-wallet";
-import { transactionScope } from "@/transactions/records";
-import {
-  isPendingResize,
-  loadResize,
-  resizeStorageKey,
-  subscribeResize,
-  resizeWorld,
-  recoverResize,
-  type ResizeRecord,
-} from "@/transactions/resize";
-import { createWriteBoundary } from "@/transactions/write-boundary";
+import type { WorldWriteState } from "@/transactions/use-world-write";
 
 export function BoardSizeControl({
   size,
-  config,
-  profiles,
-  wallet,
-  client,
+  writes,
+  resetting,
   onPreview,
-  onCommitted,
-  visualizedEpoch,
-  onResettingChange,
 }: {
   readonly size: number;
-  readonly config: Readonly<AppConfig>;
-  readonly profiles: LifeTransactionProfiles;
-  readonly wallet: VisitorWallet;
-  readonly client: CoreThruputClient | Promise<CoreThruputClient>;
+  readonly writes: WorldWriteState;
+  /** True while a reset is pending or its new world is not yet visible. */
+  readonly resetting: boolean;
   readonly onPreview: (size: number | null) => void;
-  readonly onCommitted: () => void;
-  readonly visualizedEpoch?: string | undefined;
-  readonly onResettingChange?: (resetting: boolean) => void;
 }) {
   const id = useId();
   const [selected, setSelected] = useState(size);
-  const [record, setRecord] = useState<ResizeRecord | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [storageError, setStorageError] = useState(false);
-  const running = useRef(false);
   const appliedSize = useRef<number | null>(null);
-  const [boundary] = useState(() =>
-    createWriteBoundary(config, wallet, client),
-  );
-  const scope = transactionScope(config, wallet.addressHex);
-  const key = resizeStorageKey(scope);
+  const { write } = writes;
+  const failed = write?.kind === "resize" && write.status === "failed";
+  const disabled = resetting || writes.busy || writes.pending;
   useEffect(() => {
     setSelected(size);
     appliedSize.current = null;
   }, [size]);
-  useEffect(() => {
-    const reload = () => {
-      try {
-        setRecord(loadResize(scope));
-        setStorageError(false);
-      } catch (cause) {
-        setStorageError(true);
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Cannot read resize evidence",
-        );
-      }
-    };
-    reload();
-    return subscribeResize(scope, reload);
-  }, [key]);
-  const pending = isPendingResize(record);
-  const failed =
-    record?.status === "failed" || record?.status === "interrupted";
-  const preparing =
-    record?.status === "committed" &&
-    record.epoch !== null &&
-    (visualizedEpoch === undefined ||
-      BigInt(visualizedEpoch) < BigInt(record.epoch));
-  const resetting = busy || pending || preparing || storageError;
-  useEffect(
-    () => onResettingChange?.(resetting),
-    [resetting, onResettingChange],
-  );
-  const run = async (recover = false, retry = false) => {
-    if (
-      running.current ||
-      (!recover &&
-        (pending ||
-          preparing ||
-          storageError ||
-          (!retry && (selected === size || selected === appliedSize.current))))
-    )
-      return;
-    running.current = true;
-    setBusy(true);
-    onResettingChange?.(true);
-    setError(null);
-    const targetSize = retry && failed ? record.size : selected;
-    if (retry) setSelected(targetSize);
-    if (!recover) setRecord(null);
+  const reset = async (target: number) => {
+    if (disabled) return;
+    setSelected(target);
     onPreview(null);
-    try {
-      const params = { config, profiles, wallet, boundary };
-      const next = await (recover
-        ? recoverResize(params)
-        : resizeWorld(params, targetSize));
-      setRecord(next);
-      if (next.status === "committed") {
-        appliedSize.current = next.size;
-        onCommitted();
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Resize failed");
-      try {
-        setRecord(loadResize(scope));
-      } catch {
-        setStorageError(true);
-      }
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    const next = await writes.submit({ kind: "resize", size: target });
+    if (next?.kind === "resize" && next.status === "committed")
+      appliedSize.current = next.size;
   };
-  useEffect(() => {
-    if (!pending || busy) return;
-    const timer = window.setTimeout(() => void run(true), 3_000);
-    return () => window.clearTimeout(timer);
-  }, [pending, record, busy]);
+  const commit = () => {
+    if (selected !== size && selected !== appliedSize.current)
+      void reset(selected);
+  };
   return (
     <div className="col-span-full grid min-w-0 gap-0 sm:col-span-1 sm:w-72">
       <div className="flex items-center justify-between gap-3 text-base tabular-nums sm:text-xs">
@@ -143,13 +51,11 @@ export function BoardSizeControl({
         max={10_000}
         step={100}
         value={selected}
-        disabled={resetting}
+        disabled={disabled}
         aria-valuetext={`${selected} by ${selected} cells`}
         className="h-8 w-full accent-primary focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 sm:h-5"
         onChange={(event) => {
           const next = Number(event.target.value);
-          setError(null);
-          if (failed) setRecord(null);
           appliedSize.current = null;
           setSelected(next);
           onPreview(next === size ? null : next);
@@ -157,7 +63,7 @@ export function BoardSizeControl({
         onPointerDown={(event) =>
           event.currentTarget.setPointerCapture(event.pointerId)
         }
-        onPointerUp={() => void run()}
+        onPointerUp={commit}
         onPointerCancel={() => {
           setSelected(size);
           onPreview(null);
@@ -175,25 +81,19 @@ export function BoardSizeControl({
               "PageDown",
             ].includes(event.key)
           )
-            void run();
+            commit();
         }}
       />
       <p className="text-xs text-muted-foreground tabular-nums" role="status">
-        {storageError ? (
-          "Cannot read reset status"
-        ) : busy || preparing ? (
+        {resetting ? (
           "Resetting world…"
-        ) : pending ? (
-          "Checking reset…"
-        ) : error || failed ? (
+        ) : failed ? (
           <>
-            {record?.status === "interrupted"
-              ? "Reset interrupted."
-              : "Reset failed."}{" "}
+            {write.message}{" "}
             <button
               type="button"
               className="text-primary underline"
-              onClick={() => void run(false, true)}
+              onClick={() => void reset(write.size)}
             >
               Try again
             </button>

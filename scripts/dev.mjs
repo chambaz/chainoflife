@@ -74,15 +74,6 @@ async function main() {
           contractAddress,
           "artifacts",
         ),
-      GAME_OF_LIFE_INDEXER_DB:
-        environment.GAME_OF_LIFE_INDEXER_DB ??
-        join(
-          repoRoot,
-          ".local/indexer",
-          networkId.replace(/^0x/, ""),
-          contractAddress,
-          "indexer.sqlite3",
-        ),
       GAME_OF_LIFE_INDEXER_LISTEN: socketAddress(indexerUrl),
       GAME_OF_LIFE_CORS_ORIGINS: appUrl.origin,
     },

@@ -22,7 +22,7 @@ test("selected app configuration excludes inherited and default environment valu
   const selected = join(directory, "selected.env");
   await writeFile(
     selected,
-    `VITE_THRUPUT_RPC_URL=https://rpc.thruput.network\nVITE_THRUPUT_NETWORK_ID=${network}\nVITE_GAME_OF_LIFE_CONTRACT_ADDRESS=${contract}\nVITE_GAME_OF_LIFE_INDEXER_URL=http://127.0.0.1:8787\n`,
+    `VITE_THRUPUT_RPC_URL=https://rpc.thruput.network\nVITE_THRUPUT_NETWORK_ID=${network}\nVITE_GAME_OF_LIFE_CONTRACT_ADDRESS=${contract}\nVITE_GAME_OF_LIFE_INDEXER_URL=http://127.0.0.1:8787\nVITE_GAME_OF_LIFE_GAS_LIMIT=950000000\nVITE_GAME_OF_LIFE_TARGET_GAS_LIMIT=945000000\n`,
   );
   vi.stubEnv("GAME_OF_LIFE_CONFIG", selected);
   vi.stubEnv("VITE_THRUPUT_LOCAL_FAUCET_ADDRESS", "must-not-leak");

@@ -1,156 +1,94 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
-import type { AppConfig, LifeTransactionProfiles } from "@/config";
-import type { VisitorWallet } from "@/wallet/visitor-wallet";
+import type { WorldWriteState } from "@/transactions/use-world-write";
+import type { WorldWrite } from "@/transactions/world-write";
 import { BoardSizeControl } from "./board-size-control";
 
-const resize = vi.hoisted(() =>
-  vi.fn(async (_params: unknown, size: number) => ({
-    status: "committed",
-    epoch: "2",
-    size,
-  })),
-);
-const loadResize = vi.hoisted(() => vi.fn<() => unknown>(() => null));
-const recoverResize = vi.hoisted(() => vi.fn());
-vi.mock("@/transactions/resize", async (importOriginal) => ({
-  isPendingResize: (
-    await importOriginal<typeof import("@/transactions/resize")>()
-  ).isPendingResize,
-  resizeWorld: resize,
-  recoverResize,
-  loadResize,
-  resizeStorageKey: () => "resize-test",
-  subscribeResize: () => () => {},
-}));
-vi.mock("@/transactions/write-boundary", () => ({
-  createWriteBoundary: () => ({}),
-}));
+function writes(write: WorldWrite | null = null): WorldWriteState {
+  return {
+    write,
+    busy: false,
+    error: null,
+    pending: false,
+    submit: vi.fn(async (request) =>
+      request.kind === "resize"
+        ? {
+            ...request,
+            status: "committed" as const,
+            transactionHash: `0x${"11".repeat(32)}`,
+            epoch: "2",
+          }
+        : null,
+    ),
+  };
+}
 
 test("range changes preview and one release commits without a duplicate on blur", async () => {
-  resize.mockClear();
+  const state = writes();
   const onPreview = vi.fn();
-  const onCommitted = vi.fn();
   render(
     <BoardSizeControl
       size={10_000}
-      config={{ networkId: "aa", contractAddress: "bb" } as AppConfig}
-      profiles={{} as LifeTransactionProfiles}
-      wallet={{ addressHex: "cc" } as VisitorWallet}
-      client={Promise.resolve({} as never)}
+      writes={state}
+      resetting={false}
       onPreview={onPreview}
-      onCommitted={onCommitted}
     />,
   );
   const slider = screen.getByRole("slider", { name: "Board size" });
   fireEvent.change(slider, { target: { value: "1000" } });
   fireEvent.change(slider, { target: { value: "100" } });
   expect(onPreview).toHaveBeenLastCalledWith(100);
-  expect(resize).not.toHaveBeenCalled();
+  expect(state.submit).not.toHaveBeenCalled();
   fireEvent.pointerUp(slider);
-  await waitFor(() => expect(onCommitted).toHaveBeenCalledOnce());
+  await waitFor(() => expect(state.submit).toHaveBeenCalledOnce());
   fireEvent.blur(slider);
-  expect(resize).toHaveBeenCalledOnce();
-  expect(resize).toHaveBeenCalledWith(expect.anything(), 100);
+  fireEvent.pointerUp(slider);
+  expect(state.submit).toHaveBeenCalledOnce();
+  expect(state.submit).toHaveBeenCalledWith({ kind: "resize", size: 100 });
 });
 
-test("retries the saved failed size after reload when the slider shows the current size", async () => {
-  resize.mockClear();
-  loadResize.mockReturnValueOnce({ status: "failed", size: 8000 });
+test("retries the saved failed size when the slider shows the current size", async () => {
+  const state = writes({
+    kind: "resize",
+    size: 8000,
+    status: "failed",
+    message: "Signing was interrupted. Try again.",
+  });
   render(
     <BoardSizeControl
       size={2200}
-      config={{ networkId: "aa", contractAddress: "bb" } as AppConfig}
-      profiles={{} as LifeTransactionProfiles}
-      wallet={{ addressHex: "cc" } as VisitorWallet}
-      client={Promise.resolve({} as never)}
+      writes={state}
+      resetting={false}
       onPreview={vi.fn()}
-      onCommitted={vi.fn()}
-      visualizedEpoch="1"
     />,
   );
   expect(screen.getByRole("slider")).toHaveValue("2200");
+  expect(screen.getByText(/Signing was interrupted\./)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() =>
-    expect(resize).toHaveBeenCalledWith(expect.anything(), 8000),
+    expect(state.submit).toHaveBeenCalledWith({ kind: "resize", size: 8000 }),
   );
   expect(screen.getByRole("slider")).toHaveValue("8000");
 });
 
-test("shows concise failure feedback and waits for the reset to be visible", async () => {
-  resize.mockClear();
-  resize.mockRejectedValueOnce(new Error("Long executor diagnostic"));
-  const onResettingChange = vi.fn();
-  const props = {
-    size: 10_000,
-    config: { networkId: "aa", contractAddress: "bb" } as AppConfig,
-    profiles: {} as LifeTransactionProfiles,
-    wallet: { addressHex: "cc" } as VisitorWallet,
-    client: Promise.resolve({} as never),
-    onPreview: vi.fn(),
-    onCommitted: vi.fn(),
-    onResettingChange,
-    visualizedEpoch: "1",
-  };
-  const { rerender } = render(<BoardSizeControl {...props} />);
-  const slider = screen.getByRole("slider");
-  fireEvent.change(slider, { target: { value: "8000" } });
-  fireEvent.pointerUp(slider);
-  const retry = await screen.findByRole("button", { name: "Try again" });
-  expect(screen.getByText("Reset failed.")).toHaveAttribute("role", "status");
-  expect(
-    screen.queryByText("Long executor diagnostic"),
-  ).not.toBeInTheDocument();
-  expect(onResettingChange).toHaveBeenLastCalledWith(false);
-  fireEvent.blur(slider);
-  expect(resize).toHaveBeenCalledOnce();
-  fireEvent.click(retry);
-  await waitFor(() => expect(props.onCommitted).toHaveBeenCalledOnce());
-  expect(slider).toBeDisabled();
-  expect(onResettingChange).toHaveBeenLastCalledWith(true);
-  rerender(<BoardSizeControl {...props} size={8000} visualizedEpoch="2" />);
-  await waitFor(() => expect(slider).toBeEnabled());
-  expect(onResettingChange).toHaveBeenLastCalledWith(false);
-});
-
-test("automatically releases a hashless reset and enables an explicit retry", async () => {
-  vi.useFakeTimers();
-  try {
-    resize.mockClear();
-    recoverResize.mockResolvedValueOnce({ status: "interrupted", size: 8000 });
-    loadResize.mockReturnValueOnce({ status: "signing", size: 8000 });
-    const onResettingChange = vi.fn();
-    render(
-      <BoardSizeControl
-        size={2200}
-        config={{ networkId: "aa", contractAddress: "bb" } as AppConfig}
-        profiles={{} as LifeTransactionProfiles}
-        wallet={{ addressHex: "cc" } as VisitorWallet}
-        client={Promise.resolve({} as never)}
-        onPreview={vi.fn()}
-        onCommitted={vi.fn()}
-        onResettingChange={onResettingChange}
-      />,
-    );
-    expect(screen.getByRole("slider")).toBeDisabled();
-    await act(() => vi.advanceTimersByTimeAsync(3000));
-    expect(screen.getByRole("slider")).toBeEnabled();
-    expect(screen.getByText("Reset interrupted.")).toHaveTextContent(
-      "Reset interrupted. Try again",
-    );
-    expect(onResettingChange).toHaveBeenLastCalledWith(false);
-    expect(resize).not.toHaveBeenCalled();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    });
-    expect(resize).toHaveBeenCalledWith(expect.anything(), 8000);
-  } finally {
-    vi.useRealTimers();
-  }
+test("disables the slider while a reset is pending or not yet visible", () => {
+  const { rerender } = render(
+    <BoardSizeControl
+      size={2200}
+      writes={writes()}
+      resetting
+      onPreview={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("slider")).toBeDisabled();
+  expect(screen.getByText("Resetting world…")).toBeVisible();
+  rerender(
+    <BoardSizeControl
+      size={2200}
+      writes={{ ...writes(), pending: true }}
+      resetting={false}
+      onPreview={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("slider")).toBeDisabled();
 });
