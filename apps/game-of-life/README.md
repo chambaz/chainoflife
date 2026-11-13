@@ -1,7 +1,8 @@
 # Chain of Life explorer
 
 The React app displays verified world snapshots, submits tick requests, and
-resets the on-chain board through a 100–10,000-cell-per-side header slider.
+resets configurable worlds through a 100–10,000-cell-per-side header slider.
+Fixed worlds expose Advance without a size control.
 See the [root README](../../README.md) for installation and local startup.
 
 Dragging previews the boundary. Releasing the slider, or releasing an adjustment
@@ -44,10 +45,50 @@ The live resize test changes the board through 100, 1,000, and 10,000 cells per
 side and returns to 100. It saves timings in `test-results/live/resize-measurements.json`.
 To preserve an older deployment journal when deploying this format, set
 `GAME_OF_LIFE_DEPLOYMENT_JOURNAL=deployment-v2.json` for `setup:local`.
-Development uses fresh storage under `tmp/game-of-life-indexer-v2`.
+Development scopes storage by network and contract under `tmp/game-of-life-indexer-v2`.
 
 Set `GAME_OF_LIFE_BROWSER_EVIDENCE` to an ignored JSON path to save browser
 measurements. Browser tests use SwiftShader; timings are not hardware-GPU results.
+
+## Deployment
+
+One script, `scripts/index.ts`, deploys to local nodes and Futurenet:
+
+```sh
+npm run deploy -- --preset local
+npm run deploy -- --preset futurenet
+npm run dev -- --config .env.futurenet
+npm run build -- --config .env.futurenet
+```
+
+`setup:local` is a shortcut for the local default. The local preset starts a
+resizable 10,000² world; Futurenet starts a fixed 2,900² world. `devnet` aliases
+`futurenet`. Use CLI 0.43.0 for the current Futurenet runtime, selected with
+`THRUPUT_CLI=/path/to/thruput`. The deploy command builds before submission.
+
+Flags override presets: `--rpc-url`, `--mode configurable|fixed`, `--size`,
+`--seed`, `--output`, `--state-dir`, and `--runtime-manifest`. For example:
+
+```sh
+npm run deploy -- --preset local --size 1000 \
+  --state-dir ../../tmp/small-world --output .env.small
+npm run dev -- --config .env.small
+```
+
+Local output defaults to `.env.local`; Futurenet output defaults to
+`.env.futurenet`. Selecting a file isolates its public app settings from other
+environment files and inherited `VITE_` values. `dev` defaults to `.env.local`.
+It starts a local indexer and app; the RPC can be remote HTTP(S).
+
+Deployment verifies three full-world updates. Evidence and private keys stay in
+`tmp/chain-of-life` or `tmp/chain-of-life-futurenet`. Use a separate `--state-dir`
+and `--output` for each additional deployment. After interruption, repeat the
+same command with `--resume`. Saved transactions are observed by their original
+hash. A hashless funding attempt reuses its saved nonce only on explicit resume.
+Fixed size is enforced on-chain and cannot be changed by editing app settings.
+
+This contract adds a metadata field. Deploy a new world rather than reusing an
+older contract or deployment journal. The world digest format stays at v2.
 
 ## Configuration
 
@@ -62,7 +103,7 @@ VITE_GAME_OF_LIFE_INDEXER_URL=http://127.0.0.1:8787
 
 The indexer URL must be an origin root. `dev` builds and supervises the indexer
 and Vite; the node runs separately. Indexer data defaults to
-`tmp/game-of-life-indexer-v2`. Override with `GAME_OF_LIFE_ARTIFACT_ROOT` and
+`tmp/game-of-life-indexer-v2/<network>/<contract>`. Override with `GAME_OF_LIFE_ARTIFACT_ROOT` and
 `GAME_OF_LIFE_INDEXER_DB`. The app uses same-origin `/thruput-rpc` and
 `/thruput-indexer` proxies.
 
@@ -98,8 +139,8 @@ histories are scoped to network, caller, and contract.
 | Indexer | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during setup |
 | App | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` when running `dev` |
 
-Keep all three on loopback. Setup writes public connection settings to
-`.env.local`; `dev` reads that file. Changing the app port changes the browser
+Keep the local services on loopback. Setup writes public connection settings to
+the selected environment file. Changing the app port changes the browser
 origin, so it creates a separate visitor wallet.
 
 Setup creates three local accounts and funds them through `dev_fundAccount`,
@@ -142,6 +183,33 @@ expired without committing. For this disposable local experiment, start a fresh
 demo as described above rather than deleting individual journal entries and
 guessing which steps ran. Keep the old ledger and journal if you need to inspect
 the original transaction.
+
+### Grid-size benchmarks
+
+See the [Futurenet benchmark results](../../docs/futurenet-benchmark.md) for the
+recommended size, measured gas, and runtime compatibility.
+
+`npm run benchmark:world` deploys fresh worlds and measures initialization and
+whole-world ticks. It records outer-wallet gas and operation-to-receipt time;
+the latter includes network, scheduling, and polling delays, not just execution.
+
+Build the contract with a CLI compatible with the target runtime, then run:
+
+```sh
+npm run generate:contracts
+npm run benchmark:world -- --rpc-url https://rpc.thruput.network \
+  --sizes 2900,3000 --seeds 0,1,42 --generations 5 --gas-limit 950000000
+```
+
+For a local node, supply `--rpc-url` and `--runtime-manifest` pointing to its
+runtime manifest. Use the default one-billion-gas node cap for this benchmark.
+The benchmark never changes `.env.local` or the existing demo deployment.
+
+Each run writes to an ignored directory under `.tmp/benchmarks` at the repository
+root. It contains private account keys, funding intent, pre-broadcast signed
+evidence, receipts, and `results.json`. Runs stop on uncertain submissions and
+never retry automatically. Inspect the saved transaction hash before another run.
+Failed executions are recorded; other sizes use separate accounts and contracts.
 
 ### UI components
 

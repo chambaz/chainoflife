@@ -1,5 +1,8 @@
 // @vitest-environment node
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import configuration from "./vite.config";
 import {
   allowedIndexerRoute,
   isIndexerArtifactNotFound,
@@ -11,6 +14,37 @@ import {
 } from "./vite.config";
 const network = "11".repeat(32);
 const contract = `0x${"22".repeat(32)}`;
+
+test("selected app configuration excludes inherited and default environment values", async () => {
+  await mkdir(".tmp", { recursive: true });
+  const directory = await mkdtemp(".tmp/life-config-");
+  const selected = join(directory, "selected.env");
+  await writeFile(
+    selected,
+    `VITE_THRUPUT_RPC_URL=https://rpc.thruput.network\nVITE_THRUPUT_NETWORK_ID=${network}\nVITE_GAME_OF_LIFE_CONTRACT_ADDRESS=${contract}\nVITE_GAME_OF_LIFE_INDEXER_URL=http://127.0.0.1:8787\n`,
+  );
+  vi.stubEnv("GAME_OF_LIFE_CONFIG", selected);
+  vi.stubEnv("VITE_THRUPUT_LOCAL_FAUCET_ADDRESS", "must-not-leak");
+  try {
+    if (typeof configuration !== "function")
+      throw new Error("Expected Vite configuration factory");
+    const config = await configuration({
+      command: "build",
+      mode: "production",
+    });
+    expect(config.envDir).toBe(false);
+    expect(config.envPrefix).toEqual([]);
+    expect(config.define?.["import.meta.env.VITE_THRUPUT_RPC_URL"]).toBe(
+      JSON.stringify("https://rpc.thruput.network"),
+    );
+    expect(
+      config.define?.["import.meta.env.VITE_THRUPUT_LOCAL_FAUCET_ADDRESS"],
+    ).toBeUndefined();
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(directory, { recursive: true });
+  }
+});
 describe("visitor RPC proxy policy", () => {
   test.each([
     "getChainTip",
@@ -70,11 +104,11 @@ describe("visitor RPC proxy policy", () => {
     ).toBe(true);
   });
   test.each([
-    "https://rpc.example.test",
+    "https://rpc.example.test/#fragment",
     "file:///rpc",
     "http://user:pass@127.0.0.1",
   ])("rejects unsafe target %s", (target) =>
-    expect(() => validateRpcTarget(target)).toThrow(/loopback/),
+    expect(() => validateRpcTarget(target)).toThrow(/credential-free/),
   );
 });
 

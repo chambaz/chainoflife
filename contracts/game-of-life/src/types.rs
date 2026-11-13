@@ -5,6 +5,7 @@ pub type RequestId = SHA256Hash;
 #[contract_type]
 #[cfg_attr(feature = "dev", derive(Debug, PartialEq, Eq))]
 pub struct WorldState {
+    pub resizable: bool,
     pub size: u32,
     pub epoch: u64,
     pub generation: u64,
@@ -28,6 +29,7 @@ pub struct WorldMetadata {
     pub chunk_bytes: u32,
     pub chunks_per_row: u32,
     pub max_queue_len: u32,
+    pub resizable: bool,
 }
 
 #[contract_type]
@@ -58,6 +60,7 @@ pub enum GameOfLifeError {
     InvalidWorldSize = 8,
     PendingRequests = 9,
     EpochOverflow = 10,
+    FixedWorld = 11,
 }
 
 #[derive(Event, Clone, Debug)]

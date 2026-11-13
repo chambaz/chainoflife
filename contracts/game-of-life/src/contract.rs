@@ -30,14 +30,31 @@ pub struct GameOfLife {
 )]
 impl GameOfLife {
     pub fn initialize(&mut self, seed: u64, max_queue_len: u32) -> WorldMetadata {
+        self.initialize_sized(seed, max_queue_len, WORLD_WIDTH)
+    }
+
+    pub fn initialize_sized(&mut self, seed: u64, max_queue_len: u32, size: u32) -> WorldMetadata {
+        self.initialize_configured(seed, max_queue_len, size, true)
+    }
+
+    pub fn initialize_configured(
+        &mut self,
+        seed: u64,
+        max_queue_len: u32,
+        size: u32,
+        resizable: bool,
+    ) -> WorldMetadata {
         if self.state.try_get().none_if_missing().is_some() {
             throw(GameOfLifeError::AlreadyInitialized);
         }
         if max_queue_len == 0 {
             throw(GameOfLifeError::InvalidQueueCapacity);
         }
+        if !(100..=WORLD_WIDTH).contains(&size) || !size.is_multiple_of(100) {
+            throw(GameOfLifeError::InvalidWorldSize);
+        }
         self.queue_slots.set_capacity(i128::from(max_queue_len));
-        self.initialize_world(WORLD_WIDTH, 0, seed, max_queue_len)
+        self.initialize_world(size, 0, seed, max_queue_len, resizable)
     }
 
     pub fn resize(&mut self, size: u32) -> WorldMetadata {
@@ -45,6 +62,9 @@ impl GameOfLife {
             throw(GameOfLifeError::InvalidWorldSize);
         }
         let state = self.require_state();
+        if !state.resizable {
+            throw(GameOfLifeError::FixedWorld);
+        }
         // A rejected reset rolls back this attempted consumption too.
         if self.requests.try_consume().none_if_missing().is_some() {
             throw(GameOfLifeError::PendingRequests);
@@ -53,7 +73,13 @@ impl GameOfLife {
             .epoch
             .checked_add(1)
             .unwrap_or_else(|| throw(GameOfLifeError::EpochOverflow));
-        self.initialize_world(size, epoch, state.seed, state.max_queue_len)
+        self.initialize_world(
+            size,
+            epoch,
+            state.seed,
+            state.max_queue_len,
+            state.resizable,
+        )
     }
 
     pub fn request_tick(&mut self) -> RequestId {
@@ -175,6 +201,7 @@ impl GameOfLife {
         epoch: u64,
         seed: u64,
         max_queue_len: u32,
+        resizable: bool,
     ) -> WorldMetadata {
         let mut prng = SplitMix64::new(seed);
         let mut digest = WorldDigest::for_epoch(size, size, epoch, 0);
@@ -196,6 +223,7 @@ impl GameOfLife {
             self.write_row(0, size, row, &bytes, &mut digest);
         }
         let state = WorldState {
+            resizable,
             size,
             epoch,
             generation: 0,
@@ -291,5 +319,6 @@ fn metadata(state: &WorldState) -> WorldMetadata {
         chunk_bytes: CHUNK_BYTES as u32,
         chunks_per_row: chunks_per_row(state.size),
         max_queue_len: state.max_queue_len,
+        resizable: state.resizable,
     }
 }

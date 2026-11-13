@@ -309,7 +309,7 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   return (
     <main className="flex h-dvh min-w-80 flex-col overflow-hidden bg-background text-foreground">
       <TopBar state={state} rendererAvailability={rendererAvailability}>
-        {wallet && config.transactionProfiles && state.chain ? (
+        {wallet && config.transactionProfiles && state.chain?.resizable ? (
           <BoardSizeControl
             onResettingChange={setResetting}
             visualizedEpoch={state.visualized?.manifest.epoch}

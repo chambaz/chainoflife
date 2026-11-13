@@ -7,6 +7,7 @@ import {
 } from "@thruputchain/client";
 import {
   fundSetupAccount,
+  fundPublicSetupAccount,
   type FundingRecord,
 } from "../../scripts/setup-funding";
 
@@ -14,6 +15,36 @@ const recipient = new Uint8Array(32).fill(1);
 const faucet = new Uint8Array(32).fill(2);
 const hash = new Uint8Array(32).fill(3);
 const address = toBase58(recipient);
+
+test("public funding saves intent and resumes its original nonce and hash", async () => {
+  const params = fixture();
+  const requestAirdropAttempt = vi
+    .fn<ThruputClient["requestAirdropAttempt"]>()
+    .mockImplementationOnce(async () => {
+      expect(params.saved[0]?.[address]?.nonce).toMatch(/^0x[0-9a-f]{32}$/);
+      throw new Error("Disconnected");
+    })
+    .mockResolvedValue({ transactionHash: hash } as never);
+  const publicParams = {
+    ...params,
+    client: { ...params.client, requestAirdropAttempt },
+  };
+  await expect(fundPublicSetupAccount(publicParams)).rejects.toThrow(
+    "Disconnected",
+  );
+  params.client.waitForTransactionReceipt.mockRejectedValueOnce(
+    new Error("Timed out"),
+  );
+  await expect(fundPublicSetupAccount(publicParams)).rejects.toThrow(
+    "Timed out",
+  );
+  expect(requestAirdropAttempt.mock.calls[1]).toEqual(
+    requestAirdropAttempt.mock.calls[0],
+  );
+  await fundPublicSetupAccount(publicParams);
+  expect(requestAirdropAttempt).toHaveBeenCalledTimes(2);
+  expect(params.records[address]?.complete).toBe(true);
+});
 
 function fixture() {
   const records: Record<string, FundingRecord> = {};

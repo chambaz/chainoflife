@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseEnv } from "node:util";
+import { parseArgs, parseEnv } from "node:util";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appDir, "../..");
@@ -25,10 +25,14 @@ for (const [signal, exitCode] of [
 
 async function main() {
   const environment = await loadEnvironment();
-  const rpcUrl = localOrigin(
-    required(environment, "VITE_THRUPUT_RPC_URL"),
-    "VITE_THRUPUT_RPC_URL",
-  );
+  const rpcUrl = new URL(required(environment, "VITE_THRUPUT_RPC_URL"));
+  if (
+    !["http:", "https:"].includes(rpcUrl.protocol) ||
+    rpcUrl.username ||
+    rpcUrl.password ||
+    rpcUrl.hash
+  )
+    throw new Error("RPC URL must be credential-free HTTP(S)");
   const indexerUrl = localOrigin(
     required(environment, "VITE_GAME_OF_LIFE_INDEXER_URL"),
     "VITE_GAME_OF_LIFE_INDEXER_URL",
@@ -65,10 +69,22 @@ async function main() {
       THRUPUT_CONTRACT_ADDRESS: contractAddress,
       GAME_OF_LIFE_ARTIFACT_ROOT:
         environment.GAME_OF_LIFE_ARTIFACT_ROOT ??
-        join(repoRoot, "tmp/game-of-life-indexer-v2/artifacts"),
+        join(
+          repoRoot,
+          "tmp/game-of-life-indexer-v2",
+          networkId,
+          contractAddress,
+          "artifacts",
+        ),
       GAME_OF_LIFE_INDEXER_DB:
         environment.GAME_OF_LIFE_INDEXER_DB ??
-        join(repoRoot, "tmp/game-of-life-indexer-v2/indexer.sqlite3"),
+        join(
+          repoRoot,
+          "tmp/game-of-life-indexer-v2",
+          networkId,
+          contractAddress,
+          "indexer.sqlite3",
+        ),
       GAME_OF_LIFE_INDEXER_LISTEN: socketAddress(indexerUrl),
       GAME_OF_LIFE_CORS_ORIGINS: appUrl.origin,
     },
@@ -111,7 +127,10 @@ async function main() {
 }
 
 async function loadEnvironment() {
-  const path = join(appDir, ".env.local");
+  const { values } = parseArgs({
+    options: { config: { type: "string", default: ".env.local" } },
+  });
+  const path = resolve(appDir, values.config);
   const metadata = await lstat(path).catch((error) => {
     if (error?.code === "ENOENT")
       throw new Error(`Run setup:local first; ${path} does not exist`);
@@ -119,7 +138,14 @@ async function loadEnvironment() {
   });
   if (!metadata.isFile() || metadata.isSymbolicLink())
     throw new Error(`${path} must be a regular, non-symlinked file`);
-  return { ...parseEnv(await readFile(path, "utf8")), ...process.env };
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment))
+    if (key.startsWith("VITE_")) delete environment[key];
+  return {
+    ...environment,
+    ...parseEnv(await readFile(path, "utf8")),
+    GAME_OF_LIFE_CONFIG: path,
+  };
 }
 
 async function runBuild() {
@@ -233,7 +259,8 @@ function socketAddress(url) {
 
 function required(environment, name) {
   const value = environment[name];
-  if (!value) throw new Error(`${name} is required in .env.local`);
+  if (!value)
+    throw new Error(`${name} is required in the selected configuration`);
   return value;
 }
 

@@ -1,9 +1,17 @@
 # Chain of Life contract
 
 The contract stores a bit-packed square toroidal Conway world. Each side is
-100 to 10,000 cells, in steps of 100. Initialization starts at 10,000.
+100 to 10,000 cells, in steps of 100. `initialize` starts at 10,000;
+`initialize_sized(seed, max_queue_len, size)` starts directly at a chosen size.
+Both can initialize a contract only once. Smaller initial worlds can be deployed
+under the public network's gas cap without first creating a full-size world.
 One successful non-empty `process_next_tick` invocation consumes one queued
 request and atomically writes the complete next generation.
+
+`initialize_configured(seed, max_queue_len, size, resizable)` selects the resize
+policy at deployment. With `resizable=false`, every resize fails with `FixedWorld`.
+The older initializers select `resizable=true`. Metadata includes this policy;
+clients and indexers need the matching generated format and a new deployment.
 
 ## Storage
 

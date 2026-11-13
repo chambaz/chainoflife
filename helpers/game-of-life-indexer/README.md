@@ -21,7 +21,8 @@ Optional settings include `GAME_OF_LIFE_ARTIFACT_ROOT`,
 
 Run from the repository root. Default state paths are
 `tmp/game-of-life-indexer-v2/artifacts` and
-`tmp/game-of-life-indexer-v2/indexer.sqlite3`, matching the app launcher.
+`tmp/game-of-life-indexer-v2/indexer.sqlite3`. The app launcher adds network and
+contract subdirectories to isolate deployments.
 Do not run two indexers against the same database.
 
 ```bash

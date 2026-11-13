@@ -105,10 +105,6 @@ function transactionProfiles(
     );
   const request = transactionPolicy(environment, PROFILE_KEYS.request);
   const crank = transactionPolicy(environment, PROFILE_KEYS.crank);
-  if (crank.targetGasLimit < 1_000_000_000n)
-    throw new ConfigurationError(
-      "The crank target gas limit is an unsafe placeholder value",
-    );
   return Object.freeze({ request, crank });
 }
 

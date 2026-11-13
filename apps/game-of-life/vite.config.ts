@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
+import { parseEnv } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
@@ -7,6 +9,7 @@ import { buildNamedCodecs, resolveCodec } from "@thruputchain/client/contract";
 import { serializeCxs } from "@thruputchain/xdr";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import { normalizeNetworkId } from "./src/config-values";
+import { loadAppConfig } from "./src/config";
 import { spec as lifeSpec } from "./src/contracts/generated/game-of-life";
 import { rpcDiscovery } from "./src/test/rpc-discovery";
 
@@ -36,7 +39,11 @@ const SECURITY_HEADERS = {
 };
 
 export default defineConfig(({ command, mode }) => {
-  const environment = loadEnv(mode, root, "");
+  const selected = process.env.GAME_OF_LIFE_CONFIG;
+  const environment = selected
+    ? parseEnv(readFileSync(selected, "utf8"))
+    : loadEnv(mode, root, "");
+  if (selected) loadAppConfig(environment);
   const target = environment.VITE_THRUPUT_RPC_URL ?? "http://127.0.0.1:9545";
   const indexerTarget =
     environment.VITE_GAME_OF_LIFE_INDEXER_URL ?? "http://127.0.0.1:8787";
@@ -54,21 +61,36 @@ export default defineConfig(({ command, mode }) => {
   validateRpcTarget(target);
   validateIndexerTarget(indexerTarget);
   return {
-    envPrefix: [
-      "VITE_THRUPUT_RPC_URL",
-      "VITE_THRUPUT_LOCAL_FAUCET_ADDRESS",
-      "VITE_THRUPUT_NETWORK_ID",
-      "VITE_GAME_OF_LIFE_CONTRACT_ADDRESS",
-      "VITE_GAME_OF_LIFE_INDEXER_URL",
-      "VITE_GAME_OF_LIFE_REQUEST_TRANSACTION_GAS_LIMIT",
-      "VITE_GAME_OF_LIFE_REQUEST_TARGET_GAS_LIMIT",
-      "VITE_GAME_OF_LIFE_REQUEST_EXPIRY_BLOCKS",
-      "VITE_GAME_OF_LIFE_REQUEST_TIMEOUT_MS",
-      "VITE_GAME_OF_LIFE_CRANK_TRANSACTION_GAS_LIMIT",
-      "VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT",
-      "VITE_GAME_OF_LIFE_CRANK_EXPIRY_BLOCKS",
-      "VITE_GAME_OF_LIFE_CRANK_TIMEOUT_MS",
-    ],
+    ...(selected
+      ? {
+          envDir: false as const,
+          define: Object.fromEntries(
+            Object.entries(environment)
+              .filter(([key]) => key.startsWith("VITE_"))
+              .map(([key, value]) => [
+                `import.meta.env.${key}`,
+                JSON.stringify(value),
+              ]),
+          ),
+        }
+      : {}),
+    envPrefix: selected
+      ? []
+      : [
+          "VITE_THRUPUT_RPC_URL",
+          "VITE_THRUPUT_LOCAL_FAUCET_ADDRESS",
+          "VITE_THRUPUT_NETWORK_ID",
+          "VITE_GAME_OF_LIFE_CONTRACT_ADDRESS",
+          "VITE_GAME_OF_LIFE_INDEXER_URL",
+          "VITE_GAME_OF_LIFE_REQUEST_TRANSACTION_GAS_LIMIT",
+          "VITE_GAME_OF_LIFE_REQUEST_TARGET_GAS_LIMIT",
+          "VITE_GAME_OF_LIFE_REQUEST_EXPIRY_BLOCKS",
+          "VITE_GAME_OF_LIFE_REQUEST_TIMEOUT_MS",
+          "VITE_GAME_OF_LIFE_CRANK_TRANSACTION_GAS_LIMIT",
+          "VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT",
+          "VITE_GAME_OF_LIFE_CRANK_EXPIRY_BLOCKS",
+          "VITE_GAME_OF_LIFE_CRANK_TIMEOUT_MS",
+        ],
     plugins: [
       react(),
       tailwindcss(),
@@ -99,10 +121,10 @@ export function validateRpcTarget(input: string): void {
     !["http:", "https:"].includes(url.protocol) ||
     url.username ||
     url.password ||
-    !isLoopback(url.hostname)
+    url.hash
   ) {
     throw new Error(
-      "The RPC proxy requires a credential-free loopback HTTP(S) target",
+      "The RPC proxy requires a credential-free HTTP(S) target without a hash",
     );
   }
 }
@@ -111,7 +133,13 @@ export function validateIndexerTarget(input: string): void {
   try {
     validateRpcTarget(input);
     const url = new URL(input);
-    if (url.pathname !== "/" || url.search || url.hash) throw new Error();
+    if (
+      !isLoopback(url.hostname) ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    )
+      throw new Error();
   } catch {
     throw new Error(
       "The indexer proxy requires a credential-free loopback HTTP(S) origin root without a path, query, or hash",
@@ -434,6 +462,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
   const transaction = `0x${"cc".repeat(32)}`;
   const base = `/v1/worlds/${network}/${contract}`;
   const fixture = {
+    resizable: true,
     chainGeneration: 0,
     publishedGeneration: 0,
     status: "idle" as
@@ -592,6 +621,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
         chunk_bytes: 1_000n,
         chunks_per_row: 2n,
         max_queue_len: 16n,
+        resizable: fixture.resizable,
       },
       metadataCodec,
     );
@@ -604,6 +634,7 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
           const url = new URL(request.url!, "http://127.0.0.1");
           if (url.searchParams.has("reset")) {
             fundedAccounts.clear();
+            fixture.resizable = true;
             fixture.chainGeneration = 0;
             fixture.publishedGeneration = 0;
             fixture.status = "idle";
@@ -617,6 +648,8 @@ function fixtureArtifacts(network: string, contract: string): Plugin {
             for (const release of heldCandidateTiles) release();
             heldCandidateTiles = [];
           }
+          if (url.searchParams.has("fixed"))
+            fixture.resizable = url.searchParams.get("fixed") !== "1";
           if (url.searchParams.has("chain")) {
             const chain = Number(url.searchParams.get("chain"));
             if (chain === 0 || chain === 1 || chain === 2)

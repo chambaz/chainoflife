@@ -70,19 +70,20 @@ describe("startup configuration", () => {
   });
   test("keeps the read-only application valid when profiles are absent", () =>
     expect(loadAppConfig(valid).transactionProfiles).toBeNull());
-  test("rejects partial and placeholder crank profiles", () => {
+  test("rejects partial profiles and accepts the Futurenet budget", () => {
     expect(() =>
       loadAppConfig({
         ...valid,
         VITE_GAME_OF_LIFE_REQUEST_TRANSACTION_GAS_LIMIT: "100000",
       }),
     ).toThrow(/required together/);
-    expect(() =>
+    expect(
       loadAppConfig({
         ...valid,
         ...profiles,
-        VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT: "10000000",
-      }),
-    ).toThrow(/placeholder/);
+        VITE_GAME_OF_LIFE_CRANK_TRANSACTION_GAS_LIMIT: "950000000",
+        VITE_GAME_OF_LIFE_CRANK_TARGET_GAS_LIMIT: "945000000",
+      }).transactionProfiles?.crank.targetGasLimit,
+    ).toBe(945_000_000n);
   });
 });

@@ -41,6 +41,7 @@ const state = {
     chunkBytes: 1000,
     chunksPerRow: 2,
     maxQueueLength: 16,
+    resizable: true,
   },
   chainVerification: "fresh",
   visualized: snapshot,

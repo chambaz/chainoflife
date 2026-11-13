@@ -142,12 +142,14 @@ describe("generation synchronization", () => {
           chunkBytes: 1000,
           chunksPerRow: 2,
           maxQueueLength: 16,
+          resizable: true,
         },
         chainVerification: "fresh",
       },
       {
         type: "chain-read",
         value: {
+          resizable: true,
           epoch: "0",
           width: 10000,
           height: 10000,

@@ -16,6 +16,7 @@ const metadata = {
   chunkBytes: 1_000,
   chunksPerRow: 2,
   maxQueueLength: 16,
+  resizable: true,
 } as const;
 const state: ChainState = {
   chain: metadata,

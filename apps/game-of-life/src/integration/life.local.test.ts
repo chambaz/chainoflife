@@ -11,6 +11,7 @@ import {
   toBase58,
   toHex0x,
   TransactionExecutionError,
+  prepareContractDeployment,
 } from "@thruputchain/client";
 import { describe, expect, test } from "vitest";
 import { localAccounts, localRoot, rpcUrl } from "../../scripts/local-accounts";
@@ -23,6 +24,105 @@ import {
 describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
   "live atomic world",
   () => {
+    test.each([true, false])(
+      "configured initialization and resize policy (resizable=%s)",
+      async (resizable) => {
+        const client = await createThruputClient({
+          cluster: localnet({ rpcUrl }),
+        });
+        const accounts = await localAccounts();
+        const account = accounts[0]!.account;
+        const wallet = createWalletClient({
+          client,
+          account,
+          onSigned: async (evidence) => {
+            await writeFile(
+              resolve(
+                localRoot,
+                `sized-${toBase58(evidence.transactionHash)}.json`,
+              ),
+              JSON.stringify({
+                hash: toBase58(evidence.transactionHash),
+                networkHash: toBase58(evidence.networkHash),
+                signedTransaction: toHex0x(evidence.signedTransaction),
+              }),
+              { mode: 0o600, flag: "wx" },
+            );
+          },
+        });
+        const deployment = prepareContractDeployment({
+          deployer: account.address,
+          contract: await readFile("../../target/thruput/game_of_life.rv32a"),
+        });
+        const address = deployment.address;
+        await wallet.deployContractAndWait(deployment, {
+          amount: 100_000_000n,
+          gasLimit: gasAmount(20_000_000n),
+        });
+        const initialize = (size: bigint, maxQueueLen = 64n) =>
+          wallet.executeAndWait({
+            invocation: GameOfLife.v0_1.initializeConfigured.invocation(
+              address,
+              gasAmount(9_000_000n),
+              { size, maxQueueLen, seed: 42n, resizable },
+            ),
+            gasLimit: gasAmount(10_000_000n),
+          });
+        for (const size of [0n, 99n, 101n, 10_100n]) {
+          await expect(initialize(size)).rejects.toBeInstanceOf(
+            TransactionExecutionError,
+          );
+        }
+        await expect(initialize(100n, 0n)).rejects.toBeInstanceOf(
+          TransactionExecutionError,
+        );
+        await initialize(100n);
+        const before = (
+          await GameOfLife.v0_1.getMetadata.view({ client, address })
+        ).value;
+        expect(before).toMatchObject({
+          width: 100n,
+          height: 100n,
+          seed: 42n,
+          epoch: 0n,
+          generation: 0n,
+          max_queue_len: 64n,
+          resizable,
+        });
+        await expect(initialize(200n)).rejects.toBeInstanceOf(
+          TransactionExecutionError,
+        );
+        expect(
+          (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
+        ).toEqual(before);
+        const reset = wallet.executeAndWait({
+          invocation: GameOfLife.v0_1.resize.invocation(
+            address,
+            gasAmount(19_000_000n),
+            { size: 200n },
+          ),
+          gasLimit: gasAmount(20_000_000n),
+        });
+        if (resizable) {
+          await reset;
+          expect(
+            (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
+          ).toMatchObject({
+            width: 200n,
+            epoch: 1n,
+            resizable: true,
+            seed: 42n,
+          });
+        } else {
+          await expect(reset).rejects.toBeInstanceOf(TransactionExecutionError);
+          expect(
+            (await GameOfLife.v0_1.getMetadata.view({ client, address })).value,
+          ).toEqual(before);
+        }
+      },
+      120_000,
+    );
+
     test("failed crank preserves the world and admitted request; another caller can complete it", async () => {
       const env = parseEnv(await readFile(".env.local", "utf8"));
       const address = addressFromHex(env.VITE_GAME_OF_LIFE_CONTRACT_ADDRESS!);

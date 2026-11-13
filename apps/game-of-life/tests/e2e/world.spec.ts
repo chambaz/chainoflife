@@ -10,6 +10,15 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(({ page }) => expect(browserErrors.get(page) ?? []).toEqual([]));
 
+test("fixed worlds allow advance without size controls", async ({ page }) => {
+  await page.request.get("/__life-fixture?fixed=1");
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Advance 100,000,000 cells" }),
+  ).toBeEnabled();
+  await expect(page.getByRole("slider")).toHaveCount(0);
+});
+
 test("funds one visitor wallet and shares it across reloads and tabs", async ({
   page,
   context,

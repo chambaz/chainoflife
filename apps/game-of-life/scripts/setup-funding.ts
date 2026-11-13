@@ -12,8 +12,8 @@ import {
 } from "@thruputchain/client";
 
 export interface FundingRecord {
-  faucet: string;
-  rawAmount: string;
+  faucet: string | null;
+  rawAmount: string | null;
   nonce: string;
   hash: string | null;
   signedTransaction: string | null;
@@ -59,6 +59,10 @@ export async function fundSetupAccount({
     record.faucet,
     toBase58(faucet),
     "Saved funding belongs to another faucet",
+  );
+  assert(
+    typeof record.faucet === "string",
+    "Local funding needs a faucet address",
   );
   assert(
     typeof record.rawAmount === "string" &&
@@ -112,4 +116,89 @@ export async function fundSetupAccount({
   record.complete = true;
   await save();
   console.log(`Funded setup account: ${address}`);
+}
+
+export async function fundPublicSetupAccount({
+  client,
+  recipient,
+  records,
+  save,
+}: {
+  client: Pick<
+    ThruputClient,
+    "requestAirdropAttempt" | "waitForTransactionReceipt"
+  >;
+  recipient: Uint8Array;
+  records: Record<string, FundingRecord>;
+  save: () => Promise<void>;
+}): Promise<void> {
+  const address = toBase58(recipient);
+  let record = records[address];
+  if (!record) {
+    record = {
+      faucet: null,
+      rawAmount: null,
+      nonce: toHex0x(randomBytes(16)),
+      hash: null,
+      signedTransaction: null,
+      complete: false,
+    };
+    records[address] = record;
+    await save();
+  }
+  assert(
+    record.faucet === null && record.rawAmount === null,
+    "Saved funding is not a public airdrop",
+  );
+  assert(
+    typeof record.nonce === "string" && /^0x[0-9a-f]{32}$/.test(record.nonce),
+    "Invalid saved funding nonce",
+  );
+  assert(
+    record.hash === null || typeof record.hash === "string",
+    "Invalid saved funding hash",
+  );
+  assert.equal(
+    typeof record.complete,
+    "boolean",
+    "Invalid saved funding status",
+  );
+  if (record.complete) {
+    assert(record.hash, "Completed funding has no saved transaction hash");
+    return;
+  }
+  if (!record.hash) {
+    const response = await client.requestAirdropAttempt({
+      recipient: parseAddress(address),
+      clientNonce: fromHex0x(record.nonce),
+    });
+    assert(
+      !(response instanceof UnsupportedRpcValue),
+      "Unsupported airdrop response",
+    );
+    record.hash = response.transactionHash
+      ? toBase58(response.transactionHash)
+      : null;
+    await save();
+    assert(
+      record.hash,
+      "Airdrop is not confirmed. Run deploy -- --resume to observe the same attempt.",
+    );
+  }
+  const receipt = await client.waitForTransactionReceipt(
+    hashFromBase58(record.hash),
+    { timeoutMs: 120_000 },
+  );
+  assert(
+    !(receipt.execution instanceof UnsupportedRpcValue),
+    "Unsupported funding result",
+  );
+  assert.equal(
+    receipt.execution.result,
+    "return",
+    `Funding failed for ${address}`,
+  );
+  record.complete = true;
+  await save();
+  console.log(`Funded deployment account: ${address}`);
 }

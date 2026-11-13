@@ -13,9 +13,9 @@ export const localRoot = resolve(
 );
 export const rpcUrl = process.env.THRUPUT_RPC_URL ?? "http://127.0.0.1:9545";
 
-export async function localAccounts(create = false) {
-  await mkdir(localRoot, { recursive: true, mode: 0o700 });
-  const path = resolve(localRoot, "accounts.json");
+export async function localAccounts(create = false, directory = localRoot) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const path = resolve(directory, "accounts.json");
   let seeds: string[];
   try {
     seeds = JSON.parse(await readFile(path, "utf8"));

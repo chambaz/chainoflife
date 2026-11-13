@@ -3,7 +3,7 @@
 Conway's Game of Life on [Thruput](https://thruput.network/): up to **100 million
 cells advanced atomically in one transaction**.
 
-This local developer experiment explores large on-chain workloads, with a browser
+This developer experiment explores large on-chain workloads, with a browser
 explorer to view the world and advance generations.
 
 ![Chain of Life explorer showing individual cells, board controls, and transaction history](docs/explorer.png)
@@ -99,6 +99,22 @@ npm run setup:local -- --resume
 
 For custom ports, data directories, or a fresh world, see
 [local configuration and recovery](apps/game-of-life/README.md).
+
+## Run against Futurenet
+
+From `apps/game-of-life`, use CLI 0.43.0 for Futurenet's current runtime:
+
+```sh
+THRUPUT_CLI=/path/to/compatible/thruput npm run deploy -- --preset futurenet
+npm run dev -- --config .env.futurenet
+```
+
+This deploys a fixed **2,900 × 2,900** world. The contract rejects size changes,
+and the app hides the size control. The indexer and app run on your machine.
+`devnet` is an alias for `futurenet`.
+
+For custom sizes, build configuration, and recovery, see the
+[deployment guide](apps/game-of-life/README.md#deployment).
 
 ## Code
 

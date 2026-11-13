@@ -351,6 +351,8 @@ struct WireMetadata {
     chunk_bytes: u32,
     chunks_per_row: u32,
     max_queue_len: u32,
+    // Deployment policy is not part of the world digest or tile schema.
+    resizable: bool,
 }
 
 impl From<WireMetadata> for SnapshotMetadata {

@@ -28,7 +28,10 @@ export function reconcileChainMetadata<T extends ChainState>(
       chainError: "Chain metadata regressed to an older generation",
       chainVerification: "integrity",
     };
-  if (order === 0 && !sameChainIdentity(current.chain, next))
+  if (
+    current.chain.resizable !== next.resizable ||
+    (order === 0 && !sameChainIdentity(current.chain, next))
+  )
     return {
       ...current,
       chainError:

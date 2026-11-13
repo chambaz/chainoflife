@@ -24,6 +24,7 @@ export interface ChainMetadata {
   readonly chunkBytes: 1_000;
   readonly chunksPerRow: number;
   readonly maxQueueLength: number;
+  readonly resizable: boolean;
 }
 
 export type LifeChainEvent =
@@ -110,6 +111,7 @@ export function createLifeReadAdapter(params: {
           chunkBytes: 1_000,
           chunksPerRow: Number(value.chunks_per_row),
           maxQueueLength: Number(value.max_queue_len),
+          resizable: value.resizable,
         },
       };
     },
