@@ -56,7 +56,7 @@ async function main() {
 
   const indexerBinary = resolve(
     environment.GAME_OF_LIFE_INDEXER_BINARY ??
-      join(repoRoot, "target/release/game-of-life-indexer"),
+      join(repoRoot, "target/indexer/game-of-life-indexer"),
   );
   const indexer = startChild(indexerBinary, [], {
     cwd: repoRoot,
@@ -135,7 +135,7 @@ async function runBuild() {
   process.stdout.write("Building the Chain of Life indexer...\n");
   const cargo = startChild(
     "cargo",
-    ["build", "-p", "game-of-life-indexer", "--release", "--locked"],
+    ["build", "-p", "game-of-life-indexer", "--profile", "indexer", "--locked"],
     { cwd: repoRoot, env: process.env, name: "indexer build" },
   );
   const result = await cargo.exited;

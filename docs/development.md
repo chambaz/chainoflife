@@ -112,9 +112,11 @@ RUN_GAME_OF_LIFE_LOCAL_INTEGRATION=1 npm run test:integration:local
 GAME_OF_LIFE_APP_URL=http://127.0.0.1:5173 npm run test:browser:local
 ```
 
-The live resize test changes a configurable world through 100, 1,000, and 10,000
-cells per side, then returns to 100. It writes `test-results/live/resize-measurements.json`.
-Set `GAME_OF_LIFE_BROWSER_EVIDENCE` to an ignored JSON path for browser evidence.
+The live browser checks work with any world size. The resize check needs a
+configurable world: it advances at 100, 1,000, 10,000, and 100 cells per side,
+then restores the original size. It writes `test-results/live/resize-measurements.json`.
+Set `GAME_OF_LIFE_BROWSER_EVIDENCE` to an ignored JSON path to save the
+advance check's browser evidence.
 SwiftShader timings are software-renderer results.
 
 The isolated renderer has its own checks: run `npm ci`, `npm run typecheck`,

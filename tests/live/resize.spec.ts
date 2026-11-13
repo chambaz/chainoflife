@@ -15,6 +15,7 @@ test("resizes the live world, advances each workload, and shares state across ta
     timeout: 120_000,
   });
   const address = await page.getByLabel("Your wallet").getAttribute("title");
+  const originalSize = Number(await slider.inputValue());
   async function setSize(size: number) {
     // A key release commits once; intermediate range inputs only preview.
     await slider.focus();
@@ -102,11 +103,12 @@ test("resizes the live world, advances each workload, and shares state across ta
   expect(advances[0].digest).not.toBe(advances[3].digest);
   expect(advances.every((entry) => entry.readyAt !== null)).toBe(true);
   await writeFile(
-    process.env.GAME_OF_LIFE_BROWSER_EVIDENCE ??
-      "test-results/live/resize-measurements.json",
+    "test-results/live/resize-measurements.json",
     JSON.stringify(measurements, null, 2),
   );
   console.log(JSON.stringify(measurements));
-  expect(errors).toEqual([]);
   await other.close();
+  // Leave the shared world at its original size for later live checks.
+  if (originalSize !== 100) await setSize(originalSize);
+  expect(errors).toEqual([]);
 });

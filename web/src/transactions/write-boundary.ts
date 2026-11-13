@@ -171,7 +171,7 @@ export function createWriteBoundary(
             kind: "invalid",
             hash,
             reason:
-              "The signed transaction expired without committing. You can submit a new resize.",
+              "The signed transaction expired without committing. You can try again.",
           };
         return {
           kind: "indeterminate",

@@ -10,7 +10,11 @@ export function readConfiguration(file) {
   return parseEnv(readFileSync(file, "utf8"));
 }
 
-/** @param {string} file @param {NodeJS.ProcessEnv} inherited */
+/**
+ * @param {string} file
+ * @param {NodeJS.ProcessEnv} inherited
+ * @returns {NodeJS.ProcessEnv}
+ */
 export function configurationEnvironment(file, inherited = process.env) {
   const environment = { ...inherited };
   for (const key of Object.keys(environment))

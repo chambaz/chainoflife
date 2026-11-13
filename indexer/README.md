@@ -25,7 +25,7 @@ Run from the repository root. Default state paths are
 Do not run two indexers against the same database.
 
 ```bash
-cargo run --locked -p game-of-life-indexer --release
+cargo run --locked -p game-of-life-indexer --profile indexer
 ```
 
 ## Live acceptance

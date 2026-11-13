@@ -626,7 +626,11 @@ async function backgroundHash(
 test("keeps metadata usable when WebGL2 is unavailable", async ({ page }) => {
   await page.addInitScript(() => {
     const original = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type,
+      ...args
+    ) {
       if (type === "webgl2") return null;
       return original.call(this, type, ...args) as RenderingContext | null;
     } as typeof original;

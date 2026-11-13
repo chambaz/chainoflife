@@ -38,7 +38,7 @@ export function TransactionActivity({
   wallet,
   client,
   onCrankCommitted,
-  worldSize = 10_000,
+  worldSize,
   resetting = false,
 }: {
   readonly config: Readonly<AppConfig>;
@@ -46,7 +46,7 @@ export function TransactionActivity({
   readonly wallet: VisitorWallet;
   readonly client: CoreThruputClient | Promise<CoreThruputClient>;
   readonly onCrankCommitted: () => void;
-  readonly worldSize?: number;
+  readonly worldSize: number | null;
   readonly resetting?: boolean;
 }) {
   const scope = transactionScope(config, wallet.addressHex);
@@ -193,7 +193,9 @@ export function TransactionActivity({
           {busy ? <LoaderCircle className="animate-spin" /> : <Zap />}
           {resetting
             ? "Resetting world..."
-            : `Advance ${(worldSize * worldSize).toLocaleString()} cells`}
+            : worldSize === null
+              ? "Advance world"
+              : `Advance ${(worldSize * worldSize).toLocaleString()} cells`}
         </span>
         <ChevronRight />
       </Button>

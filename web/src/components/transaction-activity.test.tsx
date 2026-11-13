@@ -59,6 +59,7 @@ describe("transaction activity", () => {
         wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
+        worldSize={10_000}
         resetting
       />,
     );
@@ -91,6 +92,7 @@ describe("transaction activity", () => {
           wallet={wallet}
           client={{} as ThruputClient}
           onCrankCommitted={vi.fn()}
+          worldSize={10_000}
         />,
       );
       expect(screen.queryByLabelText("Auto process")).not.toBeInTheDocument();
@@ -126,6 +128,10 @@ describe("transaction activity", () => {
     expect(
       screen.getByRole("button", { name: "Advance 54,760,000 cells" }),
     ).toBeInTheDocument();
+    rerender(<TransactionActivity {...props} worldSize={null} />);
+    expect(
+      screen.getByRole("button", { name: "Advance world" }),
+    ).toBeInTheDocument();
   });
   test("preserves the read surface and reports malformed durable storage", () => {
     const scope = transactionScope(config, wallet.addressHex);
@@ -137,6 +143,7 @@ describe("transaction activity", () => {
         wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
+        worldSize={10_000}
       />,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(/invalid/);
@@ -169,6 +176,7 @@ describe("transaction activity", () => {
         wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
+        worldSize={10_000}
       />,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -200,6 +208,7 @@ describe("transaction activity", () => {
         wallet={wallet}
         client={{} as ThruputClient}
         onCrankCommitted={vi.fn()}
+        worldSize={10_000}
       />,
     );
     await vi.waitFor(() => expect(observeCompletions).toHaveBeenCalledOnce());

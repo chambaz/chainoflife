@@ -14,7 +14,7 @@ export function VisitorControls({
   client,
   onCrankCommitted,
   onWalletReady,
-  worldSize = 10_000,
+  worldSize,
   resetting = false,
 }: {
   readonly config: Readonly<AppConfig>;
@@ -22,7 +22,7 @@ export function VisitorControls({
   readonly client: Promise<AppClient>;
   readonly onCrankCommitted: () => void;
   readonly onWalletReady?: (wallet: VisitorWallet) => void;
-  readonly worldSize?: number;
+  readonly worldSize: number | null;
   readonly resetting?: boolean;
 }) {
   const [wallet, setWallet] = useState<VisitorWallet | null>(null);

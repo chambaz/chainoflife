@@ -357,7 +357,7 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
               profiles={config.transactionProfiles}
               client={rpcClient}
               onWalletReady={setWallet}
-              worldSize={state.chain?.width ?? 10_000}
+              worldSize={state.chain?.width ?? null}
               onCrankCommitted={() => chainRefresh.current?.()}
             />
           ) : null}
@@ -402,7 +402,9 @@ function TopBar({
         <div className="min-w-0">
           <h1 className="truncate text-base font-semibold">Chain of Life</h1>
           <p className="truncate font-mono text-xs text-muted-foreground sm:text-sm">
-            {((state.chain?.width ?? 10_000) ** 2).toLocaleString()} cells
+            {state.chain
+              ? `${(state.chain.width ** 2).toLocaleString()} cells`
+              : "Loading world"}
           </p>
         </div>
       </div>

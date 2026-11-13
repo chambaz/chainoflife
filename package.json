@@ -20,8 +20,7 @@
     "test:browser:local": "playwright test --config playwright.local.config.ts",
     "test:clean-ledger": "bash scripts/test-clean-ledger.sh",
     "test:integration:local": "node --no-experimental-webstorage node_modules/vitest/vitest.mjs run --mode local-integration web/src/integration/*.local.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "verify": "npm run check:contracts && npm run format:check && npm run typecheck && npm test && npm run build"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
     "@deck.gl/core": "9.3.10",
@@ -48,7 +47,6 @@
     "@testing-library/dom": "10.4.1",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.0",
-    "@testing-library/user-event": "14.6.1",
     "@types/node": "25.9.1",
     "@types/react": "19.1.9",
     "@types/react-dom": "19.1.7",

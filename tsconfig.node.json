@@ -15,6 +15,9 @@
     "playwright*.ts",
     "scripts/**/*.ts",
     "scripts/**/*.mjs",
-    "tests/support/**/*.ts"
+    "tests/browser/**/*.ts",
+    "tests/live/**/*.ts",
+    "tests/support/**/*.ts",
+    "vite.config.test.ts"
   ]
 }
