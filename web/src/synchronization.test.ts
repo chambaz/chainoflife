@@ -125,12 +125,9 @@ describe("generation synchronization", () => {
           seed: "7",
           population: "1",
           stateDigest: next.manifest.stateDigest,
-          chunkBytes: 1000,
-          chunksPerRow: 2,
-          maxQueueLength: 16,
           resizable: true,
         },
-        chainVerification: "fresh",
+        chainIntegrityFailed: false,
       },
       {
         type: "chain-read",
@@ -143,9 +140,6 @@ describe("generation synchronization", () => {
           seed: "7",
           population: "2",
           stateDigest: next.manifest.stateDigest,
-          chunkBytes: 1000,
-          chunksPerRow: 2,
-          maxQueueLength: 16,
         },
       },
     );

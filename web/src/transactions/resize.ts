@@ -7,30 +7,37 @@ import { gasAmount } from "@thruputchain/protocol";
 import type { AppConfig, LifeTransactionProfiles } from "@/config";
 import { GameOfLife, WorldInitialized } from "@/contracts/game-of-life";
 import { worldSize } from "@/indexer/schema";
+import { isDecimal, isHex32 } from "@/lib/validation";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
 import {
-  hasBlockingCrank,
+  isPending,
+  isPendingRequest,
   loadCranks,
   loadRequests,
+  resizeStorageKey,
   transactionScope,
-  transactionLockName,
   withTransactionLock,
   type TransactionScope,
 } from "./records";
 import type { WriteBoundary, WriteResult } from "./write-boundary";
 
-export interface ResizeRecord {
-  readonly version: 1;
-  readonly size: number;
-  readonly status: "signing" | "indeterminate" | "committed" | "failed";
-  readonly hash: string | null;
-  readonly epoch: string | null;
-  readonly message: string | null;
-}
+/** An "interrupted" reset was never broadcast, so it can be retried. */
+export type ResizeRecord =
+  | { readonly size: number; readonly status: "signing" }
+  | {
+      readonly size: number;
+      readonly status: "indeterminate";
+      readonly hash: string;
+    }
+  | {
+      readonly size: number;
+      readonly status: "committed";
+      readonly hash: string;
+      readonly epoch: string;
+    }
+  | { readonly size: number; readonly status: "failed" | "interrupted" };
 
-export function resizeStorageKey(scope: TransactionScope): string {
-  return `${transactionLockName(scope)}:resize`;
-}
+export { resizeStorageKey };
 
 export function subscribeResize(
   scope: TransactionScope,
@@ -54,28 +61,22 @@ export function subscribeResize(
 export function loadResize(scope: TransactionScope): ResizeRecord | null {
   const raw = localStorage.getItem(resizeStorageKey(scope));
   if (raw === null) return null;
-  const value = JSON.parse(raw) as Partial<ResizeRecord>;
-  const decimal = (entry: unknown) =>
-    entry === null ||
-    (typeof entry === "string" && /^(0|[1-9][0-9]*)$/.test(entry));
-  const hash = (entry: unknown) =>
-    entry === null ||
-    (typeof entry === "string" && /^0x[0-9a-f]{64}$/.test(entry));
+  const value = JSON.parse(raw) as Record<string, unknown> | null;
   if (
     !value ||
-    value.version !== 1 ||
-    !["signing", "indeterminate", "committed", "failed"].includes(
-      value.status ?? "",
-    ) ||
-    !hash(value.hash) ||
-    !decimal(value.epoch) ||
-    !(value.message === null || typeof value.message === "string")
+    !(
+      value.status === "signing" ||
+      value.status === "failed" ||
+      value.status === "interrupted" ||
+      (value.status === "indeterminate" && isHex32(value.hash)) ||
+      (value.status === "committed" &&
+        isHex32(value.hash) &&
+        isDecimal(value.epoch))
+    )
   )
     throw new Error("Stored resize evidence is invalid");
   worldSize(value.size);
-  if (value.status === "committed" && (!value.hash || value.epoch === null))
-    throw new Error("Stored resize receipt is incomplete");
-  return value as ResizeRecord;
+  return value as unknown as ResizeRecord;
 }
 
 function save(scope: TransactionScope, record: ResizeRecord): ResizeRecord {
@@ -88,12 +89,12 @@ function save(scope: TransactionScope, record: ResizeRecord): ResizeRecord {
   return record;
 }
 
+export function isPendingResize(record: ResizeRecord | null): boolean {
+  return record?.status === "signing" || record?.status === "indeterminate";
+}
+
 export function assertNoPendingResize(scope: TransactionScope): void {
-  const record = loadResize(scope);
-  if (
-    record &&
-    (record.status === "signing" || record.status === "indeterminate")
-  )
+  if (isPendingResize(loadResize(scope)))
     throw new Error("Observe the pending resize before submitting more work.");
 }
 
@@ -113,28 +114,13 @@ export async function resizeWorld(
   return withTransactionLock(scope, async () => {
     assertNoPendingResize(scope);
     if (
-      hasBlockingCrank(loadCranks(scope)) ||
-      loadRequests(scope).some(({ status }) =>
-        [
-          "signing",
-          "indeterminate",
-          "accepted",
-          "acceptedUntracked",
-          "completionUnknown",
-        ].includes(status),
-      )
+      loadCranks(scope).some(isPending) ||
+      loadRequests(scope).some(isPendingRequest)
     )
       throw new Error(
         "Finish or observe pending tick requests before resizing.",
       );
-    let record = save(scope, {
-      version: 1,
-      size,
-      status: "signing",
-      hash: null,
-      epoch: null,
-      message: null,
-    });
+    save(scope, { size, status: "signing" });
     const result = await params.boundary.execute(
       GameOfLife.v0_1.resize.invocation(
         addressFromHex(params.config.contractAddress),
@@ -150,13 +136,13 @@ export async function resizeWorld(
       },
       {
         onSigned: (hash) => {
-          record = save(scope, { ...record, hash, status: "indeterminate" });
+          save(scope, { size, status: "indeterminate", hash });
         },
       },
     );
     return save(
       scope,
-      applyResult(record, result, params.config.contractAddress),
+      applyResult(size, result, params.config.contractAddress),
     );
   });
 }
@@ -166,24 +152,16 @@ export async function recoverResize(params: Parameters): Promise<ResizeRecord> {
   return withTransactionLock(scope, async () => {
     const record = loadResize(scope);
     if (!record) throw new Error("No reset is available to recover.");
-    if (record.status === "committed" || record.status === "failed")
-      return record;
     // The SDK awaits onSigned, including saving this hash, before broadcast.
     // Holding the write lock ensures another tab is no longer submitting it.
-    if (!record.hash)
-      return save(scope, {
-        ...record,
-        status: "failed",
-        message: "Reset interrupted. Try again.",
-      });
+    if (record.status === "signing")
+      return save(scope, { size: record.size, status: "interrupted" });
+    if (record.status !== "indeterminate") return record;
     return save(
       scope,
       applyResult(
-        record,
-        await params.boundary.observe(
-          record.hash,
-          params.profiles.crank.observationTimeoutMs,
-        ),
+        record.size,
+        await params.boundary.observe(record.hash),
         params.config.contractAddress,
       ),
     );
@@ -191,67 +169,40 @@ export async function recoverResize(params: Parameters): Promise<ResizeRecord> {
 }
 
 function applyResult(
-  record: ResizeRecord,
+  size: number,
   result: WriteResult,
   contract: string,
 ): ResizeRecord {
-  if (result.kind === "committedSuccess") {
-    try {
-      const returns = defaultWalletAdapter.decodeExecutionReturns?.(
-        result.receipt,
-      );
-      if (returns?.length !== 1) throw new Error("Missing resize return");
-      const metadata = GameOfLife.v0_1.resize.decodeReturn(returns[0]!);
-      const events = WorldInitialized.allFromReceipt(result.receipt, {
-        address: addressFromHex(contract),
-      });
-      if (
-        metadata.width !== BigInt(record.size) ||
-        metadata.height !== BigInt(record.size) ||
-        metadata.generation !== 0n ||
-        events.length !== 1 ||
-        events[0]!.fields.epoch !== metadata.epoch ||
-        events[0]!.fields.size !== metadata.width ||
-        toHex0x(events[0]!.fields.state_digest) !==
-          toHex0x(metadata.state_digest)
-      )
-        throw new Error("Resize return and reset event disagree");
-      return {
-        ...record,
-        hash: result.hash,
-        status: "committed",
-        epoch: metadata.epoch.toString(),
-        message: null,
-      };
-    } catch (error) {
-      return {
-        ...record,
-        hash: result.hash,
-        status: "indeterminate",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Cannot verify resize receipt",
-      };
-    }
-  }
   if (result.kind === "indeterminate")
+    return { size, status: "indeterminate", hash: result.hash };
+  if (result.kind !== "committedSuccess") return { size, status: "failed" };
+  try {
+    const returns = defaultWalletAdapter.decodeExecutionReturns?.(
+      result.receipt,
+    );
+    if (returns?.length !== 1) throw new Error("Missing resize return");
+    const metadata = GameOfLife.v0_1.resize.decodeReturn(returns[0]!);
+    const events = WorldInitialized.allFromReceipt(result.receipt, {
+      address: addressFromHex(contract),
+    });
+    if (
+      metadata.width !== BigInt(size) ||
+      metadata.height !== BigInt(size) ||
+      metadata.generation !== 0n ||
+      events.length !== 1 ||
+      events[0]!.fields.epoch !== metadata.epoch ||
+      events[0]!.fields.size !== metadata.width ||
+      toHex0x(events[0]!.fields.state_digest) !== toHex0x(metadata.state_digest)
+    )
+      throw new Error("Resize return and reset event disagree");
     return {
-      ...record,
-      hash: result.hash ?? record.hash,
-      status: "indeterminate",
-      message:
-        result.message ??
-        "Resize outcome is uncertain. Observe the original transaction.",
+      size,
+      status: "committed",
+      hash: result.hash,
+      epoch: metadata.epoch.toString(),
     };
-  return {
-    ...record,
-    status: "failed",
-    message:
-      result.kind === "invalid"
-        ? result.reason
-        : result.kind === "preSubmissionFailure"
-          ? result.message
-          : "Resize failed. Queued requests must finish before reset.",
-  };
+  } catch {
+    // The reset committed, but its receipt cannot be verified here.
+    return { size, status: "indeterminate", hash: result.hash };
+  }
 }

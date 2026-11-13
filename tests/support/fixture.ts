@@ -29,7 +29,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
       | "malformed"
       | "malformed-schema"
       | "malformed-envelope",
-    candidateEvidence: "event" as "event" | "metadata",
   };
   let heldCandidateTiles: Array<() => void> = [];
   const identity = (generation: number) => ({
@@ -84,33 +83,15 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
           sourceBlockHeight: String(9 + generation),
           sourceBlockHash: block,
           evidenceKind:
-            generation === 1 && fixture.candidateEvidence === "metadata"
-              ? "metadata-observation"
-              : generation === 0
-                ? "world-initialized-event"
-                : "generation-advanced-event",
-          transactionHash:
-            generation === 1 && fixture.candidateEvidence === "metadata"
-              ? null
-              : transaction,
-          eventIndex:
-            generation === 1 && fixture.candidateEvidence === "metadata"
-              ? null
-              : generation,
+            generation === 0
+              ? "world-initialized-event"
+              : "generation-advanced-event",
+          transactionHash: transaction,
+          eventIndex: generation,
           eventKind:
-            generation === 1 && fixture.candidateEvidence === "metadata"
-              ? null
-              : generation === 0
-                ? "WorldInitialized"
-                : "GenerationAdvanced",
-          requestId:
-            generation === 0 || fixture.candidateEvidence === "metadata"
-              ? null
-              : `0x${"ef".repeat(32)}`,
-          requester:
-            generation === 0 || fixture.candidateEvidence === "metadata"
-              ? null
-              : contract,
+            generation === 0 ? "WorldInitialized" : "GenerationAdvanced",
+          requestId: generation === 0 ? null : `0x${"ef".repeat(32)}`,
+          requester: generation === 0 ? null : contract,
           verifiedAt: "2026-08-28T01:02:03Z",
         };
     }
@@ -159,7 +140,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
             fixture.candidateTileHeld = false;
             fixture.latestState = "ready";
             fixture.rpcState = "ready";
-            fixture.candidateEvidence = "event";
             for (const release of heldCandidateTiles) release();
             heldCandidateTiles = [];
           }
@@ -207,11 +187,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
                     : url.searchParams.get("rpc") === "malformed-envelope"
                       ? "malformed-envelope"
                       : "ready";
-          if (url.searchParams.has("evidence"))
-            fixture.candidateEvidence =
-              url.searchParams.get("evidence") === "metadata"
-                ? "metadata"
-                : "event";
           response.statusCode = 204;
           response.end();
           return;

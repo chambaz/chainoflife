@@ -3,9 +3,7 @@ import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { abbreviate } from "@/lib/format-identifier";
-import type { LifeChainEvent, LifeReadAdapter } from "@/chain/game-of-life";
-
-type GenerationEvent = Exclude<LifeChainEvent, { kind: "TickRequested" }>;
+import type { GenerationEvent, LifeReadAdapter } from "@/chain/game-of-life";
 
 export function WorldActivity({
   reader,
@@ -42,23 +40,9 @@ export function WorldActivity({
       if (running || document.visibilityState !== "visible") return;
       running = true;
       try {
-        const events = await reader.events(0n);
+        const generations = await reader.generations(0n);
         if (disposed) return;
-        const generations = new Map<string, GenerationEvent>();
-        for (const event of events) {
-          if (event.kind !== "TickRequested")
-            generations.set(event.transactionHash, event);
-        }
-        setEntries(
-          [...generations.values()].sort((a, b) => {
-            const height = BigInt(b.blockHeight) - BigInt(a.blockHeight);
-            return height === 0n
-              ? b.sequenceNumber - a.sequenceNumber
-              : height > 0n
-                ? 1
-                : -1;
-          }),
-        );
+        setEntries([...generations].reverse());
         setLoaded(true);
         setError(null);
       } catch (cause) {
@@ -130,7 +114,7 @@ function GenerationActivityItem({
   readonly entry: GenerationEvent;
 }) {
   const hash = toBase58(hashFromHex(entry.transactionHash));
-  const generation = entry.kind === "WorldInitialized" ? "0" : entry.generation;
+  const { generation } = entry;
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   useEffect(() => {

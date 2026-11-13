@@ -1,6 +1,5 @@
 use game_of_life_indexer::{
-    EventKind, EvidenceKind, IndexerState, LatestPointer, LifeManifest, LifeProvenance, LifeStatus,
-    Progress, ProgressUnit, PublishedIdentity, Retry, SnapshotIdentity,
+    EventKind, EvidenceKind, LatestPointer, LifeManifest, LifeProvenance, SnapshotIdentity,
 };
 
 const NETWORK: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -12,27 +11,6 @@ const REQUEST: &str = "0xddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 const REQUESTER: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 #[test]
-fn latest_pointer_context_free_validation_accepts_only_digest_relative_path() {
-    let valid = latest(format!("{DIGEST}/manifest.json"));
-    assert!(valid.validate().is_ok());
-
-    for path in [
-        format!("/{DIGEST}/manifest.json"),
-        format!("{DIGEST}//manifest.json"),
-        format!("{DIGEST}/../manifest.json"),
-        format!("{DIGEST}%2fmanifest.json"),
-        format!("{DIGEST}\\manifest.json"),
-        format!("https://example.test/{DIGEST}/manifest.json"),
-        format!("//example.test/{DIGEST}/manifest.json"),
-        format!("{DIGEST}/manifest.json?x=1"),
-        format!("{DIGEST}/manifest.json#x"),
-    ] {
-        let invalid = latest(path.clone());
-        assert!(invalid.validate().is_err(), "accepted {path}");
-    }
-}
-
-#[test]
 fn latest_pointer_context_validation_requires_exact_canonical_scope() {
     let canonical = format!("/v1/worlds/{NETWORK}/{CONTRACT}/{DIGEST}/manifest.json");
     let valid = latest(canonical.clone());
@@ -42,7 +20,6 @@ fn latest_pointer_context_validation_requires_exact_canonical_scope() {
         LatestPointer::from_json_for(&bytes, NETWORK, CONTRACT).unwrap(),
         valid
     );
-    assert!(LatestPointer::from_json(&bytes).is_err());
 
     let other_network = "9999999999999999999999999999999999999999999999999999999999999999";
     let other_contract = "0x9999999999999999999999999999999999999999999999999999999999999999";
@@ -94,17 +71,13 @@ fn provenance_parser_enforces_event_generation_and_cross_fields() {
     invalid.requester = None;
     assert!(invalid.validate().is_err());
 
-    let mut observation = initialized;
-    observation.evidence_kind = EvidenceKind::MetadataObservation;
-    assert!(observation.validate().is_err());
-
     let mut value = serde_json::to_value(advanced).unwrap();
     value["unknown"] = true.into();
     assert!(LifeProvenance::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
 }
 
 #[test]
-fn manifest_and_provenance_reject_population_above_world_capacity() {
+fn manifest_rejects_population_above_world_capacity() {
     let manifest = LifeManifest::new(&SnapshotIdentity {
         epoch: 0,
         width: 10_000,
@@ -117,68 +90,30 @@ fn manifest_and_provenance_reject_population_above_world_capacity() {
         state_digest: [0xaa; 32],
     });
     assert!(manifest.validate().is_err());
-
-    let mut provenance = initialized_provenance();
-    provenance.population = "100000001".into();
-    assert!(provenance.validate().is_err());
 }
 
 #[test]
-fn status_enforces_state_specific_fields_progress_and_identifiers() {
-    let identity = PublishedIdentity {
-        epoch: "0".into(),
-        generation: "7".into(),
-        state_digest: DIGEST.into(),
+fn latest_pointer_rejects_noncanonical_decimal_unknown_fields_and_invalid_dates() {
+    let canonical = format!("/v1/worlds/{NETWORK}/{CONTRACT}/{DIGEST}/manifest.json");
+    let valid = serde_json::to_value(latest(canonical)).unwrap();
+    let parse = |value: &serde_json::Value| {
+        LatestPointer::from_json_for(&serde_json::to_vec(value).unwrap(), NETWORK, CONTRACT)
     };
-    let valid = LifeStatus {
-        schema_version: 2,
-        state: IndexerState::Preparing,
-        observed: Some(identity.clone()),
-        preparing: Some(Progress {
-            epoch: "0".into(),
-            generation: "7".into(),
-            state_digest: DIGEST.into(),
-            completed_units: 20,
-            total_units: 100,
-            unit: ProgressUnit::Chunks,
-        }),
-        published: Some(identity),
-        retry: Some(Retry {
-            attempt: 2,
-            next_at: "2026-08-28T01:02:03Z".into(),
-        }),
-        error_code: None,
-        heartbeat_at: "2026-08-28T01:02:03Z".into(),
-    };
-    assert!(valid.validate().is_ok());
+    assert!(parse(&valid).is_ok());
 
-    let mut invalid = valid.clone();
-    invalid.state = IndexerState::Idle;
-    assert!(invalid.validate().is_err());
-    invalid = valid.clone();
-    invalid.preparing.as_mut().unwrap().completed_units = 101;
-    assert!(invalid.validate().is_err());
-    invalid = valid;
-    invalid.error_code = Some("bad-code".into());
-    assert!(invalid.validate().is_err());
-}
-
-#[test]
-fn schemas_reject_noncanonical_decimal_unknown_fields_and_invalid_dates() {
-    let bytes = format!(
-        r#"{{"schemaVersion":1,"generation":"01","stateDigest":"{DIGEST}","manifestUrl":"{DIGEST}/manifest.json","sourceBlockHeight":"9","sourceBlockHash":"{BLOCK}","publishedAt":"2026-08-28T01:02:03Z"}}"#
-    );
-    assert!(LatestPointer::from_json(bytes.as_bytes()).is_err());
-
-    let bytes = format!(
-        r#"{{"schemaVersion":1,"generation":"1","stateDigest":"{DIGEST}","manifestUrl":"{DIGEST}/manifest.json","sourceBlockHeight":"9","sourceBlockHash":"{BLOCK}","publishedAt":"2026-08-28T01:02:03Z","extra":true}}"#
-    );
-    assert!(LatestPointer::from_json(bytes.as_bytes()).is_err());
-
-    let bytes = format!(
-        r#"{{"schemaVersion":1,"generation":"1","stateDigest":"{DIGEST}","manifestUrl":"{DIGEST}/manifest.json","sourceBlockHeight":"9","sourceBlockHash":"{BLOCK}","publishedAt":"2026-02-30T01:02:03Z"}}"#
-    );
-    assert!(LatestPointer::from_json(bytes.as_bytes()).is_err());
+    for (field, value) in [
+        ("generation", "01"),
+        ("publishedAt", "2026-02-30T01:02:03Z"),
+        ("publishedAt", "2026-08-28T01:02:03+00:00"),
+        ("publishedAt", "2026-08-28"),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = value.into();
+        assert!(parse(&invalid).is_err(), "accepted {field}={value}");
+    }
+    let mut invalid = valid;
+    invalid["extra"] = true.into();
+    assert!(parse(&invalid).is_err());
 }
 
 fn latest(manifest_url: String) -> LatestPointer {

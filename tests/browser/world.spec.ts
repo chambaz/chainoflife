@@ -98,45 +98,31 @@ test("keeps the visitor wallet and accepted requests across reloads", async ({
   const { parseAddress, toHex0x } = await import("@thruputchain/client");
   const caller = toHex0x(parseAddress(address!));
   const key = [
-    "thruput-life:requests:v1",
+    "chain-of-life:requests:v2",
     "aa".repeat(32),
     caller,
     `0x${"22".repeat(32)}`,
   ].join(":");
-  await page.evaluate(
-    ({ key, caller }) => {
-      localStorage.setItem(
-        key,
-        JSON.stringify({
-          version: 1,
-          requests: [
-            {
-              schemaVersion: 1,
-              localId: "accepted-request",
-              requester: caller,
-              status: "accepted",
-              transactionHash: `0x${"44".repeat(32)}`,
-              requestId: `0x${"55".repeat(32)}`,
-              receiptBlock: "7",
-              submittedAt: "2026-08-29T00:00:00.000Z",
-              acceptedAt: "2026-08-29T00:00:01.000Z",
-              observedThroughBlock: null,
-              resultingGeneration: null,
-              resultingPopulation: null,
-              resultingStateDigest: null,
-              advancedTransactionHash: null,
-              diagnostic: null,
-            },
-          ],
-        }),
-      );
-    },
-    { key, caller },
-  );
+  await page.evaluate((key) => {
+    localStorage.setItem(
+      key,
+      JSON.stringify([
+        {
+          localId: "accepted-request",
+          status: "accepted",
+          transactionHash: `0x${"44".repeat(32)}`,
+          requestId: `0x${"55".repeat(32)}`,
+          epoch: "0",
+          receiptBlock: "7",
+          observedThroughBlock: null,
+        },
+      ]),
+    );
+  }, key);
   await page.reload();
   expect(
     await page.evaluate(
-      (key) => JSON.parse(localStorage.getItem(key)!).requests[0].status,
+      (key) => JSON.parse(localStorage.getItem(key)!)[0].status,
       key,
     ),
   ).toBe("accepted");
@@ -812,43 +798,6 @@ test("keeps the old digest visible until newer viewport coverage is ready", asyn
   await world.focus();
   await page.keyboard.press("Enter");
   await expect(liveRegion).toHaveText(/Generation 1, cell 5000, 5000 is live/);
-});
-
-test("invalidates metadata-observation candidate when chain advances while staging", async ({
-  page,
-}) => {
-  await page.request.get("/__life-fixture?chain=1&published=0");
-  await page.goto("/?x=5000&y=5000&z=0");
-  await expect(page.getByText("Displaying older generation 0")).toBeVisible();
-  await page.request.get(
-    "/__life-fixture?published=1&evidence=metadata&holdCandidate=1",
-  );
-  await expect(page.getByText("Preparing visualization 1")).toBeVisible();
-  await page.request.get("/__life-fixture?chain=2");
-  await page.evaluate(() =>
-    document.dispatchEvent(new Event("visibilitychange")),
-  );
-  await expect(
-    page
-      .locator("header")
-      .getByText("On-chain", { exact: true })
-      .locator("+ dd"),
-  ).toHaveText("2", { timeout: 20_000 });
-  await expect(
-    page
-      .getByText(/metadata observation does not describe current chain state/i)
-      .first(),
-  ).toBeVisible();
-  await expect(page.getByText("Displaying older generation 0")).toBeVisible();
-  await page.request.get("/__life-fixture?releaseCandidate=1");
-  await page.waitForTimeout(500);
-  await expect(page.getByText(/Ready · generation 1/)).toHaveCount(0);
-  await expect(
-    page
-      .locator("aside")
-      .getByText("Generation", { exact: true })
-      .locator("+ dd"),
-  ).toHaveText("0");
 });
 
 test("publishes a candidate tile level selected across a hysteresis boundary", async ({

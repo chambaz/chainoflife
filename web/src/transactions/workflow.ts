@@ -3,7 +3,6 @@ import {
   bytesEqual,
   defaultWalletAdapter,
   toHex0x,
-  type ThruputClient,
   type TransactionReceipt,
 } from "@thruputchain/client";
 import { gasAmount } from "@thruputchain/protocol";
@@ -15,7 +14,7 @@ import {
 } from "@/contracts/game-of-life";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
 import {
-  hasBlockingCrank,
+  isPending,
   loadCranks,
   loadRequests,
   saveCranks,
@@ -24,7 +23,10 @@ import {
   upsert,
   withTransactionLock,
   type CrankRecord,
+  type Outcome,
+  type Submission,
   type TickRequestRecord,
+  type TransactionScope,
 } from "@/transactions/records";
 import type { WriteBoundary, WriteResult } from "@/transactions/write-boundary";
 import { assertNoPendingResize } from "./resize";
@@ -32,313 +34,258 @@ import { assertNoPendingResize } from "./resize";
 export interface WorkflowResult {
   readonly requests: readonly TickRequestRecord[];
   readonly cranks: readonly CrankRecord[];
+  /** Explains why the action did not advance the world, when it did not. */
+  readonly message: string | null;
 }
 
-export async function requestTick(params: {
+interface Parameters {
   readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
   readonly profiles: LifeTransactionProfiles;
   readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
-}): Promise<WorkflowResult> {
+}
+
+interface Transition<T> {
+  readonly record: T;
+  readonly message: string | null;
+}
+
+interface CrankTransition extends Transition<CrankRecord> {
+  /** This wallet's accepted request that the crank processed. */
+  readonly processed?: { readonly requestId: string; readonly epoch: string };
+}
+
+const INTERRUPTED = "Signing was interrupted. Try again.";
+
+/** Process an accepted request, or submit a new request and process it. */
+export async function advance(params: Parameters): Promise<WorkflowResult> {
   const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
     assertNoPendingResize(scope);
-    let requests: readonly TickRequestRecord[] = loadRequests(scope);
-    let cranks: readonly CrankRecord[] = loadCranks(scope);
-    const submittedAt = new Date().toISOString();
+    if (loadRequests(scope).some(({ status }) => status === "accepted"))
+      return crankWhileLocked(params, scope);
     let record: TickRequestRecord = {
-      schemaVersion: 1,
       localId: crypto.randomUUID(),
-      requester: params.wallet.addressHex,
       status: "signing",
-      transactionHash: null,
-      requestId: null,
-      receiptBlock: null,
-      submittedAt,
-      acceptedAt: null,
-      observedThroughBlock: null,
-      resultingGeneration: null,
-      resultingPopulation: null,
-      resultingStateDigest: null,
-      advancedTransactionHash: null,
-      diagnostic: null,
     };
-    requests = saveRequests(scope, [...requests, record]);
-    const target = GameOfLife.v0_1.requestTick.invocation(
-      addressFromHex(params.config.contractAddress),
-      gasAmount(params.profiles.request.targetGasLimit),
-    );
+    saveRequests(scope, [...loadRequests(scope), record]);
     const result = await params.boundary.execute(
-      target,
+      GameOfLife.v0_1.requestTick.invocation(
+        addressFromHex(params.config.contractAddress),
+        gasAmount(params.profiles.request.targetGasLimit),
+      ),
       params.profiles.request,
       {
         onSigned(hash) {
-          record = { ...record, transactionHash: hash };
-          requests = saveRequests(scope, upsert(loadRequests(scope), record));
+          record = {
+            localId: record.localId,
+            status: "indeterminate",
+            transactionHash: hash,
+          };
+          saveRequests(scope, upsert(loadRequests(scope), record));
         },
       },
     );
-    record = admissionRecord(
-      record,
-      result,
-      params.config.contractAddress,
-      params.wallet,
-    );
-    requests = saveRequests(scope, upsert(loadRequests(scope), record));
-    if (record.status === "accepted") {
-      const processed = await crankWhileLocked({ ...params, scope });
-      requests = processed.requests;
-      cranks = processed.cranks;
-    }
-    return { requests, cranks };
+    const outcome = requestOutcome(record, result, params);
+    const saved = saveRequest(scope, outcome);
+    return outcome.record.status === "accepted"
+      ? crankWhileLocked(params, scope)
+      : saved;
   });
 }
 
-export async function processOneTick(params: {
-  readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly profiles: LifeTransactionProfiles;
-  readonly wallet: VisitorWallet;
-  readonly boundary: WriteBoundary;
-}): Promise<WorkflowResult> {
-  const scope = transactionScope(params.config, params.wallet.addressHex);
-  return withTransactionLock(scope, async () =>
-    crankWhileLocked({ ...params, scope }),
-  );
-}
-
-export async function recoverRequest(params: {
-  readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly profiles: LifeTransactionProfiles;
-  readonly wallet: VisitorWallet;
-  readonly boundary: WriteBoundary;
-  readonly localId: string;
-}): Promise<WorkflowResult> {
+/**
+ * Resolve a pending request. Under the lock, a record without a hash was never
+ * broadcast, so it fails. Otherwise, observe the original transaction.
+ */
+export async function recoverRequest(
+  params: Parameters,
+  localId: string,
+): Promise<WorkflowResult> {
   const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
-    let requests = loadRequests(scope);
-    const record = requests.find(({ localId }) => localId === params.localId);
-    if (!record?.transactionHash)
-      throw new Error(
-        "This request has no durable transaction hash to observe",
-      );
-    const result = await params.boundary.observe(
-      record.transactionHash,
-      params.profiles.request.observationTimeoutMs,
+    const record = loadRequests(scope).find(
+      (request) => request.localId === localId,
     );
-    const recovered =
-      record.status === "acceptedUntracked" && result.kind === "indeterminate"
-        ? {
-            ...record,
-            diagnostic:
-              "Committed acceptance remains untracked; receipt observation is still unavailable",
-          }
-        : admissionRecord(
+    if (!record || !isPending(record))
+      throw new Error("This request is no longer pending");
+    // Checking only observes. The next Advance processes an accepted request.
+    return saveRequest(
+      scope,
+      record.status === "signing"
+        ? interrupted(record)
+        : requestOutcome(
             record,
-            result,
-            params.config.contractAddress,
-            params.wallet,
-          );
-    requests = saveRequests(scope, upsert(requests, recovered));
-    return { requests, cranks: loadCranks(scope) };
-  });
-}
-
-export async function recoverCrank(params: {
-  readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly profiles: LifeTransactionProfiles;
-  readonly wallet: VisitorWallet;
-  readonly boundary: WriteBoundary;
-  readonly localId: string;
-}): Promise<WorkflowResult> {
-  const scope = transactionScope(params.config, params.wallet.addressHex);
-  return withTransactionLock(scope, async () => {
-    const requests = loadRequests(scope);
-    let cranks = loadCranks(scope);
-    const crank = cranks.find(({ localId }) => localId === params.localId);
-    if (!crank?.transactionHash)
-      throw new Error("This crank has no durable transaction hash to observe");
-    const result = await params.boundary.observe(
-      crank.transactionHash,
-      params.profiles.crank.observationTimeoutMs,
+            await params.boundary.observe(record.transactionHash),
+            params,
+          ),
     );
-    const applied = crankResult(crank, requests, result, params.config);
-    const savedRequests = saveRequests(scope, applied.requests);
-    cranks = saveCranks(scope, upsert(cranks, applied.crank));
-    return { requests: savedRequests, cranks };
   });
 }
 
-export async function abandonUnsignedRequest(params: {
-  readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly wallet: VisitorWallet;
-  readonly localId: string;
-}): Promise<WorkflowResult> {
+/** Resolve a pending crank with the same rules as {@link recoverRequest}. */
+export async function recoverCrank(
+  params: Parameters,
+  localId: string,
+): Promise<WorkflowResult> {
   const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
-    let requests = loadRequests(scope);
-    const record = requests.find(({ localId }) => localId === params.localId);
-    if (
-      !record ||
-      record.status !== "signing" ||
-      record.transactionHash !== null
-    )
-      throw new Error(
-        "Only a restored hashless signing request can be abandoned",
-      );
-    requests = saveRequests(
+    const crank = loadCranks(scope).find(
+      (record) => record.localId === localId,
+    );
+    if (!crank || !isPending(crank))
+      throw new Error("This crank is no longer pending");
+    return finishCrank(
       scope,
-      upsert(requests, {
-        ...record,
-        status: "failed",
-        diagnostic: "User confirmed that signing did not complete",
-      }),
+      crank.status === "signing"
+        ? interrupted(crank)
+        : crankOutcome(
+            crank,
+            await params.boundary.observe(crank.transactionHash),
+            params,
+          ),
     );
-    return { requests, cranks: loadCranks(scope) };
   });
 }
 
-export async function abandonUnsignedCrank(params: {
-  readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly wallet: VisitorWallet;
-  readonly localId: string;
-}): Promise<WorkflowResult> {
-  const scope = transactionScope(params.config, params.wallet.addressHex);
-  return withTransactionLock(scope, async () => {
-    const requests = loadRequests(scope);
-    let cranks = loadCranks(scope);
-    const crank = cranks.find(({ localId }) => localId === params.localId);
-    if (!crank || crank.status !== "signing" || crank.transactionHash !== null)
-      throw new Error(
-        "Only a restored hashless signing crank can be abandoned",
-      );
-    cranks = saveCranks(
-      scope,
-      upsert(cranks, {
-        ...crank,
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        diagnostic: "User confirmed that signing did not complete",
-      }),
-    );
-    return { requests, cranks };
-  });
+function saveRequest(
+  scope: TransactionScope,
+  outcome: Transition<TickRequestRecord>,
+): WorkflowResult {
+  return {
+    requests: saveRequests(scope, upsert(loadRequests(scope), outcome.record)),
+    cranks: loadCranks(scope),
+    message: outcome.message,
+  };
 }
 
-async function crankWhileLocked(params: {
-  readonly config: Pick<AppConfig, "networkId" | "contractAddress">;
-  readonly profiles: LifeTransactionProfiles;
-  readonly wallet: VisitorWallet;
-  readonly boundary: WriteBoundary;
-  readonly scope: ReturnType<typeof transactionScope>;
-}): Promise<WorkflowResult> {
-  let requests = loadRequests(params.scope);
-  assertNoPendingResize(params.scope);
-  let cranks = loadCranks(params.scope);
-  if (hasBlockingCrank(cranks))
+function finishCrank(
+  scope: TransactionScope,
+  outcome: CrankTransition,
+): WorkflowResult {
+  const { processed } = outcome;
+  const requests = loadRequests(scope);
+  return {
+    requests: processed
+      ? saveRequests(
+          scope,
+          requests.map((request) =>
+            request.status === "accepted" &&
+            request.requestId === processed.requestId &&
+            request.epoch === processed.epoch
+              ? {
+                  localId: request.localId,
+                  status: "advanced",
+                  transactionHash: request.transactionHash,
+                }
+              : request,
+          ),
+        )
+      : requests,
+    cranks: saveCranks(scope, upsert(loadCranks(scope), outcome.record)),
+    message: outcome.message,
+  };
+}
+
+async function crankWhileLocked(
+  params: Parameters,
+  scope: TransactionScope,
+): Promise<WorkflowResult> {
+  assertNoPendingResize(scope);
+  if (loadCranks(scope).some(isPending))
     throw new Error(
       "Resolve the existing crank attempt before signing another",
     );
-  let crank: CrankRecord = {
-    schemaVersion: 1,
-    localId: crypto.randomUUID(),
-    submittedBy: params.wallet.addressHex,
-    status: "signing",
-    transactionHash: null,
-    submittedAt: new Date().toISOString(),
-    completedAt: null,
-    receiptBlock: null,
-    consumedRequestId: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    diagnostic: null,
-  };
-  cranks = saveCranks(params.scope, [...cranks, crank]);
-  const target = GameOfLife.v0_1.processNextTick.invocation(
-    addressFromHex(params.config.contractAddress),
-    gasAmount(params.profiles.crank.targetGasLimit),
-  );
-  const result = await params.boundary.execute(target, params.profiles.crank, {
-    onSigned(hash) {
-      crank = { ...crank, transactionHash: hash };
-      cranks = saveCranks(
-        params.scope,
-        upsert(loadCranks(params.scope), crank),
-      );
+  let crank: CrankRecord = { localId: crypto.randomUUID(), status: "signing" };
+  saveCranks(scope, [...loadCranks(scope), crank]);
+  const result = await params.boundary.execute(
+    GameOfLife.v0_1.processNextTick.invocation(
+      addressFromHex(params.config.contractAddress),
+      gasAmount(params.profiles.crank.targetGasLimit),
+    ),
+    params.profiles.crank,
+    {
+      onSigned(hash) {
+        crank = {
+          localId: crank.localId,
+          status: "indeterminate",
+          transactionHash: hash,
+        };
+        saveCranks(scope, upsert(loadCranks(scope), crank));
+      },
     },
-  });
-  const applied = crankResult(crank, requests, result, params.config);
-  requests = saveRequests(params.scope, applied.requests);
-  cranks = saveCranks(
-    params.scope,
-    upsert(loadCranks(params.scope), applied.crank),
   );
-  return { requests, cranks };
+  return finishCrank(scope, crankOutcome(crank, result, params));
 }
 
-function admissionRecord(
+function interrupted(record: {
+  readonly localId: string;
+}): Transition<Outcome<"failed">> {
+  return {
+    record: {
+      localId: record.localId,
+      status: "failed",
+      transactionHash: null,
+    },
+    message: INTERRUPTED,
+  };
+}
+
+function requestOutcome(
   record: TickRequestRecord,
   result: WriteResult,
-  contractAddress: string,
-  wallet: VisitorWallet,
-): TickRequestRecord {
-  const classified = writeFailure(record, result);
-  if (classified) return classified;
+  params: Parameters,
+): Transition<TickRequestRecord> {
+  const { localId } = record;
   if (result.kind !== "committedSuccess")
-    throw new Error("Unreachable request transaction result");
-  const receipt = result.receipt;
-  const events = TickRequested.allFromReceipt(receipt, {
-    address: addressFromHex(contractAddress),
+    return writeFailure(localId, result, "Request");
+  const events = TickRequested.allFromReceipt(result.receipt, {
+    address: addressFromHex(params.config.contractAddress),
   }).filter(({ topics }) =>
-    bytesEqual(topics.requested_by, wallet.account.address),
+    bytesEqual(topics.requested_by, params.wallet.account.address),
   );
-  const common = {
-    ...record,
-    receiptBlock: receipt.blockHeight.toString(),
-    acceptedAt: new Date().toISOString(),
-  };
   if (events.length !== 1)
     return {
-      ...common,
-      status: "acceptedUntracked",
-      diagnostic:
-        "Committed receipt did not contain exactly one matching TickRequested event",
+      record: {
+        localId,
+        status: "completionUnknown",
+        transactionHash: result.hash,
+      },
+      message:
+        "The request committed, but its receipt did not identify one queued request.",
     };
   return {
-    ...common,
-    status: "accepted",
-    epoch: events[0]!.fields.epoch.toString(),
-    requestId: toHex0x(events[0]!.topics.request_id),
+    record: {
+      localId,
+      status: "accepted",
+      transactionHash: result.hash,
+      requestId: toHex0x(events[0]!.topics.request_id),
+      epoch: events[0]!.fields.epoch.toString(),
+      receiptBlock: result.receipt.blockHeight.toString(),
+      observedThroughBlock: null,
+    },
+    message: null,
   };
 }
 
-function crankResult(
+function crankOutcome(
   crank: CrankRecord,
-  requests: readonly TickRequestRecord[],
   result: WriteResult,
-  config: Pick<AppConfig, "networkId" | "contractAddress">,
-): { readonly crank: CrankRecord; readonly requests: TickRequestRecord[] } {
-  const failure = crankFailure(crank, result);
-  if (failure) return { crank: failure, requests: [...requests] };
+  params: Parameters,
+): CrankTransition {
+  const { localId } = crank;
   if (result.kind !== "committedSuccess")
-    throw new Error("Unreachable crank transaction result");
-  const receipt = result.receipt;
-  const completedAt = new Date().toISOString();
+    return writeFailure(localId, result, "Crank");
+  const transactionHash = result.hash;
   try {
-    const decoded = decodeCrankReturn(receipt);
-    const events = GenerationAdvanced.allFromReceipt(receipt, {
-      address: addressFromHex(config.contractAddress),
+    const decoded = decodeCrankReturn(result.receipt);
+    const events = GenerationAdvanced.allFromReceipt(result.receipt, {
+      address: addressFromHex(params.config.contractAddress),
     });
     if (decoded === null && events.length === 0)
       return {
-        crank: {
-          ...crank,
-          status: "noWork",
-          completedAt,
-          receiptBlock: receipt.blockHeight.toString(),
-          diagnostic: "Crank found no work",
-        },
-        requests: [...requests],
+        record: { localId, status: "noWork", transactionHash },
+        message: "No queued request remained to process.",
       };
     if (decoded === null || events.length !== 1)
       throw new Error("Crank return and GenerationAdvanced event disagree");
@@ -352,48 +299,25 @@ function crankResult(
       !bytesEqual(decoded.metadata.state_digest, event.fields.state_digest)
     )
       throw new Error("Crank return does not match GenerationAdvanced event");
-    const requestId = toHex0x(event.topics.request_id);
-    const requester = toHex0x(event.fields.requested_by);
-    const advancedHash = toHex0x(receipt.transactionHash);
     return {
-      crank: {
-        ...crank,
-        status: "advanced",
-        completedAt,
-        epoch: decoded.metadata.epoch.toString(),
-        receiptBlock: receipt.blockHeight.toString(),
-        consumedRequestId: requestId,
-        resultingGeneration: event.fields.generation.toString(),
-        resultingPopulation: event.fields.population.toString(),
-        resultingStateDigest: toHex0x(event.fields.state_digest),
-        diagnostic: `Advanced a request from ${requester}`,
-      },
-      requests: requests.map((request) =>
-        request.requestId === requestId &&
-        request.requester === requester &&
-        (request.epoch === undefined ||
-          request.epoch === event.fields.epoch.toString())
-          ? {
-              ...request,
-              status: "advanced",
-              resultingGeneration: event.fields.generation.toString(),
-              resultingPopulation: event.fields.population.toString(),
-              resultingStateDigest: toHex0x(event.fields.state_digest),
-              advancedTransactionHash: advancedHash,
-            }
-          : request,
-      ),
+      record: { localId, status: "advanced", transactionHash },
+      message: null,
+      ...(bytesEqual(event.fields.requested_by, params.wallet.account.address)
+        ? {
+            processed: {
+              requestId: toHex0x(event.topics.request_id),
+              epoch: event.fields.epoch.toString(),
+            },
+          }
+        : {}),
     };
   } catch (cause) {
     return {
-      crank: {
-        ...crank,
-        status: "incompatible",
-        completedAt,
-        receiptBlock: receipt.blockHeight.toString(),
-        diagnostic: describe(cause),
-      },
-      requests: [...requests],
+      record: { localId, status: "failed", transactionHash },
+      message:
+        cause instanceof Error
+          ? cause.message
+          : "Crank receipt is incompatible",
     };
   }
 }
@@ -406,83 +330,34 @@ function decodeCrankReturn(receipt: TransactionReceipt) {
 }
 
 function writeFailure(
-  record: TickRequestRecord,
-  result: WriteResult,
-): TickRequestRecord | null {
+  localId: string,
+  result: Exclude<WriteResult, { kind: "committedSuccess" }>,
+  label: "Request" | "Crank",
+): Transition<Submission | Outcome<"failed">> {
   switch (result.kind) {
-    case "committedSuccess":
-      return null;
-    case "preSubmissionFailure":
-      return { ...record, status: "failed", diagnostic: result.message };
-    case "invalid":
-      return {
-        ...record,
-        status: "invalid",
-        transactionHash: result.hash,
-        diagnostic: result.reason,
-      };
-    case "committedFailure":
-      return {
-        ...record,
-        status: "failed",
-        transactionHash: result.hash,
-        receiptBlock: result.receipt.blockHeight.toString(),
-        diagnostic: "Request transaction committed with a contract failure",
-      };
-    case "indeterminate":
-      return {
-        ...record,
-        status: "indeterminate",
-        transactionHash: result.hash ?? record.transactionHash,
-        diagnostic: `Transaction outcome is ${result.reason}`,
-      };
-  }
-}
-
-function crankFailure(
-  crank: CrankRecord,
-  result: WriteResult,
-): CrankRecord | null {
-  const completedAt = new Date().toISOString();
-  switch (result.kind) {
-    case "committedSuccess":
-      return null;
     case "preSubmissionFailure":
       return {
-        ...crank,
-        status: "failed",
-        completedAt,
-        diagnostic: result.message,
+        record: { localId, status: "failed", transactionHash: null },
+        message: result.message,
       };
     case "invalid":
       return {
-        ...crank,
-        status: "invalid",
-        transactionHash: result.hash,
-        completedAt,
-        diagnostic: result.reason,
+        record: { localId, status: "failed", transactionHash: result.hash },
+        message: result.message,
       };
     case "committedFailure":
       return {
-        ...crank,
-        status: "failed",
-        transactionHash: result.hash,
-        completedAt,
-        receiptBlock: result.receipt.blockHeight.toString(),
-        diagnostic: "Crank transaction committed with a contract failure",
+        record: { localId, status: "failed", transactionHash: result.hash },
+        message: `${label} transaction committed with a contract failure`,
       };
     case "indeterminate":
       return {
-        ...crank,
-        status: "indeterminate",
-        transactionHash: result.hash ?? crank.transactionHash,
-        diagnostic: `Transaction outcome is ${result.reason}`,
+        record: {
+          localId,
+          status: "indeterminate",
+          transactionHash: result.hash,
+        },
+        message: result.message,
       };
   }
-}
-
-function describe(cause: unknown): string {
-  return cause instanceof Error
-    ? cause.message
-    : "Crank receipt is incompatible";
 }

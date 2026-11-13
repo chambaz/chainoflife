@@ -11,6 +11,7 @@ import {
 } from "@/transactions/observer";
 import {
   crankStorageKey,
+  isPending,
   isTransactionStorageKey,
   loadCranks,
   loadRequests,
@@ -19,16 +20,14 @@ import {
   transactionScope,
   withTransactionLock,
   type CrankRecord,
+  type Submission,
   type TickRequestRecord,
 } from "@/transactions/records";
 import { createWriteBoundary } from "@/transactions/write-boundary";
 import {
-  abandonUnsignedCrank,
-  abandonUnsignedRequest,
-  processOneTick,
+  advance,
   recoverCrank,
   recoverRequest,
-  requestTick,
   type WorkflowResult,
 } from "@/transactions/workflow";
 
@@ -67,6 +66,7 @@ export function TransactionActivity({
       setRequests(result.requests);
       setCranks(result.cranks);
     });
+    setError(result.message);
     if (result.cranks.some(({ status }) => status === "advanced"))
       onCrankCommitted();
   };
@@ -95,29 +95,23 @@ export function TransactionActivity({
       if (disposed || running || document.visibilityState !== "visible") return;
       running = true;
       try {
-        const scanned = loadRequests(scope).filter(
-          ({ status }) => status === "accepted",
-        );
         const batch = await observeCompletions({
           client,
           contractAddress: config.contractAddress,
-          requests: scanned,
+          requester: wallet.addressHex,
+          requests: loadRequests(scope),
         });
         if (!disposed) setObserverError(null);
         if (
           disposed ||
-          (batch.observations.length === 0 &&
-            batch.observedThroughBlock === null)
+          (batch.completed.size === 0 && batch.observedThroughBlock === null)
         )
           return;
         const next = await withTransactionLock(scope, async () =>
-          saveRequests(
-            scope,
-            applyCompletionBatch(loadRequests(scope), scanned, batch),
-          ),
+          saveRequests(scope, applyCompletionBatch(loadRequests(scope), batch)),
         );
         if (!disposed) startTransition(() => setRequests(next));
-        if (batch.observations.length > 0) onCrankCommitted();
+        if (batch.completed.size > 0) onCrankCommitted();
       } catch (cause) {
         if (!disposed) setObserverError(message(cause));
       } finally {
@@ -144,24 +138,7 @@ export function TransactionActivity({
       setBusy(false);
     }
   };
-  const common = { config, profiles, wallet, boundary };
-  const recoverableRequests = requests.filter(
-    (record) =>
-      record.transactionHash !== null &&
-      ["signing", "indeterminate", "acceptedUntracked"].includes(record.status),
-  );
-  const recoverableCranks = cranks.filter(
-    (record) =>
-      record.transactionHash !== null &&
-      ["signing", "indeterminate"].includes(record.status),
-  );
-  const unsignedRequests = requests.filter(
-    (record) => record.status === "signing" && record.transactionHash === null,
-  );
-  const unsignedCranks = cranks.filter(
-    (record) => record.status === "signing" && record.transactionHash === null,
-  );
-
+  const params = { config, profiles, wallet, boundary };
   return (
     <section className="pointer-events-none absolute right-[max(.75rem,var(--safe-right))] bottom-[calc(var(--safe-bottom)+10rem)] left-[max(.75rem,var(--safe-left))] z-20 rounded-lg border border-border bg-panel/95 p-3 shadow-lg backdrop-blur-md sm:left-auto sm:w-[23rem] md:bottom-[max(.75rem,var(--safe-bottom))] [@media(max-height:400px)]:bottom-[max(.75rem,var(--safe-bottom))] [@media(max-height:400px)]:left-auto [@media(max-height:400px)]:w-[min(23rem,45%)]">
       <div className="flex items-center justify-between gap-3">
@@ -181,13 +158,7 @@ export function TransactionActivity({
       <Button
         className="pointer-events-auto mt-3 w-full justify-between"
         disabled={busy || resetting}
-        onClick={() =>
-          void run(() =>
-            loadRequests(scope).some(({ status }) => status === "accepted")
-              ? processOneTick(common)
-              : requestTick(common),
-          )
-        }
+        onClick={() => void run(() => advance(params))}
       >
         <span className="flex items-center gap-2">
           {busy ? <LoaderCircle className="animate-spin" /> : <Zap />}
@@ -199,67 +170,20 @@ export function TransactionActivity({
         </span>
         <ChevronRight />
       </Button>
-      {recoverableRequests.map((record) => (
+      {requests.filter(isPending).map((record) => (
         <RecoveryButton
           key={record.localId}
-          label={`Check request ${abbreviate(record.transactionHash!)}`}
+          label={checkLabel("request", record)}
           busy={busy}
-          onClick={() =>
-            run(async () => {
-              const recovered = await recoverRequest({
-                ...common,
-                localId: record.localId,
-              });
-              return recovered.requests.some(
-                ({ localId, status }) =>
-                  localId === record.localId && status === "accepted",
-              )
-                ? processOneTick(common)
-                : recovered;
-            })
-          }
+          onClick={() => run(() => recoverRequest(params, record.localId))}
         />
       ))}
-      {recoverableCranks.map((record) => (
+      {cranks.filter(isPending).map((record) => (
         <RecoveryButton
           key={record.localId}
-          label={`Check crank ${abbreviate(record.transactionHash!)}`}
+          label={checkLabel("crank", record)}
           busy={busy}
-          onClick={() =>
-            run(() => recoverCrank({ ...common, localId: record.localId }))
-          }
-        />
-      ))}
-      {unsignedRequests.map((record) => (
-        <RecoveryButton
-          key={record.localId}
-          label="I confirm signing did not complete"
-          busy={busy}
-          onClick={() =>
-            run(() =>
-              abandonUnsignedRequest({
-                config,
-                wallet,
-                localId: record.localId,
-              }),
-            )
-          }
-        />
-      ))}
-      {unsignedCranks.map((record) => (
-        <RecoveryButton
-          key={record.localId}
-          label="I confirm crank signing did not complete"
-          busy={busy}
-          onClick={() =>
-            run(() =>
-              abandonUnsignedCrank({
-                config,
-                wallet,
-                localId: record.localId,
-              }),
-            )
-          }
+          onClick={() => run(() => recoverCrank(params, record.localId))}
         />
       ))}
       {(error ?? observerError) ? (
@@ -290,6 +214,12 @@ function RecoveryButton({
       <RotateCcw className="size-3" /> {label}
     </button>
   );
+}
+
+function checkLabel(kind: string, record: Submission): string {
+  return record.status === "signing"
+    ? `Check ${kind}`
+    : `Check ${kind} ${abbreviate(record.transactionHash)}`;
 }
 
 function message(cause: unknown): string {

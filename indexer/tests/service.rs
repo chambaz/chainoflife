@@ -6,9 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use game_of_life_core::digest::WorldDigest;
 use game_of_life_indexer::service::initial_status;
-use game_of_life_indexer::service::{
-    FailurePoint, IndexerService, ServiceConfig, ServiceError, retry_delay,
-};
+use game_of_life_indexer::service::{FailurePoint, IndexerService, ServiceConfig, ServiceError};
 use game_of_life_indexer::source::{
     ChainEvent, ChainSource, CoherentDownload, EventBatch, SourceError,
 };
@@ -16,9 +14,8 @@ use game_of_life_indexer::state::StateStore;
 use game_of_life_indexer::storage::{Publisher, StorageError};
 use game_of_life_indexer::web::{HttpService, heartbeat_with_interval};
 use game_of_life_indexer::{
-    CHUNK_BYTES, CHUNKS_PER_ROW, ChunkResponse, EventKind, EvidenceKind, LatestPointer,
-    LifeManifest, LifeProvenance, MAX_ZOOM, ProgressUnit, PublishedIdentity, SnapshotIdentity,
-    SnapshotMetadata, TAIL_BYTES, WORLD_HEIGHT, WORLD_WIDTH,
+    CHUNK_BYTES, ChunkResponse, EventKind, EvidenceKind, LatestPointer, LifeManifest,
+    LifeProvenance, MAX_ZOOM, ProgressUnit, PublishedIdentity, SnapshotIdentity, SnapshotMetadata,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -29,6 +26,10 @@ const CONTRACT: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 const DIGEST0: &str = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const DIGEST1: &str = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const DIGEST2: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const WORLD_WIDTH: u32 = 10_000;
+const WORLD_HEIGHT: u32 = 10_000;
+const CHUNKS_PER_ROW: u32 = 2;
+const TAIL_BYTES: usize = 250;
 
 #[test]
 fn second_writer_is_refused() {
@@ -54,7 +55,6 @@ async fn mixed_generation_download_is_rejected_before_publication() {
             contract_address: CONTRACT.into(),
             poll_interval: Duration::from_millis(1),
             retention_grace: Duration::from_secs(60),
-            max_retry_backoff: Duration::from_secs(8),
         },
         MixedSource,
         state,
@@ -278,14 +278,14 @@ fn evidence_selection_reuses_bytes_and_rejects_conflicts() {
             .expect("evidence remains absent"),
         None
     );
-    let selected = state.persist_evidence(&original).expect("persist evidence");
+    state.persist_evidence(&original).expect("persist evidence");
     let mut retry = original.clone();
     retry.verified_at = "2026-08-28T13:00:00.000Z".into();
     retry.source_block_height = "10".into();
     retry.source_block_hash = format!("0x{}", "e".repeat(64));
     assert_eq!(
         state.resolve_evidence(&retry).expect("reuse evidence"),
-        Some(selected)
+        Some(original)
     );
     retry.transaction_hash = Some(format!("0x{}", "1".repeat(64)));
     assert!(matches!(
@@ -542,7 +542,7 @@ async fn promotion_crash_is_reconciled_before_fast_path_cleanup() {
         .promote(NETWORK, CONTRACT, &old)
         .expect("promote predecessor");
     state
-        .record_publication(NETWORK, CONTRACT, 0, DIGEST0, 1)
+        .record_publications(NETWORK, CONTRACT, &[(0, DIGEST0.into(), 1)])
         .expect("record predecessor");
     let metadata = dead_metadata(2);
     let digest = format!("0x{}", hex::encode(metadata.state_digest));
@@ -558,27 +558,17 @@ async fn promotion_crash_is_reconciled_before_fast_path_cleanup() {
         service.cycle().await,
         Err(ServiceError::Injected(FailurePoint::AfterPromotion))
     ));
-    let observer = StateStore::open(&database).expect("observer");
-    assert!(
-        observer
-            .publication(NETWORK, CONTRACT, &digest)
+    let recorded = |database: &std::path::Path| {
+        StateStore::open(database)
+            .expect("observer")
+            .retained_digests(NETWORK, CONTRACT, i64::MIN)
             .expect("publication lookup")
-            .is_none()
-    );
+    };
+    assert!(!recorded(&database).contains(&digest));
     service.cycle().await.expect("repair promoted publication");
-    let observer = StateStore::open(&database).expect("observer after repair");
-    assert!(
-        observer
-            .publication(NETWORK, CONTRACT, &digest)
-            .expect("current publication")
-            .is_some()
-    );
-    assert!(
-        observer
-            .publication(NETWORK, CONTRACT, DIGEST0)
-            .expect("predecessor publication")
-            .is_some()
-    );
+    let publications = recorded(&database);
+    assert!(publications.contains(&digest));
+    assert!(publications.contains(&DIGEST0.to_owned()));
     assert!(
         root.join("v1/worlds")
             .join(NETWORK)
@@ -647,11 +637,7 @@ async fn missing_matching_lifecycle_event_blocks_publication() {
 }
 
 #[tokio::test]
-async fn retries_back_off_bound_and_reset_while_preserving_published_status() {
-    assert_eq!(
-        retry_delay(5, Duration::from_secs(1), Duration::from_secs(4)),
-        Duration::from_secs(4)
-    );
+async fn failed_cycles_retry_each_poll_and_preserve_published_status() {
     let fixture = Fixture::new();
     fixture.ready(0, DIGEST0);
     let Fixture { temp, publisher } = fixture;
@@ -666,7 +652,6 @@ async fn retries_back_off_bound_and_reset_while_preserving_published_status() {
             contract_address: CONTRACT.into(),
             poll_interval: Duration::from_millis(10),
             retention_grace: Duration::from_secs(60),
-            max_retry_backoff: Duration::from_millis(20),
         },
         FailThenMetadata {
             attempts: Arc::clone(&attempts),
@@ -687,7 +672,7 @@ async fn retries_back_off_bound_and_reset_while_preserving_published_status() {
         1
     );
     assert!(status.read().await.published.is_some());
-    assert_eq!(service.step().await, Duration::from_millis(20));
+    assert_eq!(service.step().await, Duration::from_millis(10));
     assert_eq!(
         status
             .read()
@@ -738,12 +723,14 @@ fn cleanup_retains_current_predecessor_and_grace() {
     let fixture = Fixture::new();
     let database = fixture.temp.path().join("state.sqlite3");
     let state = StateStore::open(&database).expect("state");
-    for (generation, digest, promoted) in [(0, DIGEST0, 1), (1, DIGEST1, 1), (2, DIGEST2, 100)] {
+    let mut publications = Vec::new();
+    for (height, digest, promoted) in [(0, DIGEST0, 1), (1, DIGEST1, 1), (2, DIGEST2, 100)] {
         fs::create_dir_all(fixture.digest_dir(digest)).expect("digest dir");
-        state
-            .record_publication(NETWORK, CONTRACT, generation, digest, promoted)
-            .expect("record");
+        publications.push((height, digest.to_owned(), promoted));
     }
+    state
+        .record_publications(NETWORK, CONTRACT, &publications)
+        .expect("record");
     let retained = state
         .retained_digests(NETWORK, CONTRACT, 50)
         .expect("retained");
@@ -1026,24 +1013,16 @@ fn pointer(generation: u64, digest: &str) -> LatestPointer {
     }
 }
 fn provenance(generation: u64, digest: &str) -> LifeProvenance {
+    let provenance = event_provenance(generation, digest, "2026-08-28T12:00:00.000Z");
+    if generation == 0 {
+        return provenance;
+    }
     LifeProvenance {
-        epoch: "0".into(),
-        schema_version: 2,
-        network_id: NETWORK.into(),
-        contract_address: CONTRACT.into(),
-        generation: generation.to_string(),
-        seed: "7".into(),
-        population: "0".into(),
-        state_digest: digest.into(),
-        source_block_height: "9".into(),
-        source_block_hash: format!("0x{}", "f".repeat(64)),
-        evidence_kind: EvidenceKind::MetadataObservation,
-        transaction_hash: None,
-        event_index: None,
-        event_kind: None,
-        request_id: None,
-        requester: None,
-        verified_at: "2026-08-28T12:00:00.000Z".into(),
+        evidence_kind: EvidenceKind::GenerationAdvancedEvent,
+        event_kind: Some(EventKind::GenerationAdvanced),
+        request_id: Some(format!("0x{}", "2".repeat(64))),
+        requester: Some(format!("0x{}", "3".repeat(64))),
+        ..provenance
     }
 }
 fn event_provenance(generation: u64, digest: &str, verified_at: &str) -> LifeProvenance {
@@ -1124,7 +1103,6 @@ fn service_config() -> ServiceConfig {
         contract_address: CONTRACT.into(),
         poll_interval: Duration::from_millis(1),
         retention_grace: Duration::from_secs(60),
-        max_retry_backoff: Duration::from_secs(1),
     }
 }
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{CELL_COUNT, Error, MAX_ZOOM, Result, TILE_SIZE, WORLD_WIDTH};
+use crate::{Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result, TILE_SIZE};
 
 const TILE_TEMPLATE: &str = "tiles/{z}/{x}/{y}.bin";
 
@@ -64,16 +64,16 @@ impl LifeManifest {
         validate_hex32("contractAddress", &self.contract_address)?;
         parse_u64("generation", &self.generation)?;
         parse_u64("seed", &self.seed)?;
-        parse_population(&self.population)?;
         validate_hex32("stateDigest", &self.state_digest)?;
         require(
-            (100..=WORLD_WIDTH).contains(&self.width) && self.width.is_multiple_of(100),
+            (100..=MAX_WORLD_WIDTH).contains(&self.width) && self.width.is_multiple_of(100),
             "width",
             "unsupported width",
         )?;
         require(self.height == self.width, "height", "world must be square")?;
         require(
-            parse_population(&self.population)? <= u64::from(self.width) * u64::from(self.height),
+            parse_u64("population", &self.population)?
+                <= u64::from(self.width) * u64::from(self.height),
             "population",
             "exceeds dimensions",
         )?;
@@ -132,17 +132,9 @@ pub struct SnapshotIdentity {
     pub state_digest: [u8; 32],
 }
 
-impl SnapshotIdentity {
-    pub fn validate(&self) -> Result<()> {
-        validate_network_id(&self.network_id)?;
-        validate_hex32("contractAddress", &self.contract_address)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EvidenceKind {
-    MetadataObservation,
     WorldInitializedEvent,
     GenerationAdvancedEvent,
 }
@@ -183,22 +175,13 @@ impl LifeProvenance {
         validate_hex32("contractAddress", &self.contract_address)?;
         parse_u64("seed", &self.seed)?;
         let generation = parse_u64("generation", &self.generation)?;
-        parse_population(&self.population)?;
+        parse_u64("population", &self.population)?;
         validate_hex32("stateDigest", &self.state_digest)?;
         parse_u64("sourceBlockHeight", &self.source_block_height)?;
         validate_hex32("sourceBlockHash", &self.source_block_hash)?;
         validate_timestamp("verifiedAt", &self.verified_at)?;
 
         match self.evidence_kind {
-            EvidenceKind::MetadataObservation => require(
-                self.transaction_hash.is_none()
-                    && self.event_index.is_none()
-                    && self.event_kind.is_none()
-                    && self.request_id.is_none()
-                    && self.requester.is_none(),
-                "evidence",
-                "metadata observation cannot contain event fields",
-            ),
             EvidenceKind::WorldInitializedEvent => {
                 require(
                     generation == 0,
@@ -267,13 +250,14 @@ pub struct LatestPointer {
 }
 
 impl LatestPointer {
-    pub fn validate(&self) -> Result<()> {
-        self.validate_fields()?;
-        validate_relative_manifest_url(&self.manifest_url, &self.state_digest)
-    }
-
     pub fn validate_for(&self, network_id: &str, contract_address: &str) -> Result<()> {
-        self.validate_fields()?;
+        parse_u64("epoch", &self.epoch)?;
+        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
+        parse_u64("generation", &self.generation)?;
+        validate_hex32("stateDigest", &self.state_digest)?;
+        parse_u64("sourceBlockHeight", &self.source_block_height)?;
+        validate_hex32("sourceBlockHash", &self.source_block_hash)?;
+        validate_timestamp("publishedAt", &self.published_at)?;
         validate_network_id(network_id)?;
         validate_hex32("contractAddress", contract_address)?;
         let expected = format!(
@@ -287,18 +271,12 @@ impl LatestPointer {
         )
     }
 
-    fn validate_fields(&self) -> Result<()> {
-        parse_u64("epoch", &self.epoch)?;
-        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
-        parse_u64("generation", &self.generation)?;
-        validate_hex32("stateDigest", &self.state_digest)?;
-        parse_u64("sourceBlockHeight", &self.source_block_height)?;
-        validate_hex32("sourceBlockHash", &self.source_block_hash)?;
-        validate_timestamp("publishedAt", &self.published_at)
-    }
-
-    pub fn from_json(bytes: &[u8]) -> Result<Self> {
-        parse_validated(bytes, Self::validate)
+    /// Publication order: `(epoch, generation)`.
+    pub(crate) fn order(&self) -> Result<(u64, u64)> {
+        Ok((
+            parse_u64("epoch", &self.epoch)?,
+            parse_u64("generation", &self.generation)?,
+        ))
     }
 
     pub fn from_json_for(bytes: &[u8], network_id: &str, contract_address: &str) -> Result<Self> {
@@ -325,14 +303,6 @@ pub struct PublishedIdentity {
     pub state_digest: String,
 }
 
-impl PublishedIdentity {
-    fn validate(&self) -> Result<()> {
-        parse_u64("epoch", &self.epoch)?;
-        parse_u64("generation", &self.generation)?;
-        validate_hex32("stateDigest", &self.state_digest)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProgressUnit {
@@ -352,35 +322,11 @@ pub struct Progress {
     pub unit: ProgressUnit,
 }
 
-impl Progress {
-    fn validate(&self) -> Result<()> {
-        PublishedIdentity {
-            epoch: self.epoch.clone(),
-            generation: self.generation.clone(),
-            state_digest: self.state_digest.clone(),
-        }
-        .validate()?;
-        require(self.total_units > 0, "totalUnits", "must be positive")?;
-        require(
-            self.completed_units <= self.total_units,
-            "completedUnits",
-            "cannot exceed totalUnits",
-        )
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Retry {
     pub attempt: u32,
     pub next_at: String,
-}
-
-impl Retry {
-    fn validate(&self) -> Result<()> {
-        require(self.attempt > 0, "retry.attempt", "must be positive")?;
-        validate_timestamp("retry.nextAt", &self.next_at)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -396,50 +342,6 @@ pub struct LifeStatus {
     pub heartbeat_at: String,
 }
 
-impl LifeStatus {
-    pub fn validate(&self) -> Result<()> {
-        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
-        if let Some(value) = &self.observed {
-            value.validate()?;
-        }
-        if let Some(value) = &self.preparing {
-            value.validate()?;
-        }
-        if let Some(value) = &self.published {
-            value.validate()?;
-        }
-        if let Some(value) = &self.retry {
-            value.validate()?;
-        }
-        validate_timestamp("heartbeatAt", &self.heartbeat_at)?;
-        require(
-            (self.state == IndexerState::Preparing) == self.preparing.is_some(),
-            "preparing",
-            "must be present exactly in preparing state",
-        )?;
-        require(
-            (self.state == IndexerState::Error) == self.error_code.is_some(),
-            "errorCode",
-            "must be present exactly in error state",
-        )?;
-        if let Some(code) = &self.error_code {
-            require(
-                !code.is_empty()
-                    && code.bytes().all(|byte| {
-                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
-                    }),
-                "errorCode",
-                "must use nonempty uppercase snake case",
-            )?;
-        }
-        Ok(())
-    }
-
-    pub fn from_json(bytes: &[u8]) -> Result<Self> {
-        parse_validated(bytes, Self::validate)
-    }
-}
-
 pub(crate) fn compact_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|error| Error::Json(error.to_string()))
 }
@@ -452,7 +354,7 @@ fn parse_validated<T: DeserializeOwned>(bytes: &[u8], validate: fn(&T) -> Result
 
 fn validate_network_id(value: &str) -> Result<()> {
     require(
-        value.len() == 64 && value.bytes().all(is_lower_hex),
+        is_network_id(value),
         "networkId",
         "must be 64 lowercase hexadecimal characters without 0x",
     )
@@ -460,70 +362,21 @@ fn validate_network_id(value: &str) -> Result<()> {
 
 fn validate_hex32(field: &'static str, value: &str) -> Result<()> {
     require(
-        value.len() == 66 && value.starts_with("0x") && value[2..].bytes().all(is_lower_hex),
+        is_hex32(value),
         field,
         "must be canonical lowercase 0x-prefixed 32-byte hexadecimal",
     )
 }
 
-fn validate_relative_manifest_url(value: &str, digest: &str) -> Result<()> {
-    require(
-        value == format!("{digest}/manifest.json"),
-        "manifestUrl",
-        "must be the canonical digest-relative manifest path",
-    )
-}
-
 fn validate_timestamp(field: &'static str, value: &str) -> Result<()> {
-    let bytes = value.as_bytes();
-    let shape_is_valid = bytes.len() >= 20
-        && bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[10] == b'T'
-        && bytes[13] == b':'
-        && bytes[16] == b':'
-        && bytes.last() == Some(&b'Z')
-        && bytes[..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
-        && bytes[11..13].iter().all(u8::is_ascii_digit)
-        && bytes[14..16].iter().all(u8::is_ascii_digit)
-        && bytes[17..19].iter().all(u8::is_ascii_digit)
-        && (bytes.len() == 20
-            || bytes[19] == b'.'
-                && bytes[20..bytes.len() - 1].iter().all(u8::is_ascii_digit)
-                && bytes.len() > 21);
-    require(shape_is_valid, field, "must be a UTC RFC 3339 timestamp")?;
-
-    let year = decimal(&bytes[..4]);
-    let month = decimal(&bytes[5..7]);
-    let day = decimal(&bytes[8..10]);
-    let hour = decimal(&bytes[11..13]);
-    let minute = decimal(&bytes[14..16]);
-    let second = decimal(&bytes[17..19]);
-    let leap_year =
-        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let days_in_month = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap_year => 29,
-        2 => 28,
-        _ => 0,
-    };
     require(
-        (1..=days_in_month).contains(&day) && hour < 24 && minute < 60 && second < 60,
+        value.ends_with('Z') && chrono::DateTime::parse_from_rfc3339(value).is_ok(),
         field,
-        "must contain a valid UTC date and time",
+        "must be a UTC RFC 3339 timestamp",
     )
 }
 
-fn decimal(bytes: &[u8]) -> u32 {
-    bytes
-        .iter()
-        .fold(0, |value, byte| value * 10 + u32::from(byte - b'0'))
-}
-
-fn parse_u64(field: &'static str, value: &str) -> Result<u64> {
+pub(crate) fn parse_u64(field: &'static str, value: &str) -> Result<u64> {
     require(
         value == "0" || !value.starts_with('0'),
         field,
@@ -533,16 +386,6 @@ fn parse_u64(field: &'static str, value: &str) -> Result<u64> {
         field,
         reason: "must be a canonical decimal u64",
     })
-}
-
-fn parse_population(value: &str) -> Result<u64> {
-    let population = parse_u64("population", value)?;
-    require(
-        population <= CELL_COUNT,
-        "population",
-        "cannot exceed the world cell count",
-    )?;
-    Ok(population)
 }
 
 fn required<'a, T>(value: &'a Option<T>, field: &'static str) -> Result<&'a T> {
@@ -558,10 +401,30 @@ fn require(condition: bool, field: &'static str, reason: &'static str) -> Result
         .ok_or(Error::Schema { field, reason })
 }
 
+/// Returns true for 64 lowercase hexadecimal characters without a prefix.
+pub(crate) fn is_network_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(is_lower_hex)
+}
+
+/// Returns true for canonical lowercase 0x-prefixed 32-byte hexadecimal.
+pub(crate) fn is_hex32(value: &str) -> bool {
+    value
+        .strip_prefix("0x")
+        .is_some_and(|digits| digits.len() == 64 && digits.bytes().all(is_lower_hex))
+}
+
 fn is_lower_hex(byte: u8) -> bool {
     byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 
-fn hex32(value: &[u8; 32]) -> String {
+pub(crate) fn hex32(value: &[u8; 32]) -> String {
     format!("0x{}", hex::encode(value))
+}
+
+pub(crate) fn now() -> String {
+    timestamp(chrono::Utc::now())
+}
+
+pub(crate) fn timestamp(value: chrono::DateTime<chrono::Utc>) -> String {
+    value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

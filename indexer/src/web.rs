@@ -8,8 +8,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{RwLock, Semaphore};
 
+use crate::schema::{is_hex32, is_network_id, now};
+use crate::snapshot::tiles_per_axis;
 use crate::storage::resolve_request;
-use crate::{LifeStatus, MAX_ZOOM};
+use crate::{LifeStatus, MAX_WORLD_WIDTH, MAX_ZOOM};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebError {
@@ -323,8 +325,8 @@ fn valid_route(path: &str, network_id: &str, contract_address: &str) -> bool {
     if parts.len() < 5
         || parts[0] != "v1"
         || parts[1] != "worlds"
-        || !network(parts[2])
-        || !hex32(parts[3])
+        || !is_network_id(parts[2])
+        || !is_hex32(parts[3])
         || parts[2] != network_id
         || parts[3] != contract_address
     {
@@ -339,8 +341,8 @@ fn valid_route(path: &str, network_id: &str, contract_address: &str) -> bool {
             _,
             digest,
             "manifest.json" | "provenance.json",
-        ] => hex32(digest),
-        ["v1", "worlds", _, _, digest, "tiles", z, x, file] if hex32(digest) => {
+        ] => is_hex32(digest),
+        ["v1", "worlds", _, _, digest, "tiles", z, x, file] if is_hex32(digest) => {
             let Ok(z) = z.parse::<u8>() else {
                 return false;
             };
@@ -356,7 +358,8 @@ fn valid_route(path: &str, network_id: &str, contract_address: &str) -> bool {
             if z > MAX_ZOOM {
                 return false;
             }
-            let count = 10_000u32.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
+            // Bound by the largest world; a missing tile still returns 404.
+            let count = tiles_per_axis(z, MAX_WORLD_WIDTH);
             x < count && y < count
         }
         _ => false,
@@ -415,17 +418,4 @@ fn etag_matches(header: &str, current: &str) -> bool {
             let candidate = candidate.trim();
             candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == current
         })
-}
-
-fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
-fn network(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(lower_hex)
-}
-fn hex32(value: &str) -> bool {
-    value.len() == 66 && value.starts_with("0x") && value[2..].bytes().all(lower_hex)
-}
-fn lower_hex(value: u8) -> bool {
-    value.is_ascii_digit() || (b'a'..=b'f').contains(&value)
 }

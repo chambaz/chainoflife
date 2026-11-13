@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -6,6 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use fs2::FileExt;
 
+use crate::schema::{is_hex32, is_network_id, parse_u64};
+use crate::snapshot::tiles_per_axis;
 use crate::{
     Artifact, CELL_TILE_BYTES, DENSITY_TILE_BYTES, LatestPointer, LifeManifest, LifeProvenance,
     MAX_ZOOM,
@@ -47,16 +48,6 @@ pub struct ReadyIdentity {
     pub state_digest: String,
 }
 
-fn parse_epoch(value: &str) -> Result<u64, StorageError> {
-    value.parse().map_err(|_| {
-        crate::Error::Schema {
-            field: "epoch",
-            reason: "invalid epoch",
-        }
-        .into()
-    })
-}
-
 impl Publisher {
     pub fn open(root: PathBuf) -> Result<Self, StorageError> {
         fs::create_dir_all(&root).map_err(|source| io(&root, source))?;
@@ -86,7 +77,7 @@ impl Publisher {
         network: &str,
         contract: &str,
     ) -> Result<Option<LatestPointer>, StorageError> {
-        validate_identity(network, contract, &format!("0x{}", "0".repeat(64)))?;
+        validate_scope(network, contract)?;
         let path = self
             .root
             .join("v1/worlds")
@@ -114,8 +105,10 @@ impl Publisher {
         digest: &str,
         artifacts: &[Artifact],
     ) -> Result<(), StorageError> {
-        validate_identity(network, contract, digest)?;
-        validate_artifacts(network, contract, artifacts, digest)?;
+        validate_scope(network, contract)?;
+        if !is_hex32(digest) {
+            return Err(StorageError::InvalidPath(digest.into()));
+        }
         let base = self
             .root
             .join("v1/worlds")
@@ -150,31 +143,15 @@ impl Publisher {
         if let Ok(bytes) = fs::read(&latest) {
             let current = LatestPointer::from_json_for(&bytes, network, contract)?;
             self.verify_pointer_ready(network, contract, &scope, &current)?;
-            let current_generation: u64 =
-                current
-                    .generation
-                    .parse()
-                    .map_err(|_| crate::Error::Schema {
-                        field: "generation",
-                        reason: "invalid stored generation",
-                    })?;
-            let candidate_generation: u64 =
-                pointer
-                    .generation
-                    .parse()
-                    .map_err(|_| crate::Error::Schema {
-                        field: "generation",
-                        reason: "invalid candidate generation",
-                    })?;
-            let current_epoch = parse_epoch(&current.epoch)?;
-            let candidate_epoch = parse_epoch(&pointer.epoch)?;
-            if (candidate_epoch, candidate_generation) < (current_epoch, current_generation) {
+            let current_order = current.order()?;
+            let candidate_order = pointer.order()?;
+            if candidate_order < current_order {
                 return Err(StorageError::Stale {
-                    candidate: candidate_generation,
-                    latest: current_generation,
+                    candidate: candidate_order.1,
+                    latest: current_order.1,
                 });
             }
-            if (candidate_epoch, candidate_generation) == (current_epoch, current_generation) {
+            if candidate_order == current_order {
                 if current.state_digest != pointer.state_digest {
                     return Err(StorageError::Collision(latest.display().to_string()));
                 }
@@ -190,7 +167,7 @@ impl Publisher {
         network: &str,
         contract: &str,
     ) -> Result<Vec<ReadyIdentity>, StorageError> {
-        validate_identity(network, contract, &format!("0x{}", "0".repeat(64)))?;
+        validate_scope(network, contract)?;
         let scope = self.root.join("v1/worlds").join(network).join(contract);
         let entries = match fs::read_dir(&scope) {
             Ok(entries) => entries,
@@ -205,29 +182,20 @@ impl Publisher {
                 .file_type()
                 .map_err(|source| io(entry.path(), source))?
                 .is_dir()
-                || !canonical_hex(&digest)
+                || !is_hex32(&digest)
                 || !entry.path().join("manifest.json").exists()
             {
                 continue;
             }
             let (manifest, provenance) =
                 self.verify_ready(network, contract, &entry.path(), &digest)?;
-            let generation = manifest
-                .generation
-                .parse()
-                .map_err(|_| crate::Error::Schema {
-                    field: "generation",
-                    reason: "ready manifest generation is invalid",
-                })?;
             identities.push(ReadyIdentity {
-                epoch: parse_epoch(&manifest.epoch)?,
-                source_block_height: provenance.source_block_height.parse().map_err(|_| {
-                    crate::Error::Schema {
-                        field: "sourceBlockHeight",
-                        reason: "invalid height",
-                    }
-                })?,
-                generation,
+                epoch: parse_u64("epoch", &manifest.epoch)?,
+                source_block_height: parse_u64(
+                    "sourceBlockHeight",
+                    &provenance.source_block_height,
+                )?,
+                generation: parse_u64("generation", &manifest.generation)?,
                 state_digest: digest,
             });
         }
@@ -261,7 +229,7 @@ impl Publisher {
         contract: &str,
         retained: &[String],
     ) -> Result<Vec<String>, StorageError> {
-        validate_identity(network, contract, &format!("0x{}", "0".repeat(64)))?;
+        validate_scope(network, contract)?;
         let scope = self.root.join("v1/worlds").join(network).join(contract);
         let mut removed = Vec::new();
         let entries = match fs::read_dir(&scope) {
@@ -276,7 +244,7 @@ impl Publisher {
                 .file_type()
                 .map_err(|source| io(entry.path(), source))?
                 .is_dir()
-                && canonical_hex(&name)
+                && is_hex32(&name)
                 && !retained.contains(&name)
             {
                 fs::remove_dir_all(entry.path()).map_err(|source| io(entry.path(), source))?;
@@ -342,7 +310,7 @@ impl Publisher {
             return Err(StorageError::Collision(base.display().to_string()));
         }
         for z in 0..=MAX_ZOOM {
-            let count = manifest.width.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
+            let count = tiles_per_axis(z, manifest.width);
             let expected = if z == MAX_ZOOM {
                 CELL_TILE_BYTES as u64
             } else {
@@ -417,75 +385,6 @@ impl Publisher {
     }
 }
 
-fn validate_artifacts(
-    network: &str,
-    contract: &str,
-    artifacts: &[Artifact],
-    digest: &str,
-) -> Result<(), StorageError> {
-    let mut paths = HashMap::with_capacity(artifacts.len());
-    for artifact in artifacts {
-        confined(artifact.path.as_str())?;
-        if paths
-            .insert(artifact.path.as_str(), artifact.bytes.as_slice())
-            .is_some()
-        {
-            return Err(StorageError::InvalidPath(format!(
-                "duplicate {}",
-                artifact.path.as_str()
-            )));
-        }
-    }
-    let manifest = LifeManifest::from_json(
-        paths
-            .get("manifest.json")
-            .ok_or_else(|| StorageError::InvalidPath("manifest.json is missing".into()))?,
-    )?;
-    let provenance = LifeProvenance::from_json(
-        paths
-            .get("provenance.json")
-            .ok_or_else(|| StorageError::InvalidPath("provenance.json is missing".into()))?,
-    )?;
-    if manifest.network_id != network
-        || provenance.network_id != network
-        || manifest.contract_address != contract
-        || provenance.contract_address != contract
-        || manifest.state_digest != digest
-        || provenance.state_digest != digest
-        || manifest.epoch != provenance.epoch
-        || manifest.generation != provenance.generation
-        || manifest.seed != provenance.seed
-        || manifest.population != provenance.population
-    {
-        return Err(StorageError::Collision(digest.into()));
-    }
-    let mut expected_count = 2usize;
-    for z in 0..=MAX_ZOOM {
-        let count = manifest.width.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
-        let expected_length = if z == MAX_ZOOM {
-            CELL_TILE_BYTES
-        } else {
-            DENSITY_TILE_BYTES
-        };
-        for x in 0..count {
-            for y in 0..count {
-                expected_count += 1;
-                let path = format!("tiles/{z}/{x}/{y}.bin");
-                let actual = paths.get(path.as_str()).map_or(0, |bytes| bytes.len());
-                if actual != expected_length {
-                    return Err(StorageError::Collision(path));
-                }
-            }
-        }
-    }
-    if paths.len() != expected_count {
-        return Err(StorageError::InvalidPath(
-            "artifact inventory contains unknown paths".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub fn resolve_request(root: &Path, request_path: &str) -> Result<PathBuf, StorageError> {
     if request_path.contains('%') || request_path.contains('\\') {
         return Err(StorageError::InvalidPath(request_path.into()));
@@ -509,25 +408,13 @@ fn confined(value: &str) -> Result<&Path, StorageError> {
     Ok(path)
 }
 
-fn validate_identity(network: &str, contract: &str, digest: &str) -> Result<(), StorageError> {
-    if network.len() != 64
-        || !network.bytes().all(lower_hex)
-        || !canonical_hex(contract)
-        || !canonical_hex(digest)
-    {
-        return Err(StorageError::InvalidPath(format!(
-            "{network}/{contract}/{digest}"
-        )));
+fn validate_scope(network: &str, contract: &str) -> Result<(), StorageError> {
+    if !is_network_id(network) || !is_hex32(contract) {
+        return Err(StorageError::InvalidPath(format!("{network}/{contract}")));
     }
     Ok(())
 }
 
-fn canonical_hex(value: &str) -> bool {
-    value.len() == 66 && value.starts_with("0x") && value[2..].bytes().all(lower_hex)
-}
-fn lower_hex(byte: u8) -> bool {
-    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-}
 fn io(path: impl Into<PathBuf>, source: std::io::Error) -> StorageError {
     StorageError::Io {
         path: path.into(),

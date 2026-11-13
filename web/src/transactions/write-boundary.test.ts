@@ -39,7 +39,6 @@ describe("Life write boundary", () => {
       ),
     ).resolves.toEqual({
       kind: "preSubmissionFailure",
-      hash: null,
       message: "RPC unavailable",
     });
     expect(onSigned).not.toHaveBeenCalled();

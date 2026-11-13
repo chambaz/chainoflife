@@ -1,6 +1,8 @@
 import type { AppConfig } from "@/config";
+import { tileCount } from "@/renderer/pyramid";
 import {
   assertSnapshotAgreement,
+  MAX_ZOOM,
   parseLatest,
   parseManifest,
   parseProvenance,
@@ -10,7 +12,6 @@ import {
 } from "./schema";
 
 export interface ImmutableSnapshot {
-  readonly latest: LatestPointer;
   readonly manifest: LifeManifest;
   readonly provenance: LifeProvenance;
   readonly manifestUrl: URL;
@@ -27,15 +28,12 @@ export class IndexerClient {
     >,
     private readonly fetcher: typeof fetch = (...args) =>
       globalThis.fetch(...args),
+    // Tests request the indexer directly instead of through the app proxy.
     requestBase?: URL,
   ) {
-    this.proxyRequests =
-      requestBase === undefined && typeof window !== "undefined";
+    this.proxyRequests = requestBase === undefined;
     this.requestBase =
-      requestBase ??
-      (typeof window === "undefined"
-        ? config.indexerUrl
-        : new URL(config.indexerProxyPath, window.location.origin));
+      requestBase ?? new URL(config.indexerProxyPath, window.location.origin);
   }
 
   async latest(signal?: AbortSignal): Promise<LatestPointer> {
@@ -62,18 +60,18 @@ export class IndexerClient {
       manifest.contractAddress !== this.config.contractAddress
     )
       throw new Error("snapshot is outside the configured world scope");
-    return Object.freeze({ latest, manifest, provenance, manifestUrl });
+    return Object.freeze({ manifest, provenance, manifestUrl });
   }
 
   tileUrl(snapshot: ImmutableSnapshot, z: number, x: number, y: number): URL {
     if (
       ![z, x, y].every(Number.isSafeInteger) ||
       z < 0 ||
-      z > 6 ||
+      z > MAX_ZOOM ||
       x < 0 ||
       y < 0 ||
-      x >= Math.ceil(10_000 / (256 * 2 ** (6 - z))) ||
-      y >= Math.ceil(10_000 / (256 * 2 ** (6 - z)))
+      x >= tileCount(z, snapshot.manifest.width) ||
+      y >= tileCount(z, snapshot.manifest.width)
     )
       throw new RangeError("invalid tile coordinate");
     return new URL(`tiles/${z}/${x}/${y}.bin`, snapshot.manifestUrl);

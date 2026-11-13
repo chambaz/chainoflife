@@ -8,6 +8,7 @@ import {
   saveRequests,
   transactionLockName,
   withTransactionLock,
+  type AcceptedRequest,
   type CrankRecord,
   type TickRequestRecord,
   type TransactionScope,
@@ -36,21 +37,37 @@ describe("transaction records", () => {
     expect(localStorage.getItem(requestStorageKey(scope))).toBe("not-json");
   });
 
-  test("rejects records that contradict their account scope or lifecycle", () => {
+  test("rejects records that contradict their lifecycle", () => {
+    const { requestId: _requestId, ...missingRequestId } = request();
     expect(() =>
-      saveRequests(scope, [
-        { ...request(), requester: `0x${"99".repeat(32)}` },
-      ]),
+      saveRequests(scope, [missingRequestId as TickRequestRecord]),
     ).toThrow(/invalid/);
     expect(() =>
       saveRequests(scope, [
-        {
-          ...request(),
-          status: "advanced",
-          resultingGeneration: null,
-        },
+        { ...request(), observedThroughBlock: "6" } as TickRequestRecord,
       ]),
     ).toThrow(/invalid/);
+    expect(() =>
+      saveCranks(scope, [
+        { localId: "crank", status: "indeterminate" } as CrankRecord,
+      ]),
+    ).toThrow(/invalid/);
+  });
+
+  test("keeps pending records and the newest 50 terminal records", () => {
+    const terminal = Array.from({ length: 52 }, (_, index) => ({
+      localId: `crank-${index}`,
+      status: "noWork" as const,
+      transactionHash: null,
+    }));
+    const saved = saveCranks(scope, [
+      terminal[0]!,
+      { localId: "pending", status: "signing" },
+      ...terminal.slice(1),
+    ]);
+    expect(saved).toHaveLength(51);
+    expect(saved[0]).toEqual({ localId: "pending", status: "signing" });
+    expect(saved[1]?.localId).toBe("crank-2");
   });
 
   test("uses an exclusive Web Lock", async () => {
@@ -60,40 +77,22 @@ describe("transaction records", () => {
   });
 });
 
-function request(): TickRequestRecord {
+function request(): AcceptedRequest {
   return {
-    schemaVersion: 1,
     localId: "request-1",
-    requester: scope.expectedCaller,
     status: "accepted",
     transactionHash: `0x${"44".repeat(32)}`,
     requestId: `0x${"55".repeat(32)}`,
+    epoch: "0",
     receiptBlock: "7",
-    submittedAt: "2026-08-29T00:00:00.000Z",
-    acceptedAt: "2026-08-29T00:00:01.000Z",
     observedThroughBlock: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    advancedTransactionHash: null,
-    diagnostic: null,
   };
 }
 
 function crank(): CrankRecord {
   return {
-    schemaVersion: 1,
     localId: "crank-1",
-    submittedBy: scope.expectedCaller,
     status: "noWork",
     transactionHash: `0x${"66".repeat(32)}`,
-    submittedAt: "2026-08-29T00:00:02.000Z",
-    completedAt: "2026-08-29T00:00:03.000Z",
-    receiptBlock: "8",
-    consumedRequestId: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    diagnostic: "Crank found no work",
   };
 }

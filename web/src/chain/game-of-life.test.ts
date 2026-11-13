@@ -4,7 +4,7 @@ import { createLifeReadAdapter } from "./game-of-life";
 
 const contract = `0x${"22".repeat(32)}`;
 
-describe("typed Life event read adapter", () => {
+describe("typed Life generation read adapter", () => {
   test("queries generated event filters from a bounded anchor", async () => {
     const getEvents = vi.fn(async () => page());
     const adapter = createLifeReadAdapter({
@@ -14,7 +14,7 @@ describe("typed Life event read adapter", () => {
       >,
       contractAddress: contract,
     });
-    await expect(adapter.events(9n)).resolves.toEqual([]);
+    await expect(adapter.generations(9n)).resolves.toEqual([]);
     expect(getEvents).toHaveBeenCalledWith(
       expect.objectContaining({
         start: {
@@ -39,7 +39,7 @@ describe("typed Life event read adapter", () => {
       >,
       contractAddress: contract,
     });
-    await expect(adapter.events(0n)).rejects.toThrow(/repeated cursor/);
+    await expect(adapter.generations(0n)).rejects.toThrow(/repeated cursor/);
   });
 });
 

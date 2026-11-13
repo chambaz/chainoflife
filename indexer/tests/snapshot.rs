@@ -1,15 +1,17 @@
 use game_of_life_core::digest::WorldDigest;
 use game_of_life_core::prng::SplitMix64;
 use game_of_life_indexer::{
-    CHUNK_BYTES, CHUNKS_PER_ROW, ChunkResponse, Error, EventKind, EvidenceKind, LifeManifest,
-    LifeProvenance, SnapshotMetadata, TileCoordinate, WORLD_HEIGHT, WORLD_WIDTH, build_snapshot,
-    reconstruct_canonical_world,
+    CHUNK_BYTES, ChunkResponse, Error, EventKind, EvidenceKind, LifeManifest, LifeProvenance,
+    SnapshotMetadata, build_snapshot, reconstruct_canonical_world,
 };
 use sha2::{Digest, Sha256};
 
 const NETWORK_ID: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const CONTRACT: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const BLOCK_HASH: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
+const WORLD_WIDTH: u32 = 10_000;
+const WORLD_HEIGHT: u32 = 10_000;
+const CHUNKS_PER_ROW: u32 = 2;
 
 #[test]
 fn small_padded_world_has_exact_tiles_and_distinct_reset_identity() {
@@ -327,22 +329,6 @@ fn sparse_world_density_tiles_encode_exact_counts_across_boundaries() {
     assert_eq!(density_tile_value(right_bottom, 135, 135), 2);
     assert_eq!(density_tile_value(right_bottom, 136, 135), 0);
     assert_eq!(density_tile_value(right_bottom, 135, 136), 0);
-}
-
-#[test]
-fn coordinate_validation_covers_non_power_of_two_edges() {
-    let counts = [1, 2, 3, 5, 10, 20, 40];
-    for (z, count) in counts.into_iter().enumerate() {
-        assert!(TileCoordinate::new(z as u8, count - 1, count - 1).is_ok());
-        assert_eq!(
-            TileCoordinate::new(z as u8, count, 0),
-            Err(Error::TileCoordinate {
-                z: z as u8,
-                x: count,
-                y: 0,
-            })
-        );
-    }
 }
 
 #[test]

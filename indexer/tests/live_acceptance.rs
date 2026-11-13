@@ -85,9 +85,9 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
     );
     assert!(
         state
-            .publication(&network, &canonical_contract, &latest.state_digest)
-            .expect("read publication")
-            .is_some()
+            .retained_digests(&network, &canonical_contract, i64::MIN)
+            .expect("read publications")
+            .contains(&latest.state_digest)
     );
     if expected_generation > 0 {
         let (_, predecessor_digest, _) = state
@@ -167,9 +167,8 @@ fn live_service(
             contract_address: canonical_contract.to_owned(),
             poll_interval: Duration::from_millis(250),
             retention_grace: Duration::from_secs(300),
-            max_retry_backoff: Duration::from_secs(5),
         },
-        ThruputSource::new(rpc, contract, None, SourceConfig::default()).expect("RPC source"),
+        ThruputSource::new(rpc, contract, SourceConfig::default()).expect("RPC source"),
         StateStore::open(database).expect("SQLite state"),
         Publisher::open(root.to_owned()).expect("artifact publisher"),
         status,

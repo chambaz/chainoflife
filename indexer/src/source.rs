@@ -110,7 +110,6 @@ pub trait ChainSource: Send + Sync {
 pub struct ThruputSource {
     client: Arc<NativeClient<HttpClient>>,
     contract: ContractAddress,
-    caller: Option<ContractAddress>,
     config: SourceConfig,
 }
 
@@ -118,21 +117,14 @@ impl ThruputSource {
     pub fn new(
         rpc_url: &str,
         contract: ContractAddress,
-        caller: Option<ContractAddress>,
         config: SourceConfig,
     ) -> Result<Self, SourceError> {
-        if config.concurrency == 0 || config.max_attempts == 0 || config.call_timeout.is_zero() {
-            return Err(SourceError::Client(
-                "concurrency, timeout, and maximum attempts must be positive".into(),
-            ));
-        }
         let client = HttpClientBuilder::default()
             .build(rpc_url)
             .map_err(|error| SourceError::Client(error.to_string()))?;
         Ok(Self {
             client: Arc::new(NativeClient::new(client)),
             contract,
-            caller,
             config,
         })
     }
@@ -157,7 +149,7 @@ impl ThruputSource {
                 .to_vec(),
             ),
             calldata: HexBytes(calldata),
-            caller: self.caller.map(|address| Base58((*address).into())),
+            caller: None,
         };
         self.retry(method, || self.client.simulate_invocation(request.clone()))
             .await
@@ -196,11 +188,15 @@ impl ThruputSource {
         Err(last.unwrap_or(SourceError::Timeout { operation }))
     }
 
+    /// Reads and validates metadata, so callers can trust its layout fields.
     async fn metadata_response(&self) -> Result<(SnapshotMetadata, i64), SourceError> {
         let response = self.view("get_metadata", encode(&())?).await?;
         let height = *response.state_block_height;
-        let value: WireMetadata = decode("get_metadata", &response)?;
-        Ok((value.into(), height))
+        let metadata: SnapshotMetadata = decode::<WireMetadata>("get_metadata", &response)?.into();
+        metadata
+            .validate()
+            .map_err(|error| SourceError::Decode("get_metadata", error.to_string()))?;
+        Ok((metadata, height))
     }
 }
 
@@ -212,9 +208,6 @@ impl ChainSource for ThruputSource {
 
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
         let (before, height) = self.metadata_response().await?;
-        before
-            .validate()
-            .map_err(|error| SourceError::Mixed(error.to_string()))?;
         let source = self;
         let parts = before.chunks_per_row;
         let download = stream::iter(0..before.chunk_count() as u32)

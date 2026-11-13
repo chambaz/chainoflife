@@ -12,18 +12,27 @@ import { walletFromSeed } from "@/wallet/visitor-wallet";
 import { observeCompletions } from "@/transactions/observer";
 import {
   requestStorageKey,
+  saveCranks,
   saveRequests,
   transactionScope,
-  type TickRequestRecord,
+  type AcceptedRequest,
 } from "@/transactions/records";
 import { TransactionActivity } from "./transaction-activity";
-import { requestTick, processOneTick } from "@/transactions/workflow";
+import { advance, recoverCrank, recoverRequest } from "@/transactions/workflow";
 
 vi.mock("@/transactions/workflow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/transactions/workflow")>()),
-  requestTick: vi.fn(),
-  processOneTick: vi.fn(),
+  advance: vi.fn(),
+  recoverRequest: vi.fn(),
+  recoverCrank: vi.fn(),
 }));
+
+const emptyBatch = {
+  scanned: new Set<string>(),
+  completed: new Set<string>(),
+  retentionGaps: new Set<string>(),
+  observedThroughBlock: null,
+};
 
 vi.mock("@/transactions/observer", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/transactions/observer")>()),
@@ -63,49 +72,83 @@ describe("transaction activity", () => {
         resetting
       />,
     );
-    const advance = screen.getByRole("button", {
+    const advanceButton = screen.getByRole("button", {
       name: "Resetting world...",
     });
-    expect(advance).toBeDisabled();
-    fireEvent.click(advance);
-    expect(requestTick).not.toHaveBeenCalled();
-    expect(processOneTick).not.toHaveBeenCalled();
+    expect(advanceButton).toBeDisabled();
+    fireEvent.click(advanceButton);
+    expect(advance).not.toHaveBeenCalled();
   });
-  test.each([false, true])(
-    "always processes advances, resuming accepted work: %s",
-    async (accepted) => {
-      vi.mocked(observeCompletions).mockResolvedValue({
-        observations: [],
-        observedThroughBlock: null,
-        retentionGapRequestIds: new Set(),
-      });
-      vi.mocked(requestTick).mockResolvedValue({ requests: [], cranks: [] });
-      vi.mocked(processOneTick).mockResolvedValue({ requests: [], cranks: [] });
-      if (accepted)
-        saveRequests(transactionScope(config, wallet.addressHex), [
-          acceptedRequest(wallet.addressHex),
-        ]);
-      render(
-        <TransactionActivity
-          config={config}
-          profiles={config.transactionProfiles!}
-          wallet={wallet}
-          client={{} as ThruputClient}
-          onCrankCommitted={vi.fn()}
-          worldSize={10_000}
-        />,
-      );
-      expect(screen.queryByLabelText("Auto process")).not.toBeInTheDocument();
-      expect(screen.queryByText("No local request")).not.toBeInTheDocument();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Advance 100,000,000 cells" }),
-      );
-      await waitFor(() =>
-        expect(accepted ? processOneTick : requestTick).toHaveBeenCalledOnce(),
-      );
-      expect(accepted ? requestTick : processOneTick).not.toHaveBeenCalled();
-    },
-  );
+  test("advances once and shows why the action did not advance the world", async () => {
+    vi.mocked(observeCompletions).mockResolvedValue(emptyBatch);
+    vi.mocked(advance).mockResolvedValue({
+      requests: [],
+      cranks: [],
+      message: "Offline",
+    });
+    render(
+      <TransactionActivity
+        config={config}
+        profiles={config.transactionProfiles!}
+        wallet={wallet}
+        client={{} as ThruputClient}
+        onCrankCommitted={vi.fn()}
+        worldSize={10_000}
+      />,
+    );
+    expect(screen.queryByLabelText("Auto process")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Advance 100,000,000 cells" }),
+    );
+    await waitFor(() => expect(advance).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+  });
+  test("shows one check action for each pending request and crank", async () => {
+    vi.mocked(observeCompletions).mockResolvedValue(emptyBatch);
+    vi.mocked(recoverRequest).mockResolvedValue({
+      requests: [],
+      cranks: [],
+      message: null,
+    });
+    vi.mocked(recoverCrank).mockResolvedValue({
+      requests: [],
+      cranks: [],
+      message: null,
+    });
+    const scope = transactionScope(config, wallet.addressHex);
+    saveRequests(scope, [
+      { localId: "signing", status: "signing" },
+      acceptedRequest(),
+      { localId: "failed", status: "failed", transactionHash: null },
+    ]);
+    saveCranks(scope, [
+      {
+        localId: "crank",
+        status: "indeterminate",
+        transactionHash: `0x${"66".repeat(32)}`,
+      },
+    ]);
+    render(
+      <TransactionActivity
+        config={config}
+        profiles={config.transactionProfiles!}
+        wallet={wallet}
+        client={{} as ThruputClient}
+        onCrankCommitted={vi.fn()}
+        worldSize={10_000}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: /^Check/ })).toHaveLength(2);
+    expect(screen.queryByText(/I confirm/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check request" }));
+    await waitFor(() =>
+      expect(recoverRequest).toHaveBeenCalledWith(expect.anything(), "signing"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Check crank / }));
+    await waitFor(() =>
+      expect(recoverCrank).toHaveBeenCalledWith(expect.anything(), "crank"),
+    );
+  });
   test("updates the advance count when the on-chain board size changes", () => {
     const props = {
       config,
@@ -151,14 +194,10 @@ describe("transaction activity", () => {
 
   test("clears an observer error after a successful no-op scan", async () => {
     const scope = transactionScope(config, wallet.addressHex);
-    saveRequests(scope, [acceptedRequest(wallet.addressHex)]);
+    saveRequests(scope, [acceptedRequest()]);
     vi.mocked(observeCompletions)
       .mockRejectedValueOnce(new Error("observer unavailable"))
-      .mockResolvedValueOnce({
-        observations: [],
-        observedThroughBlock: null,
-        retentionGapRequestIds: new Set(),
-      });
+      .mockResolvedValueOnce(emptyBatch);
     let rescan: (() => Promise<void>) | null = null;
     vi.spyOn(window, "setInterval").mockImplementation((handler) => {
       rescan ??= handler as () => Promise<void>;
@@ -189,7 +228,7 @@ describe("transaction activity", () => {
 
   test("does not clear a newer storage error when an older scan succeeds", async () => {
     const scope = transactionScope(config, wallet.addressHex);
-    saveRequests(scope, [acceptedRequest(wallet.addressHex)]);
+    saveRequests(scope, [acceptedRequest()]);
     let resolveObservation!: (
       value: Awaited<ReturnType<typeof observeCompletions>>,
     ) => void;
@@ -218,39 +257,28 @@ describe("transaction activity", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/invalid/);
 
     await act(async () => {
-      resolveObservation({
-        observations: [],
-        observedThroughBlock: null,
-        retentionGapRequestIds: new Set(),
-      });
+      resolveObservation(emptyBatch);
     });
     expect(screen.getByRole("alert")).toHaveTextContent(/invalid/);
   });
 });
 
 afterEach(() => {
-  vi.mocked(requestTick).mockReset();
-  vi.mocked(processOneTick).mockReset();
+  vi.mocked(advance).mockReset();
+  vi.mocked(recoverRequest).mockReset();
+  vi.mocked(recoverCrank).mockReset();
   vi.mocked(observeCompletions).mockReset();
   vi.restoreAllMocks();
 });
 
-function acceptedRequest(requester: string): TickRequestRecord {
+function acceptedRequest(): AcceptedRequest {
   return {
-    schemaVersion: 1,
     localId: "request-1",
-    requester,
     status: "accepted",
     transactionHash: `0x${"44".repeat(32)}`,
     requestId: `0x${"55".repeat(32)}`,
+    epoch: "0",
     receiptBlock: "7",
-    submittedAt: "2026-08-29T00:00:00.000Z",
-    acceptedAt: "2026-08-29T00:00:01.000Z",
     observedThroughBlock: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    advancedTransactionHash: null,
-    diagnostic: null,
   };
 }

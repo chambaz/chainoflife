@@ -1,16 +1,17 @@
-import type { ThruputClient } from "@thruputchain/client";
+import { addressFromHex, type ThruputClient } from "@thruputchain/client";
 import { describe, expect, test, vi } from "vitest";
 import {
   applyCompletionBatch,
   observeCompletions,
   type CompletionBatch,
 } from "./observer";
-import type { TickRequestRecord } from "./records";
+import type { AcceptedRequest } from "./records";
 
 const contract = `0x${"22".repeat(32)}`;
+const requester = `0x${"33".repeat(32)}`;
 
 describe("completion observer", () => {
-  test("detects retention gaps without inventing a terminal outcome", async () => {
+  test("detects retention gaps without inventing an advanced outcome", async () => {
     const record = request();
     const client = {
       getEvents: vi.fn(async () => ({
@@ -23,35 +24,59 @@ describe("completion observer", () => {
     const batch = await observeCompletions({
       client,
       contractAddress: contract,
+      requester,
       requests: [record],
     });
-    const [updated] = applyCompletionBatch([record], [record], batch);
-    expect(updated?.status).toBe("completionUnknown");
-    expect(updated?.diagnostic).toMatch(/permanently unknown/);
+    expect(applyCompletionBatch([record], batch)).toEqual([
+      {
+        localId: record.localId,
+        status: "completionUnknown",
+        transactionHash: record.transactionHash,
+      },
+    ]);
   });
 
-  test("applies completion strictly by request ID and requester", () => {
+  test("applies completion only to scanned accepted requests", () => {
     const record = request();
+    const later = { ...request(), localId: "request-2" };
     const batch: CompletionBatch = {
-      observations: [
+      scanned: new Set([record.localId]),
+      completed: new Set([record.localId]),
+      retentionGaps: new Set(),
+      observedThroughBlock: "12",
+    };
+    expect(applyCompletionBatch([record, later], batch)).toEqual([
+      {
+        localId: record.localId,
+        status: "advanced",
+        transactionHash: record.transactionHash,
+      },
+      later,
+    ]);
+  });
+
+  test("ignores events from other contracts", async () => {
+    const getEvents = vi.fn().mockResolvedValue({
+      events: [
         {
-          requestId: record.requestId!,
-          requester: record.requester,
-          transactionHash: `0x${"88".repeat(32)}`,
-          blockHeight: "12",
-          generation: "1",
-          population: "27336807",
-          stateDigest: `0x${"99".repeat(32)}`,
+          event: { address: addressFromHex(`0x${"99".repeat(32)}`) },
+          transactionHash: new Uint8Array(32),
+          sequenceNumber: 0,
+          blockHeight: 8n,
         },
       ],
-      observedThroughBlock: "12",
-      retentionGapRequestIds: new Set(),
-    };
-    expect(applyCompletionBatch([record], [record], batch)[0]).toMatchObject({
-      status: "advanced",
-      resultingGeneration: "1",
-      advancedTransactionHash: `0x${"88".repeat(32)}`,
+      nextCursor: null,
+      oldestIndexedBlockHeight: 0n,
+      latestIndexedBlockHeight: 10n,
     });
+    const batch = await observeCompletions({
+      client: { getEvents } as unknown as Pick<ThruputClient, "getEvents">,
+      contractAddress: contract,
+      requester,
+      requests: [request()],
+    });
+    expect(batch.completed.size).toBe(0);
+    expect(batch.observedThroughBlock).toBe("10");
   });
 
   test("watermarks only through the first page's confirmed terminal block", async () => {
@@ -73,28 +98,39 @@ describe("completion observer", () => {
     const batch = await observeCompletions({
       client: { getEvents } as unknown as Pick<ThruputClient, "getEvents">,
       contractAddress: contract,
+      requester,
       requests: [request()],
     });
     expect(batch.observedThroughBlock).toBe("10");
   });
+
+  test("rejects repeated pagination cursors", async () => {
+    const page = {
+      events: [],
+      nextCursor: "0x01",
+      oldestIndexedBlockHeight: 0n,
+      latestIndexedBlockHeight: 10n,
+    };
+    const getEvents = vi.fn().mockResolvedValue(page);
+    await expect(
+      observeCompletions({
+        client: { getEvents } as unknown as Pick<ThruputClient, "getEvents">,
+        contractAddress: contract,
+        requester,
+        requests: [request()],
+      }),
+    ).rejects.toThrow(/repeated cursor/);
+  });
 });
 
-function request(): TickRequestRecord {
+function request(): AcceptedRequest {
   return {
-    schemaVersion: 1,
     localId: "request-1",
-    requester: `0x${"33".repeat(32)}`,
     status: "accepted",
     transactionHash: `0x${"44".repeat(32)}`,
     requestId: `0x${"55".repeat(32)}`,
+    epoch: "0",
     receiptBlock: "7",
-    submittedAt: "2026-08-29T00:00:00.000Z",
-    acceptedAt: "2026-08-29T00:00:01.000Z",
     observedThroughBlock: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    advancedTransactionHash: null,
-    diagnostic: null,
   };
 }

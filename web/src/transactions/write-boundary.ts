@@ -17,27 +17,32 @@ import {
 } from "@thruputchain/protocol";
 import type { AppConfig, TransactionPolicy } from "@/config";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
-import { isExpiredUncommitted } from "./expired-submission";
+import {
+  isExpiredUncommitted,
+  submissionEvidenceKey,
+} from "./expired-submission";
 
 export type WriteResult =
+  | { readonly kind: "preSubmissionFailure"; readonly message: string }
   | {
-      readonly kind: "preSubmissionFailure";
-      readonly hash: null;
+      readonly kind: "invalid";
+      readonly hash: string;
       readonly message: string;
     }
-  | { readonly kind: "invalid"; readonly hash: string; readonly reason: string }
   | {
-      readonly kind: "committedSuccess" | "committedFailure";
+      readonly kind: "committedSuccess";
       readonly hash: string;
       readonly receipt: TransactionReceipt;
     }
+  | { readonly kind: "committedFailure"; readonly hash: string }
   | {
       readonly kind: "indeterminate";
-      readonly hash: string | null;
-      readonly message?: string;
-      readonly reason:
-        "recentFailure" | "unknown" | "other" | "timeout" | "disconnect";
+      readonly hash: string;
+      readonly message: string;
     };
+
+// Each observation is one quick check; the user can check again later.
+const OBSERVATION_TIMEOUT_MS = 10_000;
 
 export interface WriteBoundary {
   execute(
@@ -45,7 +50,7 @@ export interface WriteBoundary {
     policy: TransactionPolicy,
     observer: { readonly onSigned: (hash: string) => void },
   ): Promise<WriteResult>;
-  observe(hash: string, timeoutMs?: number): Promise<WriteResult>;
+  observe(hash: string): Promise<WriteResult>;
 }
 
 export function createWriteBoundary(
@@ -57,15 +62,15 @@ export function createWriteBoundary(
 
   function committed(receipt: TransactionReceipt, hash: string): WriteResult {
     if (receipt.execution instanceof UnsupportedRpcValue)
-      return { kind: "indeterminate", hash, reason: "other" };
-    return {
-      kind:
-        receipt.execution.result === "return"
-          ? "committedSuccess"
-          : "committedFailure",
-      hash,
-      receipt,
-    };
+      return {
+        kind: "indeterminate",
+        hash,
+        message:
+          "The node returned an unsupported receipt. Check the transaction again.",
+      };
+    return receipt.execution.result === "return"
+      ? { kind: "committedSuccess", hash, receipt }
+      : { kind: "committedFailure", hash };
   }
 
   return {
@@ -83,11 +88,10 @@ export function createWriteBoundary(
             hash = toHex0x(evidence.transactionHash);
             // Preserve the exact approved bytes before the SDK broadcasts once.
             localStorage.setItem(
-              `chain-of-life:submission:${config.networkId}:${hash}`,
+              submissionEvidenceKey(config.networkId, hash),
               JSON.stringify({
                 hash,
                 networkId: config.networkId,
-                account: visitor.address,
                 signedTransaction: toHex0x(evidence.signedTransaction),
               }),
             );
@@ -105,7 +109,10 @@ export function createWriteBoundary(
         return committed(result.receipt, toHex0x(result.transactionHash));
       } catch (error) {
         if (error instanceof TransactionExecutionError)
-          return committed(error.receipt, hash!);
+          return committed(
+            error.receipt,
+            toHex0x(error.receipt.transactionHash),
+          );
         if (
           error instanceof TransactionObservationError &&
           error.phase !== "beforeSubmission"
@@ -113,7 +120,6 @@ export function createWriteBoundary(
           return {
             kind: "indeterminate",
             hash: toHex0x(error.transactionHash),
-            reason: "unknown",
             message: [error.message, error.submissionCause, error.cause]
               .map((part) =>
                 part instanceof Error
@@ -129,7 +135,6 @@ export function createWriteBoundary(
           return {
             kind: "indeterminate",
             hash,
-            reason: "other",
             message:
               error instanceof Error
                 ? error.message
@@ -137,7 +142,6 @@ export function createWriteBoundary(
           };
         return {
           kind: "preSubmissionFailure",
-          hash: null,
           message:
             error instanceof Error
               ? error.message
@@ -145,10 +149,10 @@ export function createWriteBoundary(
         };
       }
     },
-    async observe(hash, timeoutMs = 30_000) {
+    async observe(hash) {
       try {
         const client = await connection;
-        const signal = AbortSignal.timeout(Math.min(timeoutMs, 10_000));
+        const signal = AbortSignal.timeout(OBSERVATION_TIMEOUT_MS);
         const transactionHash = hashFromHex(hash);
         const network = await client.getNetworkInfo({}, { signal });
         if (toHex0x(network.networkHash) !== `0x${config.networkId}`)
@@ -170,13 +174,12 @@ export function createWriteBoundary(
           return {
             kind: "invalid",
             hash,
-            reason:
+            message:
               "The signed transaction expired without committing. You can try again.",
           };
         return {
           kind: "indeterminate",
           hash,
-          reason: "unknown",
           message:
             status instanceof UnsupportedRpcValue
               ? "The node returned an unsupported transaction status. Keep the saved transaction."
@@ -186,7 +189,6 @@ export function createWriteBoundary(
         return {
           kind: "indeterminate",
           hash,
-          reason: "unknown",
           message:
             error instanceof Error
               ? error.message

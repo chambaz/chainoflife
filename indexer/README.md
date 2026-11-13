@@ -3,11 +3,12 @@
 The indexer downloads an on-chain world, verifies its population and digest,
 builds immutable tiles, and serves one network and contract on loopback HTTP.
 
-Schema version 2 includes the reset epoch and variable square dimensions.
-Publication order is `(epoch, generation)`. The v2 digest binds the epoch,
-so resets to the same size still have distinct immutable artifact paths.
-The HTTP paths remain under `/v1/worlds`; JSON schema versions are separate.
-Use a fresh database and artifact directory when switching from schema 1.
+Publication order is `(epoch, generation)`. The digest binds the epoch, so
+resets to the same size still have distinct immutable artifact paths.
+
+The SQLite database is a rebuildable cache, not a migrated store. After a
+schema change, delete the indexer state directory; the indexer rebuilds it
+from the chain.
 
 ## Run
 

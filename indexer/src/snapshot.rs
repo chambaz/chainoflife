@@ -1,9 +1,9 @@
 use game_of_life_core::digest::WorldDigest;
 
-use crate::schema::{LifeManifest, LifeProvenance, SnapshotIdentity, compact_json};
+use crate::schema::{LifeManifest, LifeProvenance, SnapshotIdentity, compact_json, hex32};
 use crate::{
-    CELL_TILE_BYTES, CHUNK_BYTES, DENSITY_TILE_BYTES, Error, MAX_ZOOM, Result, TILE_SIZE,
-    WORLD_WIDTH,
+    CELL_TILE_BYTES, CHUNK_BYTES, DENSITY_TILE_BYTES, Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result,
+    TILE_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,7 +31,7 @@ impl SnapshotMetadata {
         self.row_bytes() * self.height as usize
     }
     pub fn validate(&self) -> Result<()> {
-        if !(100..=WORLD_WIDTH).contains(&self.width)
+        if !(100..=MAX_WORLD_WIDTH).contains(&self.width)
             || !self.width.is_multiple_of(100)
             || self.height != self.width
         {
@@ -79,16 +79,6 @@ pub struct TileCoordinate {
     pub z: u8,
     pub x: u32,
     pub y: u32,
-}
-
-impl TileCoordinate {
-    pub fn new(z: u8, x: u32, y: u32) -> Result<Self> {
-        let count = tile_count_axis(z, WORLD_WIDTH).ok_or(Error::TileCoordinate { z, x, y })?;
-        if x >= count || y >= count {
-            return Err(Error::TileCoordinate { z, x, y });
-        }
-        Ok(Self { z, x, y })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,8 +211,8 @@ pub fn reconstruct_canonical_world(
     let actual_digest = digest.finish();
     if actual_digest != metadata.state_digest {
         return Err(Error::Digest {
-            expected: hex_digest(&metadata.state_digest),
-            actual: hex_digest(&actual_digest),
+            expected: hex32(&metadata.state_digest),
+            actual: hex32(&actual_digest),
         });
     }
     Ok(canonical)
@@ -247,7 +237,6 @@ pub fn build_snapshot(
         population: metadata.population,
         state_digest: metadata.state_digest,
     };
-    identity.validate()?;
     provenance.validate()?;
     if !provenance.matches(&identity) {
         return Err(Error::Schema {
@@ -258,7 +247,7 @@ pub fn build_snapshot(
     let manifest = LifeManifest::new(&identity);
     manifest.validate()?;
 
-    let (tiles, density_levels) = build_tiles(metadata, &canonical)?;
+    let (tiles, density_levels) = build_tiles(metadata, &canonical);
     validate_tiles(metadata, &canonical, &tiles, &density_levels)?;
 
     let mut artifacts = Vec::with_capacity(tiles.len() + 2);
@@ -295,16 +284,7 @@ struct DensityLevel {
     values: Vec<u16>,
 }
 
-fn build_tiles(
-    metadata: &SnapshotMetadata,
-    canonical: &[u8],
-) -> Result<(Vec<Tile>, Vec<DensityLevel>)> {
-    if canonical.len() != metadata.canonical_bytes() {
-        return Err(Error::CanonicalLength {
-            expected: metadata.canonical_bytes(),
-            actual: canonical.len(),
-        });
-    }
+fn build_tiles(metadata: &SnapshotMetadata, canonical: &[u8]) -> (Vec<Tile>, Vec<DensityLevel>) {
     let mut density_levels = Vec::with_capacity(MAX_ZOOM as usize);
     let mut child = build_level_five(metadata, canonical);
     for z in (0..5).rev() {
@@ -315,12 +295,12 @@ fn build_tiles(
     density_levels.push(child);
     density_levels.reverse();
 
-    let mut tiles = Vec::with_capacity(2_139);
+    let mut tiles = Vec::with_capacity(tile_count(metadata.width) as usize);
     for level in &density_levels {
-        emit_density_tiles(level, &mut tiles)?;
+        emit_density_tiles(level, &mut tiles);
     }
-    emit_cell_tiles(metadata, canonical, &mut tiles)?;
-    Ok((tiles, density_levels))
+    emit_cell_tiles(metadata, canonical, &mut tiles);
+    (tiles, density_levels)
 }
 
 fn build_level_five(metadata: &SnapshotMetadata, canonical: &[u8]) -> DensityLevel {
@@ -367,11 +347,11 @@ fn aggregate_level(z: u8, child: &DensityLevel) -> DensityLevel {
     }
 }
 
-fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) -> Result<()> {
+fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) {
     let count = level.width.div_ceil(TILE_SIZE);
     for x in 0..count {
         for y in 0..count {
-            let coordinate = TileCoordinate::new(level.z, x, y)?;
+            let coordinate = TileCoordinate { z: level.z, x, y };
             let mut bytes = vec![0; DENSITY_TILE_BYTES];
             for local_y in 0..TILE_SIZE {
                 let source_y = y * TILE_SIZE + local_y;
@@ -391,22 +371,13 @@ fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) -> Result<()
             output.push(Tile { coordinate, bytes });
         }
     }
-    Ok(())
 }
 
-fn emit_cell_tiles(
-    metadata: &SnapshotMetadata,
-    canonical: &[u8],
-    output: &mut Vec<Tile>,
-) -> Result<()> {
-    let count = tile_count_axis(MAX_ZOOM, metadata.width).ok_or(Error::TileCoordinate {
-        z: MAX_ZOOM,
-        x: 0,
-        y: 0,
-    })?;
+fn emit_cell_tiles(metadata: &SnapshotMetadata, canonical: &[u8], output: &mut Vec<Tile>) {
+    let count = tiles_per_axis(MAX_ZOOM, metadata.width);
     for x in 0..count {
         for y in 0..count {
-            let coordinate = TileCoordinate::new(MAX_ZOOM, x, y)?;
+            let coordinate = TileCoordinate { z: MAX_ZOOM, x, y };
             let mut bytes = vec![0; CELL_TILE_BYTES];
             let valid_bytes = (metadata.width.saturating_sub(x * TILE_SIZE))
                 .min(TILE_SIZE)
@@ -425,7 +396,6 @@ fn emit_cell_tiles(
             output.push(Tile { coordinate, bytes });
         }
     }
-    Ok(())
 }
 
 fn validate_tiles(
@@ -435,7 +405,7 @@ fn validate_tiles(
     levels: &[DensityLevel],
 ) -> Result<()> {
     let expected_coordinates = (0..=MAX_ZOOM).flat_map(|z| {
-        let count = tile_count_axis(z, metadata.width).unwrap_or(0);
+        let count = tiles_per_axis(z, metadata.width);
         (0..count).flat_map(move |x| (0..count).map(move |y| TileCoordinate { z, x, y }))
     });
     let mut expected_count = 0;
@@ -455,7 +425,6 @@ fn validate_tiles(
                 actual: coordinate_string(tile.coordinate),
             });
         }
-        TileCoordinate::new(tile.coordinate.z, tile.coordinate.x, tile.coordinate.y)?;
         let expected = if tile.coordinate.z == MAX_ZOOM {
             CELL_TILE_BYTES
         } else {
@@ -553,8 +522,8 @@ fn validate_tiles(
     let digest = digest_canonical(metadata, &roundtrip);
     if digest != metadata.state_digest {
         return Err(Error::Digest {
-            expected: hex_digest(&metadata.state_digest),
-            actual: hex_digest(&digest),
+            expected: hex32(&metadata.state_digest),
+            actual: hex32(&digest),
         });
     }
     Ok(())
@@ -621,15 +590,16 @@ fn digest_canonical(metadata: &SnapshotMetadata, canonical: &[u8]) -> [u8; 32] {
     digest.finish()
 }
 
-fn tile_count_axis(z: u8, size: u32) -> Option<u32> {
-    (z <= MAX_ZOOM).then(|| {
-        let cells_per_texel = 1u32 << (MAX_ZOOM - z);
-        size.div_ceil(TILE_SIZE * cells_per_texel)
-    })
+/// Number of tiles along each axis at zoom `z` (at most `MAX_ZOOM`) for a world of `width` cells.
+pub(crate) fn tiles_per_axis(z: u8, width: u32) -> u32 {
+    width.div_ceil(TILE_SIZE << (MAX_ZOOM - z))
 }
 
-fn hex_digest(value: &[u8; 32]) -> String {
-    format!("0x{}", hex::encode(value))
+/// Total number of tiles across all zoom levels for a world of `width` cells.
+pub(crate) fn tile_count(width: u32) -> u32 {
+    (0..=MAX_ZOOM)
+        .map(|z| tiles_per_axis(z, width).pow(2))
+        .sum()
 }
 
 fn coordinate_string(coordinate: TileCoordinate) -> String {

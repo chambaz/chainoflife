@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
-use crate::schema::EvidenceKind;
+use crate::schema::{EvidenceKind, hex32, now, parse_u64, timestamp};
+use crate::snapshot::tile_count;
 use crate::source::{ChainEvent, ChainSource, CoherentDownload, SourceError};
 use crate::state::{StateError, StateStore};
 use crate::storage::{Publisher, StorageError};
@@ -18,7 +19,6 @@ pub struct ServiceConfig {
     pub contract_address: String,
     pub poll_interval: Duration,
     pub retention_grace: Duration,
-    pub max_retry_backoff: Duration,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,19 +112,18 @@ impl<S: ChainSource> IndexerService<S> {
                 self.config.poll_interval
             }
             Err(error) => {
+                // RPC calls retry with backoff in the source; failed cycles wait one poll.
                 self.retry_attempt = self.retry_attempt.saturating_add(1);
-                let delay = retry_delay(
-                    self.retry_attempt,
-                    self.config.poll_interval,
-                    self.config.max_retry_backoff,
-                );
+                let delay = self.config.poll_interval;
                 let mut status = self.status.write().await;
                 status.state = IndexerState::Error;
                 status.preparing = None;
                 status.error_code = Some(error_code(&error).into());
                 status.retry = Some(crate::Retry {
                     attempt: self.retry_attempt,
-                    next_at: timestamp_after(delay),
+                    next_at: timestamp(
+                        chrono::Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default(),
+                    ),
                 });
                 delay
             }
@@ -136,90 +135,31 @@ impl<S: ChainSource> IndexerService<S> {
         if !self.publication_reconciled {
             self.reconcile_publication().await?;
         }
-        let latest = self.latest_publication.clone();
-        if self.pending.is_none() {
-            let observed = self.source.metadata().await?;
-            let digest = hex32(&observed.state_digest);
-            if latest.is_some_and(|latest| {
-                latest.epoch == observed.epoch.to_string()
-                    && latest.generation == observed.generation.to_string()
-                    && latest.state_digest == digest
-            }) {
-                self.cleanup()?;
-                let mut status = self.status.write().await;
-                status.observed = Some(identity(observed.epoch, observed.generation, &digest));
-                status.published = Some(identity(observed.epoch, observed.generation, &digest));
-                status.state = IndexerState::Idle;
-                status.preparing = None;
-                status.error_code = None;
-                status.retry = None;
-                return Ok(());
+        let download = match self.pending.take() {
+            Some(download) => download,
+            None => match self.download_changed_world().await? {
+                Some(download) => download,
+                None => return Ok(()),
+            },
+        };
+        // Keep the download for the next cycle until verification consumes it.
+        let (provenance, stored) = match self.prepare(&download).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.pending = Some(download);
+                return Err(error);
             }
-            self.set_preparing(
-                &observed,
-                &digest,
-                0,
-                observed.chunk_count() as u32,
-                ProgressUnit::Chunks,
-            )
-            .await;
-            let download_started = std::time::Instant::now();
-            let download = self.source.download().await?;
-            eprintln!(
-                "game_of_life_indexer_metric stage=download generation={} elapsed_ms={}",
-                observed.generation,
-                download_started.elapsed().as_millis()
-            );
-            if download.metadata != observed {
-                return Err(SourceError::Mixed(
-                    "poll observation changed before quiet-window acquisition".into(),
-                )
-                .into());
-            }
-            self.pending = Some(download);
-        }
-        let pending = self.pending.as_ref().ok_or_else(|| {
-            SourceError::Mixed("pending download disappeared before processing".into())
-        })?;
-        let metadata = pending.metadata.clone();
-        let source_block_height = pending.source_block_height;
-        let source_block_hash = pending.source_block_hash;
+        };
+        let CoherentDownload {
+            metadata, chunks, ..
+        } = download;
         let digest = hex32(&metadata.state_digest);
-        self.set_preparing(
-            &metadata,
-            &digest,
-            metadata.chunk_count() as u32,
-            metadata.chunk_count() as u32,
-            ProgressUnit::Chunks,
-        )
-        .await;
-        self.fail_if(FailurePoint::AfterDownload)?;
-        self.observe_events_through(source_block_height).await?;
-        let candidate = self.provenance(&metadata, source_block_height, source_block_hash)?;
-        let provenance = self
-            .state
-            .resolve_evidence(&candidate)?
-            .unwrap_or(candidate);
-        let tile_count = (0..=crate::MAX_ZOOM)
-            .map(|z| {
-                metadata
-                    .width
-                    .div_ceil(crate::TILE_SIZE * (1 << (crate::MAX_ZOOM - z)))
-                    .pow(2)
-            })
-            .sum();
-        self.set_preparing(&metadata, &digest, 0, tile_count, ProgressUnit::Tiles)
-            .await;
-        self.fail_if(FailurePoint::BeforeBuild)?;
-        let download = self.pending.take().ok_or_else(|| {
-            SourceError::Mixed("pending download disappeared before verification".into())
-        })?;
         let build_started = std::time::Instant::now();
         let snapshot = build_snapshot(
-            &download.metadata,
+            &metadata,
             self.config.network_id.clone(),
             self.config.contract_address.clone(),
-            download.chunks,
+            chunks,
             provenance.clone(),
         )?;
         let generated_bytes = snapshot
@@ -239,7 +179,9 @@ impl<S: ChainSource> IndexerService<S> {
             })?;
         self.set_preparing(&metadata, &digest, 0, artifact_count, ProgressUnit::Files)
             .await;
-        let provenance = self.state.persist_evidence(&provenance)?;
+        if !stored {
+            self.state.persist_evidence(&provenance)?;
+        }
         self.fail_if(FailurePoint::BeforeArtifacts)?;
         let publication_started = std::time::Instant::now();
         self.publisher.publish_snapshot(
@@ -285,6 +227,91 @@ impl<S: ChainSource> IndexerService<S> {
         status.error_code = None;
         status.retry = None;
         Ok(())
+    }
+
+    /// Returns a coherent download when the chain differs from the latest
+    /// publication, or `None` after refreshing status for an unchanged world.
+    async fn download_changed_world(&mut self) -> Result<Option<CoherentDownload>, ServiceError> {
+        let observed = self.source.metadata().await?;
+        let digest = hex32(&observed.state_digest);
+        if self.latest_publication.as_ref().is_some_and(|latest| {
+            latest.epoch == observed.epoch.to_string()
+                && latest.generation == observed.generation.to_string()
+                && latest.state_digest == digest
+        }) {
+            self.cleanup()?;
+            let mut status = self.status.write().await;
+            status.observed = Some(identity(observed.epoch, observed.generation, &digest));
+            status.published = Some(identity(observed.epoch, observed.generation, &digest));
+            status.state = IndexerState::Idle;
+            status.preparing = None;
+            status.error_code = None;
+            status.retry = None;
+            return Ok(None);
+        }
+        self.set_preparing(
+            &observed,
+            &digest,
+            0,
+            observed.chunk_count() as u32,
+            ProgressUnit::Chunks,
+        )
+        .await;
+        let download_started = std::time::Instant::now();
+        let download = self.source.download().await?;
+        eprintln!(
+            "game_of_life_indexer_metric stage=download generation={} elapsed_ms={}",
+            observed.generation,
+            download_started.elapsed().as_millis()
+        );
+        if download.metadata != observed {
+            return Err(SourceError::Mixed(
+                "poll observation changed before quiet-window acquisition".into(),
+            )
+            .into());
+        }
+        Ok(Some(download))
+    }
+
+    /// Resolves lifecycle evidence for a download. Returns the provenance and
+    /// whether it is already stored.
+    async fn prepare(
+        &mut self,
+        download: &CoherentDownload,
+    ) -> Result<(LifeProvenance, bool), ServiceError> {
+        let metadata = &download.metadata;
+        let chunk_count = metadata.chunk_count() as u32;
+        let digest = hex32(&metadata.state_digest);
+        self.set_preparing(
+            metadata,
+            &digest,
+            chunk_count,
+            chunk_count,
+            ProgressUnit::Chunks,
+        )
+        .await;
+        self.fail_if(FailurePoint::AfterDownload)?;
+        self.observe_events_through(download.source_block_height)
+            .await?;
+        let candidate = self.provenance(
+            metadata,
+            download.source_block_height,
+            download.source_block_hash,
+        )?;
+        let prepared = match self.state.resolve_evidence(&candidate)? {
+            Some(stored) => (stored, true),
+            None => (candidate, false),
+        };
+        self.set_preparing(
+            metadata,
+            &digest,
+            0,
+            tile_count(metadata.width),
+            ProgressUnit::Tiles,
+        )
+        .await;
+        self.fail_if(FailurePoint::BeforeBuild)?;
+        Ok(prepared)
     }
 
     async fn set_preparing(
@@ -370,20 +397,15 @@ impl<S: ChainSource> IndexerService<S> {
         height: u64,
         hash: [u8; 32],
     ) -> Result<LifeProvenance, ServiceError> {
+        // decode_life_event guarantees each kind's optional fields.
         let event = self.events.iter().rev().find(|event| {
             let event_specific_match = if metadata.generation == 0 {
                 event.initialized
                     && event.size == Some(metadata.width)
                     && event.seed == Some(metadata.seed)
                     && event.max_queue_len == Some(metadata.max_queue_len)
-                    && event.request_id.is_none()
-                    && event.requester.is_none()
             } else {
                 !event.initialized
-                    && event.seed.is_none()
-                    && event.max_queue_len.is_none()
-                    && event.request_id.is_some()
-                    && event.requester.is_some()
             };
             event.epoch == metadata.epoch
                 && event.generation == metadata.generation
@@ -446,14 +468,7 @@ impl<S: ChainSource> IndexerService<S> {
             self.publication_reconciled = true;
             return Ok(None);
         };
-        let current_generation: u64 =
-            latest
-                .generation
-                .parse()
-                .map_err(|_| crate::Error::Schema {
-                    field: "generation",
-                    reason: "latest generation is invalid",
-                })?;
+        let (epoch, generation) = latest.order()?;
         let promoted_at = chrono::DateTime::parse_from_rfc3339(&latest.published_at)
             .map_err(|_| crate::Error::Schema {
                 field: "publishedAt",
@@ -464,13 +479,7 @@ impl<S: ChainSource> IndexerService<S> {
             .publisher
             .ready_identities(&self.config.network_id, &self.config.contract_address)?;
         // Publication retention follows source heights across generation-zero resets.
-        let revision = latest
-            .source_block_height
-            .parse()
-            .map_err(|_| crate::Error::Schema {
-                field: "sourceBlockHeight",
-                reason: "invalid height",
-            })?;
+        let revision = parse_u64("sourceBlockHeight", &latest.source_block_height)?;
         let mut publications = vec![(revision, latest.state_digest.clone(), promoted_at)];
         let recorded_predecessor = self.state.predecessor_publication(
             &self.config.network_id,
@@ -505,14 +514,8 @@ impl<S: ChainSource> IndexerService<S> {
             &self.config.contract_address,
             &publications,
         )?;
-        self.status.write().await.published = Some(identity(
-            latest.epoch.parse().map_err(|_| crate::Error::Schema {
-                field: "epoch",
-                reason: "invalid epoch",
-            })?,
-            current_generation,
-            &latest.state_digest,
-        ));
+        self.status.write().await.published =
+            Some(identity(epoch, generation, &latest.state_digest));
         self.latest_publication = Some(latest.clone());
         self.publication_reconciled = true;
         Ok(Some(latest))
@@ -546,16 +549,6 @@ fn identity(epoch: u64, generation: u64, digest: &str) -> PublishedIdentity {
         state_digest: digest.into(),
     }
 }
-fn hex32(value: &[u8; 32]) -> String {
-    format!("0x{}", hex::encode(value))
-}
-fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
-fn timestamp_after(duration: Duration) -> String {
-    (chrono::Utc::now() + chrono::Duration::from_std(duration).unwrap_or_default())
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
 fn error_code(error: &ServiceError) -> &'static str {
     match error {
         ServiceError::Source(_) => "SOURCE_ERROR",
@@ -568,10 +561,4 @@ fn error_code(error: &ServiceError) -> &'static str {
         ServiceError::MissingLifecycleEvidence { .. } => "EVENT_EVIDENCE_MISSING",
         ServiceError::Injected(_) => "INJECTED_FAILURE",
     }
-}
-
-#[doc(hidden)]
-pub fn retry_delay(attempt: u32, base: Duration, maximum: Duration) -> Duration {
-    let exponent = attempt.saturating_sub(1).min(31);
-    base.saturating_mul(1u32 << exponent).min(maximum)
 }

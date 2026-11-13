@@ -19,7 +19,10 @@ const resize = vi.hoisted(() =>
 );
 const loadResize = vi.hoisted(() => vi.fn<() => unknown>(() => null));
 const recoverResize = vi.hoisted(() => vi.fn());
-vi.mock("@/transactions/resize", () => ({
+vi.mock("@/transactions/resize", async (importOriginal) => ({
+  isPendingResize: (
+    await importOriginal<typeof import("@/transactions/resize")>()
+  ).isPendingResize,
   resizeWorld: resize,
   recoverResize,
   loadResize,
@@ -120,17 +123,8 @@ test("automatically releases a hashless reset and enables an explicit retry", as
   vi.useFakeTimers();
   try {
     resize.mockClear();
-    recoverResize.mockResolvedValueOnce({
-      status: "failed",
-      hash: null,
-      size: 8000,
-      message: "Reset interrupted. Try again.",
-    });
-    loadResize.mockReturnValueOnce({
-      status: "signing",
-      hash: null,
-      size: 8000,
-    });
+    recoverResize.mockResolvedValueOnce({ status: "interrupted", size: 8000 });
+    loadResize.mockReturnValueOnce({ status: "signing", size: 8000 });
     const onResettingChange = vi.fn();
     render(
       <BoardSizeControl

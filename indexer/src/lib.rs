@@ -1,4 +1,4 @@
-//! Pure, deterministic snapshot derivation for the 100-million-cell Life world.
+//! Verified snapshot indexing for the on-chain Life world.
 
 mod schema;
 pub mod service;
@@ -17,15 +17,9 @@ pub use snapshot::{
     build_snapshot, reconstruct_canonical_world,
 };
 
-pub const WORLD_WIDTH: u32 = 10_000;
-pub const WORLD_HEIGHT: u32 = 10_000;
-pub const CELL_COUNT: u64 = 100_000_000;
-pub const ROW_BYTES: usize = 1_250;
+/// Largest supported square world side, in cells.
+pub const MAX_WORLD_WIDTH: u32 = 10_000;
 pub const CHUNK_BYTES: usize = 1_000;
-pub const TAIL_BYTES: usize = 250;
-pub const CHUNKS_PER_ROW: u32 = 2;
-pub const CHUNK_COUNT: usize = 20_000;
-pub const CANONICAL_BYTES: usize = 12_500_000;
 pub const TILE_SIZE: u32 = 256;
 pub const MAX_ZOOM: u8 = 6;
 pub const CELL_TILE_BYTES: usize = 8_192;
@@ -58,8 +52,6 @@ pub enum Error {
     Population { expected: u64, actual: u64 },
     #[error("state digest mismatch: expected {expected}, got {actual}")]
     Digest { expected: String, actual: String },
-    #[error("tile coordinate ({z}, {x}, {y}) is out of range")]
-    TileCoordinate { z: u8, x: u32, y: u32 },
     #[error("tile inventory mismatch at index {index}: expected {expected}, got {actual}")]
     TileInventory {
         index: usize,

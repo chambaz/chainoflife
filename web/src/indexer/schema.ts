@@ -1,3 +1,6 @@
+import { DECIMAL, HEX32 } from "@/lib/validation";
+
+/** The largest supported world width and height. */
 export const WORLD_SIZE = 10_000;
 export const TILE_SIZE = 256;
 export const MAX_ZOOM = 6;
@@ -5,9 +8,7 @@ export const DENSITY_CONTENT_TYPE =
   "application/vnd.chain-of-life.density-u16le";
 export const CELLS_CONTENT_TYPE = "application/vnd.chain-of-life.cells-v1";
 
-const HEX32 = /^0x[0-9a-f]{64}$/;
 const NETWORK = /^[0-9a-f]{64}$/;
-const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
 
 export interface SnapshotIdentity {
   readonly epoch: string;
@@ -46,9 +47,7 @@ export interface LatestPointer {
 }
 
 export type EvidenceKind =
-  | "metadata-observation"
-  | "world-initialized-event"
-  | "generation-advanced-event";
+  "world-initialized-event" | "generation-advanced-event";
 
 export interface LifeProvenance extends SnapshotIdentity {
   readonly schemaVersion: 2;
@@ -220,11 +219,7 @@ export function parseProvenance(input: unknown): LifeProvenance {
   const identity = parseIdentity(value);
   const evidenceKind = oneOf(
     value.evidenceKind,
-    [
-      "metadata-observation",
-      "world-initialized-event",
-      "generation-advanced-event",
-    ] as const,
+    ["world-initialized-event", "generation-advanced-event"] as const,
     "evidenceKind",
   );
   const transactionHash = nullableHex(value.transactionHash, "transactionHash");
@@ -236,12 +231,7 @@ export function parseProvenance(input: unknown): LifeProvenance {
   );
   const requestId = nullableHex(value.requestId, "requestId");
   const requester = nullableHex(value.requester, "requester");
-  if (evidenceKind === "metadata-observation") {
-    requireAllNull(
-      [transactionHash, eventIndex, eventKind, requestId, requester],
-      "metadata evidence has event fields",
-    );
-  } else if (evidenceKind === "world-initialized-event") {
+  if (evidenceKind === "world-initialized-event") {
     if (
       identity.generation !== "0" ||
       transactionHash === null ||
@@ -306,43 +296,28 @@ export function assertSnapshotAgreement(
   }
 }
 
+/**
+ * A snapshot is eligible when it matches the current chain state, or when it is
+ * older and its provenance is a committed event. Every provenance kind is a
+ * committed event, so only the current chain state is compared here. The
+ * indexer client already confines snapshots to the configured world scope.
+ */
 export function assertSnapshotEligible(
   manifest: LifeManifest,
-  provenance: LifeProvenance,
   current: CurrentWorldMetadata,
-  scope: { readonly networkId: string; readonly contractAddress: string },
 ): void {
-  if (
-    manifest.networkId !== scope.networkId ||
-    manifest.contractAddress !== scope.contractAddress
-  )
-    throw new SchemaError("snapshot is outside the configured world scope");
-  for (const key of ["seed"] as const)
-    if (manifest[key] !== current[key])
-      throw new SchemaError(`snapshot and current chain ${key} disagree`);
-
+  if (manifest.seed !== current.seed)
+    throw new SchemaError("snapshot and current chain seed disagree");
   const order = compareWorldVersion(manifest, current);
   if (order > 0)
     throw new SchemaError("snapshot is ahead of accepted chain metadata");
-  if (order === 0) {
+  if (order === 0)
     for (const key of ["width", "height", "population", "stateDigest"] as const)
       if (manifest[key] !== current[key])
         throw new SchemaError(`snapshot and current chain ${key} disagree`);
-    return;
-  }
-  if (provenance.evidenceKind === "metadata-observation")
-    throw new SchemaError(
-      "metadata observation does not describe current chain state",
-    );
-  if (
-    provenance.evidenceKind === "world-initialized-event" ||
-    provenance.evidenceKind === "generation-advanced-event"
-  )
-    return;
-  throw new SchemaError("snapshot has no eligible committed evidence");
 }
 
-export function canonicalHex32(input: unknown, field = "identifier"): string {
+function canonicalHex32(input: unknown, field: string): string {
   const value = string(input, field);
   if (!HEX32.test(value))
     throw new SchemaError(`${field} is not canonical lowercase hex32`);
@@ -351,7 +326,7 @@ export function canonicalHex32(input: unknown, field = "identifier"): string {
 
 function parseIdentity(value: Record<string, unknown>): SnapshotIdentity {
   const population = decimal(value.population, "population");
-  if (BigInt(population) > 100_000_000n)
+  if (BigInt(population) > BigInt(WORLD_SIZE ** 2))
     throw new SchemaError("population exceeds world capacity");
   return {
     networkId: canonicalNetwork(value.networkId),
@@ -442,7 +417,4 @@ function positiveIntegerOrZero(input: unknown, field: string): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0)
     throw new SchemaError(`${field} must be a nonnegative safe integer`);
   return input;
-}
-function requireAllNull(values: readonly unknown[], message: string): void {
-  if (values.some((value) => value !== null)) throw new SchemaError(message);
 }

@@ -1,6 +1,5 @@
 import { normalizeNetworkId } from "./config-values";
-
-const HEX32_PATTERN = /^0x[0-9a-f]{64}$/;
+import { isHex32 } from "./lib/validation";
 
 export interface AppConfig {
   readonly rpcUrl: URL;
@@ -50,7 +49,7 @@ export function loadAppConfig(environment: Environment): Readonly<AppConfig> {
     environment,
     "VITE_GAME_OF_LIFE_CONTRACT_ADDRESS",
   );
-  if (!HEX32_PATTERN.test(contractAddress)) {
+  if (!isHex32(contractAddress)) {
     throw new ConfigurationError(
       "VITE_GAME_OF_LIFE_CONTRACT_ADDRESS must be canonical lowercase 0x-prefixed hexadecimal",
     );

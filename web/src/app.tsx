@@ -170,7 +170,7 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   useEffect(() => {
     const snapshot = state.pendingSnapshot;
     if (!snapshot || !state.chain) return;
-    if (state.chainVerification === "integrity") {
+    if (state.chainIntegrityFailed) {
       send({
         type: "candidate-invalid",
         error: "Chain metadata integrity failure",
@@ -178,32 +178,22 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
       return;
     }
     try {
-      assertSnapshotEligible(
-        snapshot.manifest,
-        snapshot.provenance,
-        state.chain,
-        config,
-      );
+      assertSnapshotEligible(snapshot.manifest, state.chain);
       send({ type: "candidate-ready", snapshot });
     } catch (cause) {
       send({ type: "candidate-invalid", error: message(cause) });
     }
-  }, [config, state.chain, state.chainVerification, state.pendingSnapshot]);
+  }, [state.chain, state.chainIntegrityFailed, state.pendingSnapshot]);
 
   useEffect(() => {
     const candidate = state.candidate;
     if (!candidate || !state.chain) return;
     try {
-      assertSnapshotEligible(
-        candidate.manifest,
-        candidate.provenance,
-        state.chain,
-        config,
-      );
+      assertSnapshotEligible(candidate.manifest, state.chain);
     } catch (cause) {
       send({ type: "candidate-invalid", error: message(cause) });
     }
-  }, [config, state.candidate, state.chain, state.chainVerification]);
+  }, [state.candidate, state.chain, state.chainIntegrityFailed]);
 
   useEffect(() => {
     const generation = state.visualized?.manifest.generation;
@@ -237,17 +227,12 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
       rendererAvailabilityRef.current !== "available" ||
       current.candidateEpoch !== identity.epoch ||
       current.candidate?.manifest.stateDigest !== identity.digest ||
-      current.chainVerification === "integrity" ||
+      current.chainIntegrityFailed ||
       !current.chain
     )
       return false;
     try {
-      assertSnapshotEligible(
-        snapshot.manifest,
-        snapshot.provenance,
-        current.chain,
-        config,
-      );
+      assertSnapshotEligible(snapshot.manifest, current.chain);
     } catch (cause) {
       send({ type: "candidate-invalid", error: message(cause) });
       return false;
@@ -375,7 +360,7 @@ function TopBar({
                 ? identity.generation
                 : "Unavailable"
           }
-          warning={isBehind(state) || state.chainVerification === "integrity"}
+          warning={isBehind(state) || state.chainIntegrityFailed}
         />
         <Metric
           label="Population"
@@ -405,7 +390,7 @@ export function GenerationReadout({
   const visualized = state.visualized?.manifest.generation;
   return (
     <div className="pointer-events-none absolute top-[max(.75rem,var(--safe-top))] right-[calc(max(.75rem,var(--safe-right))+7rem)] left-[max(.75rem,var(--safe-left))] flex items-center gap-2 rounded-md border border-border bg-panel/95 px-3 py-2 font-mono text-xs shadow-sm backdrop-blur-md sm:right-auto sm:max-w-[calc(100%-2rem)] sm:text-sm">
-      {isBehind(state) || state.chainVerification === "integrity" ? (
+      {isBehind(state) || state.chainIntegrityFailed ? (
         <CircleAlert className="shrink-0 text-warning" />
       ) : (
         <CircleCheck className="shrink-0 text-primary" />
@@ -417,7 +402,7 @@ export function GenerationReadout({
             ? "Visualization unavailable"
             : state.transition !== "idle"
               ? `Preparing visualization ${state.candidate?.manifest.generation ?? ""}`
-              : state.chainVerification === "integrity"
+              : state.chainIntegrityFailed
                 ? `Chain integrity warning · retained generation ${visualized ?? "—"}`
                 : isBehind(state)
                   ? `Displaying older generation ${visualized ?? "—"}`

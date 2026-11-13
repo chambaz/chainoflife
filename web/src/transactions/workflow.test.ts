@@ -7,18 +7,9 @@ import {
   saveCranks,
   saveRequests,
   transactionScope,
-  type CrankRecord,
-  type TickRequestRecord,
 } from "./records";
 import type { WriteBoundary } from "./write-boundary";
-import {
-  abandonUnsignedCrank,
-  abandonUnsignedRequest,
-  processOneTick,
-  recoverCrank,
-  recoverRequest,
-  requestTick,
-} from "./workflow";
+import { advance, recoverCrank, recoverRequest } from "./workflow";
 
 const config = {
   networkId: "11".repeat(32),
@@ -39,17 +30,22 @@ const profiles: LifeTransactionProfiles = {
     observationTimeoutMs: 300_000,
   },
 };
+const scope = transactionScope(config, wallet.addressHex);
+const hash = `0x${"44".repeat(32)}`;
 
 describe("request and crank workflow", () => {
-  test("persists the canonical hash and never auto-cranks an indeterminate request", async () => {
+  test("saves the hash as indeterminate before broadcast and never auto-cranks it", async () => {
     const execute = vi.fn<WriteBoundary["execute"]>(
       async (_target, _policy, observer) => {
-        const hash = `0x${"44".repeat(32)}`;
         observer.onSigned(hash);
-        return { kind: "indeterminate", hash, reason: "disconnect" };
+        expect(loadRequests(scope)[0]).toMatchObject({
+          status: "indeterminate",
+          transactionHash: hash,
+        });
+        return { kind: "indeterminate", hash, message: "Disconnected" };
       },
     );
-    const result = await requestTick({
+    const result = await advance({
       config,
       profiles,
       wallet,
@@ -58,128 +54,107 @@ describe("request and crank workflow", () => {
     expect(execute).toHaveBeenCalledOnce();
     expect(result.requests[0]).toMatchObject({
       status: "indeterminate",
-      transactionHash: `0x${"44".repeat(32)}`,
+      transactionHash: hash,
     });
     expect(result.cranks).toEqual([]);
+    expect(result.message).toBe("Disconnected");
+  });
+
+  test("cranks an accepted request instead of requesting another tick", async () => {
+    saveRequests(scope, [
+      {
+        localId: "accepted",
+        status: "accepted",
+        transactionHash: hash,
+        requestId: `0x${"55".repeat(32)}`,
+        epoch: "0",
+        receiptBlock: "7",
+        observedThroughBlock: null,
+      },
+    ]);
+    const execute = vi.fn<WriteBoundary["execute"]>(async () => ({
+      kind: "preSubmissionFailure",
+      message: "Offline",
+    }));
+    const result = await advance({
+      config,
+      profiles,
+      wallet,
+      boundary: { execute, observe: vi.fn() },
+    });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]![1]).toBe(profiles.crank);
+    expect(result.requests).toHaveLength(1);
+    expect(result.cranks[0]).toMatchObject({ status: "failed" });
+    expect(result.message).toBe("Offline");
   });
 
   test("refuses a duplicate local crank while an outcome is indeterminate", async () => {
-    const scope = transactionScope(config, wallet.addressHex);
-    saveCranks(scope, [crank(wallet.addressHex)]);
-    const boundary: WriteBoundary = {
-      execute: vi.fn(),
-      observe: vi.fn(),
-    };
+    saveRequests(scope, [
+      {
+        localId: "accepted",
+        status: "accepted",
+        transactionHash: hash,
+        requestId: `0x${"55".repeat(32)}`,
+        epoch: "0",
+        receiptBlock: "7",
+        observedThroughBlock: null,
+      },
+    ]);
+    saveCranks(scope, [
+      { localId: "crank", status: "indeterminate", transactionHash: hash },
+    ]);
+    const boundary: WriteBoundary = { execute: vi.fn(), observe: vi.fn() };
     await expect(
-      processOneTick({ config, profiles, wallet, boundary }),
+      advance({ config, profiles, wallet, boundary }),
     ).rejects.toThrow(/existing crank/);
     expect(boundary.execute).not.toHaveBeenCalled();
   });
 
-  test("requires explicit confirmation before abandoning hashless signing", async () => {
-    const scope = transactionScope(config, wallet.addressHex);
-    saveRequests(scope, [unsigned(wallet.addressHex)]);
-    await abandonUnsignedRequest({ config, wallet, localId: "unsigned" });
-    expect(loadRequests(scope)[0]).toMatchObject({
-      status: "failed",
-      diagnostic: "User confirmed that signing did not complete",
+  test("fails hashless signing records under the lock without observing", async () => {
+    saveRequests(scope, [{ localId: "request", status: "signing" }]);
+    saveCranks(scope, [{ localId: "crank", status: "signing" }]);
+    const boundary: WriteBoundary = { execute: vi.fn(), observe: vi.fn() };
+    const params = { config, profiles, wallet, boundary };
+    await expect(recoverRequest(params, "request")).resolves.toMatchObject({
+      message: "Signing was interrupted. Try again.",
     });
-    expect(loadCranks(scope)).toEqual([]);
+    await expect(recoverCrank(params, "crank")).resolves.toMatchObject({
+      message: "Signing was interrupted. Try again.",
+    });
+    expect(loadRequests(scope)).toEqual([
+      { localId: "request", status: "failed", transactionHash: null },
+    ]);
+    expect(loadCranks(scope)).toEqual([
+      { localId: "crank", status: "failed", transactionHash: null },
+    ]);
+    expect(boundary.observe).not.toHaveBeenCalled();
+    expect(boundary.execute).not.toHaveBeenCalled();
   });
 
-  test("recovers signed request and crank records after reload", async () => {
-    const scope = transactionScope(config, wallet.addressHex);
-    const requestRecord = {
-      ...unsigned(wallet.addressHex),
-      transactionHash: `0x${"77".repeat(32)}`,
-    };
-    saveRequests(scope, [requestRecord]);
+  test("observes signed request and crank records by their original hash", async () => {
+    const crankHash = `0x${"88".repeat(32)}`;
+    saveRequests(scope, [
+      { localId: "request", status: "indeterminate", transactionHash: hash },
+    ]);
     saveCranks(scope, [
-      {
-        ...crank(wallet.addressHex),
-        status: "signing",
-        transactionHash: `0x${"88".repeat(32)}`,
-        diagnostic: null,
-      },
+      { localId: "crank", status: "indeterminate", transactionHash: crankHash },
     ]);
     const boundary: WriteBoundary = {
       execute: vi.fn(),
-      observe: vi.fn(async (hash) => ({
+      observe: vi.fn(async (observed) => ({
         kind: "invalid" as const,
-        hash,
-        reason: "expired",
+        hash: observed,
+        message: "expired",
       })),
     };
-    await recoverRequest({
-      config,
-      profiles,
-      wallet,
-      boundary,
-      localId: "unsigned",
-    });
-    await recoverCrank({
-      config,
-      profiles,
-      wallet,
-      boundary,
-      localId: "crank",
-    });
-    expect(loadRequests(scope)[0]?.status).toBe("invalid");
-    expect(loadCranks(scope)[0]?.status).toBe("invalid");
-  });
-
-  test("requires explicit confirmation before abandoning a hashless crank", async () => {
-    const scope = transactionScope(config, wallet.addressHex);
-    saveCranks(scope, [
-      {
-        ...crank(wallet.addressHex),
-        status: "signing",
-        transactionHash: null,
-        diagnostic: null,
-      },
-    ]);
-    await abandonUnsignedCrank({ config, wallet, localId: "crank" });
-    expect(loadCranks(scope)[0]).toMatchObject({
-      status: "failed",
-      diagnostic: "User confirmed that signing did not complete",
-    });
+    const params = { config, profiles, wallet, boundary };
+    await recoverRequest(params, "request");
+    await recoverCrank(params, "crank");
+    expect(boundary.observe).toHaveBeenNthCalledWith(1, hash);
+    expect(boundary.observe).toHaveBeenNthCalledWith(2, crankHash);
+    expect(loadRequests(scope)[0]?.status).toBe("failed");
+    expect(loadCranks(scope)[0]?.status).toBe("failed");
+    expect(boundary.execute).not.toHaveBeenCalled();
   });
 });
-
-function crank(caller: string): CrankRecord {
-  return {
-    schemaVersion: 1,
-    localId: "crank",
-    submittedBy: caller,
-    status: "indeterminate",
-    transactionHash: `0x${"55".repeat(32)}`,
-    submittedAt: "2026-08-29T00:00:00.000Z",
-    completedAt: null,
-    receiptBlock: null,
-    consumedRequestId: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    diagnostic: "timeout",
-  };
-}
-
-function unsigned(caller: string): TickRequestRecord {
-  return {
-    schemaVersion: 1,
-    localId: "unsigned",
-    requester: caller,
-    status: "signing",
-    transactionHash: null,
-    requestId: null,
-    receiptBlock: null,
-    submittedAt: "2026-08-29T00:00:00.000Z",
-    acceptedAt: null,
-    observedThroughBlock: null,
-    resultingGeneration: null,
-    resultingPopulation: null,
-    resultingStateDigest: null,
-    advancedTransactionHash: null,
-    diagnostic: null,
-  };
-}

@@ -1,16 +1,18 @@
-import type {
-  ContractView,
-  EventPage,
-  CoreThruputClient,
+import {
+  addressFromHex,
+  toHex0x,
+  type ContractView,
+  type CoreThruputClient,
 } from "@thruputchain/client";
-import type { ContractAddress } from "@thruputchain/protocol";
 import {
   GameOfLife,
   GenerationAdvanced,
-  TickRequested,
   WorldInitialized,
   decodeEvent,
 } from "@/contracts/game-of-life";
+import { WORLD_SIZE } from "@/indexer/schema";
+import { isHex32 } from "@/lib/validation";
+import { contractEventPages } from "./events";
 
 export interface ChainMetadata {
   readonly epoch: string;
@@ -20,50 +22,22 @@ export interface ChainMetadata {
   readonly seed: string;
   readonly population: string;
   readonly stateDigest: string;
-  readonly chunkBytes: 1_000;
-  readonly chunksPerRow: number;
-  readonly maxQueueLength: number;
   readonly resizable: boolean;
 }
 
-export type LifeChainEvent =
-  | {
-      readonly kind: "WorldInitialized";
-      readonly epoch: string;
-      readonly size: number;
-      readonly blockHeight: string;
-      readonly transactionHash: string;
-      readonly sequenceNumber: number;
-      readonly seed: string;
-      readonly maxQueueLength: number;
-      readonly population: string;
-      readonly stateDigest: string;
-    }
-  | {
-      readonly kind: "TickRequested";
-      readonly epoch: string;
-      readonly blockHeight: string;
-      readonly transactionHash: string;
-      readonly sequenceNumber: number;
-      readonly requestId: string;
-      readonly requester: string;
-    }
-  | {
-      readonly kind: "GenerationAdvanced";
-      readonly epoch: string;
-      readonly blockHeight: string;
-      readonly transactionHash: string;
-      readonly sequenceNumber: number;
-      readonly requestId: string;
-      readonly requester: string;
-      readonly generation: string;
-      readonly population: string;
-      readonly stateDigest: string;
-    };
+/** A transaction that produced a generation: a reset (0) or an advance. */
+export interface GenerationEvent {
+  readonly epoch: string;
+  readonly generation: string;
+  readonly blockHeight: string;
+  readonly transactionHash: string;
+  readonly sequenceNumber: number;
+}
 
 export interface LifeReadAdapter {
   metadata(): Promise<ContractView<ChainMetadata>>;
-  events(fromBlock: bigint): Promise<readonly LifeChainEvent[]>;
+  /** Generation events in ascending chain order. */
+  generations(fromBlock: bigint): Promise<readonly GenerationEvent[]>;
 }
 
 export function createLifeReadAdapter(params: {
@@ -72,7 +46,9 @@ export function createLifeReadAdapter(params: {
     | Promise<CoreThruputClient>;
   readonly contractAddress: string;
 }): LifeReadAdapter {
-  const contract = contractAddressFromHex(params.contractAddress);
+  if (!isHex32(params.contractAddress))
+    throw new Error("Contract address must be canonical lowercase hex32");
+  const contract = addressFromHex(params.contractAddress);
   return {
     async metadata() {
       const result = await GameOfLife.v0_1.getMetadata.view({
@@ -82,7 +58,7 @@ export function createLifeReadAdapter(params: {
       const value = result.value;
       if (
         value.width < 100n ||
-        value.width > 10_000n ||
+        value.width > BigInt(WORLD_SIZE) ||
         value.width % 100n !== 0n ||
         value.height !== value.width ||
         value.chunk_bytes !== 1_000n ||
@@ -102,129 +78,39 @@ export function createLifeReadAdapter(params: {
           generation: value.generation.toString(),
           seed: value.seed.toString(),
           population: value.population.toString(),
-          stateDigest: hex(value.state_digest),
-          chunkBytes: 1_000,
-          chunksPerRow: Number(value.chunks_per_row),
-          maxQueueLength: Number(value.max_queue_len),
+          stateDigest: toHex0x(value.state_digest),
           resizable: value.resizable,
         },
       };
     },
-    async events(fromBlock) {
-      if (fromBlock < 0n)
-        throw new RangeError("event anchor must be nonnegative");
-      const output: LifeChainEvent[] = [];
-      const seenEvents = new Set<string>();
-      const seenCursors = new Set<string>();
-      let cursor: string | undefined;
-      for (;;) {
-        const page: EventPage = await (
-          await params.client
-        ).getEvents({
-          filters: [
-            WorldInitialized.filter({ addresses: [contract] }),
-            TickRequested.filter({ addresses: [contract] }),
-            GenerationAdvanced.filter({ addresses: [contract] }),
-          ],
-          limit: 200,
-          ...(cursor
-            ? { cursor }
-            : {
-                start: {
-                  order: "ascending",
-                  anchor: { kind: "atHeight", blockHeight: fromBlock },
-                },
-              }),
-        });
-        for (const identified of page.events) {
-          if (
-            !sameAddress(identified.event.address as ContractAddress, contract)
-          )
-            continue;
-          const key = `${hex(identified.transactionHash)}:${identified.sequenceNumber}`;
-          if (seenEvents.has(key)) continue;
-          seenEvents.add(key);
+    async generations(fromBlock) {
+      const output: GenerationEvent[] = [];
+      for await (const { events } of contractEventPages(
+        params.client,
+        contract,
+        [
+          WorldInitialized.filter({ addresses: [contract] }),
+          GenerationAdvanced.filter({ addresses: [contract] }),
+        ],
+        fromBlock,
+      )) {
+        for (const identified of events) {
           const event = decodeEvent(identified.event);
-          if (!event) continue;
-          const common = {
+          if (!event || event.name === "TickRequested") continue;
+          const generation =
+            event.name === "WorldInitialized" ? 0n : event.fields.generation;
+          if (event.name === "GenerationAdvanced" && generation === 0n)
+            throw new Error("Invalid GenerationAdvanced event");
+          output.push({
             epoch: event.fields.epoch.toString(),
+            generation: generation.toString(),
             blockHeight: identified.blockHeight.toString(),
-            transactionHash: hex(identified.transactionHash),
+            transactionHash: toHex0x(identified.transactionHash),
             sequenceNumber: identified.sequenceNumber,
-          };
-          if (event.name === "WorldInitialized") {
-            if (
-              event.fields.max_queue_len <= 0n ||
-              event.fields.max_queue_len > 0xffff_ffffn ||
-              event.fields.population > 100_000_000n
-            )
-              throw new Error("Invalid WorldInitialized event");
-            output.push({
-              kind: "WorldInitialized",
-              size: Number(event.fields.size),
-              ...common,
-              seed: event.fields.seed.toString(),
-              maxQueueLength: Number(event.fields.max_queue_len),
-              population: event.fields.population.toString(),
-              stateDigest: hex(event.fields.state_digest),
-            });
-          } else if (event.name === "TickRequested") {
-            output.push({
-              kind: "TickRequested",
-              ...common,
-              requestId: hex(event.topics.request_id),
-              requester: hex(event.topics.requested_by),
-            });
-          } else {
-            if (
-              event.fields.generation === 0n ||
-              event.fields.population > 100_000_000n
-            )
-              throw new Error("Invalid GenerationAdvanced event");
-            output.push({
-              kind: "GenerationAdvanced",
-              ...common,
-              requestId: hex(event.topics.request_id),
-              requester: hex(event.fields.requested_by),
-              generation: event.fields.generation.toString(),
-              population: event.fields.population.toString(),
-              stateDigest: hex(event.fields.state_digest),
-            });
-          }
+          });
         }
-        if (page.nextCursor === null) break;
-        const cursorKey = page.nextCursor;
-        if (seenCursors.has(cursorKey))
-          throw new Error("Event query returned a repeated cursor");
-        seenCursors.add(cursorKey);
-        cursor = page.nextCursor;
       }
       return output;
     },
   };
-}
-
-export function sameAddress(
-  left: ContractAddress,
-  right: ContractAddress,
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((byte, index) => byte === right[index])
-  );
-}
-
-function hex(bytes: Uint8Array): string {
-  return `0x${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function contractAddressFromHex(value: string): ContractAddress {
-  if (!/^0x[0-9a-f]{64}$/.test(value))
-    throw new Error("Contract address must be canonical lowercase hex32");
-  return Uint8Array.from(
-    value
-      .slice(2)
-      .match(/../g)!
-      .map((byte) => Number.parseInt(byte, 16)),
-  ) as ContractAddress;
 }

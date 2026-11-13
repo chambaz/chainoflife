@@ -38,12 +38,9 @@ const state = {
     seed: "7",
     population: "32770",
     stateDigest: `0x${"cc".repeat(32)}`,
-    chunkBytes: 1000,
-    chunksPerRow: 2,
-    maxQueueLength: 16,
     resizable: true,
   },
-  chainVerification: "fresh",
+  chainIntegrityFailed: false,
   visualized: snapshot,
   candidate: {
     ...snapshot,
@@ -67,7 +64,7 @@ describe("World instrument surfaces", () => {
           ...state,
           candidate: null,
           transition: "idle",
-          chainVerification: "integrity",
+          chainIntegrityFailed: true,
         }}
       />,
     );

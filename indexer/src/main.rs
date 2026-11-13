@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let publisher = Publisher::open(root.clone())?;
     let state = StateStore::open(&database)?;
-    let source = ThruputSource::new(&rpc, contract, None, SourceConfig::default())?;
+    let source = ThruputSource::new(&rpc, contract, SourceConfig::default())?;
     let status = Arc::new(RwLock::new(initial_status()));
     let contract_address = canonical_address(&contract);
     let service = IndexerService::new(
@@ -58,7 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             contract_address: contract_address.clone(),
             poll_interval: Duration::from_secs(10),
             retention_grace,
-            max_retry_backoff: Duration::from_secs(300),
         },
         source,
         state,

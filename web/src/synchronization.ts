@@ -2,7 +2,6 @@ import type { ChainMetadata } from "@/chain/game-of-life";
 import {
   markChainReadFailed,
   reconcileChainMetadata,
-  type ChainVerification,
 } from "@/chain/metadata-state";
 import type { ImmutableSnapshot } from "@/indexer/client";
 import { compareWorldVersion } from "@/indexer/schema";
@@ -22,7 +21,7 @@ export type RendererAvailability =
 export interface SynchronizationState {
   readonly chain: ChainMetadata | null;
   readonly chainError: string | null;
-  readonly chainVerification: ChainVerification;
+  readonly chainIntegrityFailed: boolean;
   readonly visualized: ImmutableSnapshot | null;
   readonly candidate: ImmutableSnapshot | null;
   readonly candidateEpoch: number | null;
@@ -36,7 +35,7 @@ export interface SynchronizationState {
 export const INITIAL_SYNCHRONIZATION_STATE: SynchronizationState = {
   chain: null,
   chainError: null,
-  chainVerification: "loading",
+  chainIntegrityFailed: false,
   visualized: null,
   candidate: null,
   candidateEpoch: null,
@@ -74,7 +73,7 @@ export function synchronizationReducer(
   switch (action.type) {
     case "chain-read": {
       const next = reconcileChainMetadata(state, action.value);
-      return next.chainVerification === "integrity"
+      return next.chainIntegrityFailed
         ? clearCandidate(
             next,
             next.chainError ?? "Chain metadata integrity failure",
@@ -158,7 +157,7 @@ export function synchronizationReducer(
       if (
         state.candidate?.manifest.stateDigest !== action.digest ||
         state.candidateEpoch !== action.epoch ||
-        state.chainVerification === "integrity"
+        state.chainIntegrityFailed
       )
         return state;
       return {

@@ -4,6 +4,7 @@ import type { AppConfig, LifeTransactionProfiles } from "@/config";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
 import { transactionScope } from "@/transactions/records";
 import {
+  isPendingResize,
   loadResize,
   resizeStorageKey,
   subscribeResize,
@@ -68,8 +69,9 @@ export function BoardSizeControl({
     reload();
     return subscribeResize(scope, reload);
   }, [key]);
-  const pending =
-    record?.status === "signing" || record?.status === "indeterminate";
+  const pending = isPendingResize(record);
+  const failed =
+    record?.status === "failed" || record?.status === "interrupted";
   const preparing =
     record?.status === "committed" &&
     record.epoch !== null &&
@@ -94,8 +96,7 @@ export function BoardSizeControl({
     setBusy(true);
     onResettingChange?.(true);
     setError(null);
-    const targetSize =
-      retry && record?.status === "failed" ? record.size : selected;
+    const targetSize = retry && failed ? record.size : selected;
     if (retry) setSelected(targetSize);
     if (!recover) setRecord(null);
     onPreview(null);
@@ -148,7 +149,7 @@ export function BoardSizeControl({
         onChange={(event) => {
           const next = Number(event.target.value);
           setError(null);
-          if (record?.status === "failed") setRecord(null);
+          if (failed) setRecord(null);
           appliedSize.current = null;
           setSelected(next);
           onPreview(next === size ? null : next);
@@ -184,9 +185,9 @@ export function BoardSizeControl({
           "Resetting world…"
         ) : pending ? (
           "Checking reset…"
-        ) : error || record?.status === "failed" ? (
+        ) : error || failed ? (
           <>
-            {record?.message === "Reset interrupted. Try again."
+            {record?.status === "interrupted"
               ? "Reset interrupted."
               : "Reset failed."}{" "}
             <button

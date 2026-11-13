@@ -126,9 +126,8 @@ describe("artifact schemas", () => {
     const p = parseProvenance({ ...provenance, population: "2" });
     expect(() => assertSnapshotAgreement(l, m, p)).toThrow(/population/);
   });
-  test("requires exact current chain metadata and configured scope", () => {
+  test("requires exact current chain metadata", () => {
     const m = parseManifest(manifest);
-    const p = parseProvenance(provenance);
     const current = {
       epoch: "0",
       width: 10000,
@@ -138,31 +137,12 @@ describe("artifact schemas", () => {
       population: "1",
       stateDigest: digest,
     };
-    expect(() =>
-      assertSnapshotEligible(m, p, current, {
-        networkId: network,
-        contractAddress: contract,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertSnapshotEligible(
-        m,
-        p,
-        { ...current, seed: "8" },
-        {
-          networkId: network,
-          contractAddress: contract,
-        },
-      ),
-    ).toThrow(/seed/);
-    expect(() =>
-      assertSnapshotEligible(m, p, current, {
-        networkId: "33".repeat(32),
-        contractAddress: contract,
-      }),
-    ).toThrow(/scope/);
+    expect(() => assertSnapshotEligible(m, current)).not.toThrow();
+    expect(() => assertSnapshotEligible(m, { ...current, seed: "8" })).toThrow(
+      /seed/,
+    );
   });
-  test("accepts historical event evidence but not historical metadata evidence", () => {
+  test("accepts historical event evidence and rejects metadata evidence", () => {
     const current = {
       epoch: "0",
       width: 10000,
@@ -173,73 +153,44 @@ describe("artifact schemas", () => {
       stateDigest: `0x${"dd".repeat(32)}`,
     };
     expect(() =>
-      assertSnapshotEligible(
-        parseManifest(manifest),
-        parseProvenance(provenance),
-        current,
-        { networkId: network, contractAddress: contract },
-      ),
+      assertSnapshotEligible(parseManifest(manifest), current),
     ).not.toThrow();
-    const metadata = {
-      ...provenance,
-      evidenceKind: "metadata-observation",
-      transactionHash: null,
-      eventIndex: null,
-      eventKind: null,
-    };
     expect(() =>
-      assertSnapshotEligible(
-        parseManifest(manifest),
-        parseProvenance(metadata),
-        current,
-        { networkId: network, contractAddress: contract },
-      ),
-    ).toThrow(/current chain state/);
+      parseProvenance({
+        ...provenance,
+        evidenceKind: "metadata-observation",
+        transactionHash: null,
+        eventIndex: null,
+        eventKind: null,
+      }),
+    ).toThrow(/evidenceKind/);
   });
-  test("rejects event-backed candidates ahead of accepted chain metadata", () => {
-    const advanced = parseProvenance({
-      ...provenance,
-      generation: "1",
-      evidenceKind: "generation-advanced-event",
-      eventKind: "GenerationAdvanced",
-      requestId: digest,
-      requester: contract,
-    });
+  test("rejects candidates ahead of accepted chain metadata", () => {
     const aheadManifest = parseManifest({ ...manifest, generation: "1" });
     expect(() =>
-      assertSnapshotEligible(
-        aheadManifest,
-        advanced,
-        {
-          epoch: "0",
-          width: 10000,
-          height: 10000,
-          generation: "0",
-          seed: "7",
-          population: "1",
-          stateDigest: digest,
-        },
-        { networkId: network, contractAddress: contract },
-      ),
+      assertSnapshotEligible(aheadManifest, {
+        epoch: "0",
+        width: 10000,
+        height: 10000,
+        generation: "0",
+        seed: "7",
+        population: "1",
+        stateDigest: digest,
+      }),
     ).toThrow(/ahead/);
   });
 
   test("requires exact identity at the accepted current generation", () => {
     expect(() =>
-      assertSnapshotEligible(
-        parseManifest(manifest),
-        parseProvenance(provenance),
-        {
-          epoch: "0",
-          width: 10000,
-          height: 10000,
-          generation: "0",
-          seed: "7",
-          population: "2",
-          stateDigest: digest,
-        },
-        { networkId: network, contractAddress: contract },
-      ),
+      assertSnapshotEligible(parseManifest(manifest), {
+        epoch: "0",
+        width: 10000,
+        height: 10000,
+        generation: "0",
+        seed: "7",
+        population: "2",
+        stateDigest: digest,
+      }),
     ).toThrow(/population/);
   });
 });

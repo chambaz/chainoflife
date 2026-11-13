@@ -10,6 +10,7 @@ import {
   type ThruputClient,
 } from "@thruputchain/client";
 import type { AppClient } from "@/chain/client";
+import { isDecimal, isHex32 } from "@/lib/validation";
 
 export interface VisitorWallet {
   readonly account: ReturnType<typeof createPubkeyAccount>;
@@ -18,14 +19,13 @@ export interface VisitorWallet {
 }
 
 interface WalletRecord {
-  version: 1;
   seed: string;
+  /** Saved before each funding request, so an uncertain one is never repeated. */
   funding: {
     nonce: string;
+    rawAmount: string;
     hash: string | null;
     complete: boolean;
-    rawAmount?: string;
-    signedTransaction?: string;
   } | null;
 }
 
@@ -36,7 +36,7 @@ export type FundingClient = Pick<
   Pick<Partial<AppClient>, "requestFunding">;
 
 export function visitorWalletKey(networkId: string): string {
-  return `chain-of-life:wallet:v1:${networkId}`;
+  return `chain-of-life:wallet:v2:${networkId}`;
 }
 
 export function walletFromSeed(seed: string): VisitorWallet {
@@ -72,21 +72,18 @@ export async function prepareVisitorWallet(
       if (!record.funding || record.funding.complete) {
         record.funding = {
           nonce: toHex0x(crypto.getRandomValues(new Uint8Array(16))),
+          rawAmount: (minimumBalance * 10n + 1_000_000n).toString(),
           hash: null,
           complete: false,
-          rawAmount: (minimumBalance * 10n + 1_000_000n).toString(),
         };
         saveWallet(key, record);
         if (client.requestFunding) {
           const response = await client.requestFunding({
             recipient: wallet.account.address,
             clientNonce: fromHex0x(record.funding.nonce),
-            rawAmount: BigInt(record.funding.rawAmount!),
+            rawAmount: BigInt(record.funding.rawAmount),
           });
           record.funding.hash = toBase58(response.transactionHash);
-          record.funding.signedTransaction = toHex0x(
-            response.signedTransaction,
-          );
           saveWallet(key, record);
         } else {
           const response = await client.requestAirdropAttempt({
@@ -153,7 +150,6 @@ function readWallet(key: string): WalletRecord {
   const saved = localStorage.getItem(key);
   if (saved === null) {
     const record: WalletRecord = {
-      version: 1,
       seed: toHex0x(crypto.getRandomValues(new Uint8Array(32))),
       funding: null,
     };
@@ -169,13 +165,12 @@ function readWallet(key: string): WalletRecord {
   if (!value || typeof value !== "object") throw invalidWallet();
   const record = value as Partial<WalletRecord>;
   if (
-    record.version !== 1 ||
-    typeof record.seed !== "string" ||
-    !/^0x[0-9a-f]{64}$/.test(record.seed) ||
+    !isHex32(record.seed) ||
     !(
       record.funding === null ||
       (record.funding &&
         /^0x[0-9a-f]{32}$/.test(record.funding.nonce) &&
+        isDecimal(record.funding.rawAmount) &&
         typeof record.funding.complete === "boolean" &&
         (record.funding.hash === null ||
           typeof record.funding.hash === "string"))

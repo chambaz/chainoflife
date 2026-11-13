@@ -7,7 +7,7 @@ import {
   resizeStorageKey,
 } from "./resize";
 import { transactionScope } from "./records";
-import { requestTick } from "./workflow";
+import { advance } from "./workflow";
 import type { WriteBoundary } from "./write-boundary";
 
 const config = {
@@ -34,21 +34,21 @@ test("persists signed reset identity before broadcast and only observes it after
         size: 100,
         status: "indeterminate",
       });
-      return { kind: "indeterminate", hash, reason: "disconnect" };
+      return { kind: "indeterminate", hash, message: "Disconnected" };
     },
   );
   const observe = vi.fn<WriteBoundary["observe"]>(async () => ({
     kind: "indeterminate",
     hash,
-    reason: "unknown",
+    message: "Unknown",
   }));
   const params = { config, profiles, wallet, boundary: { execute, observe } };
   await resizeWorld(params, 100);
   await expect(resizeWorld(params, 200)).rejects.toThrow(/pending resize/);
-  await expect(requestTick(params)).rejects.toThrow(/pending resize/);
+  await expect(advance(params)).rejects.toThrow(/pending resize/);
   await recoverResize(params);
   expect(execute).toHaveBeenCalledOnce();
-  expect(observe).toHaveBeenCalledWith(hash, policy.observationTimeoutMs);
+  expect(observe).toHaveBeenCalledWith(hash);
 });
 
 test("rejects invalid sizes before signing", async () => {
@@ -68,12 +68,7 @@ test("releases an interrupted unsigned reset without submitting or observing", a
   const params = { config, profiles, wallet, boundary };
   await expect(resizeWorld(params, 8000)).rejects.toThrow("Interrupted");
   const recovered = await recoverResize(params);
-  expect(recovered).toMatchObject({
-    status: "failed",
-    hash: null,
-    size: 8000,
-    message: "Reset interrupted. Try again.",
-  });
+  expect(recovered).toEqual({ status: "interrupted", size: 8000 });
   expect(loadResize(transactionScope(config, wallet.addressHex))).toEqual(
     recovered,
   );
@@ -81,12 +76,11 @@ test("releases an interrupted unsigned reset without submitting or observing", a
   expect(boundary.observe).not.toHaveBeenCalled();
   boundary.execute.mockResolvedValue({
     kind: "preSubmissionFailure",
-    hash: null,
     message: "Offline",
   });
-  await expect(resizeWorld(params, 8000)).resolves.toMatchObject({
+  await expect(resizeWorld(params, 8000)).resolves.toEqual({
     status: "failed",
-    message: "Offline",
+    size: 8000,
   });
 });
 
@@ -95,7 +89,7 @@ test("reloads evidence after acquiring the lock instead of releasing another tab
     execute: vi.fn().mockRejectedValue(new Error("Interrupted")),
     observe: vi
       .fn()
-      .mockResolvedValue({ kind: "indeterminate", hash, reason: "unknown" }),
+      .mockResolvedValue({ kind: "indeterminate", hash, message: "Unknown" }),
   };
   const params = { config, profiles, wallet, boundary };
   await expect(resizeWorld(params, 8000)).rejects.toThrow("Interrupted");
@@ -129,10 +123,7 @@ test("reloads evidence after acquiring the lock instead of releasing another tab
     status: "indeterminate",
     hash,
   });
-  expect(boundary.observe).toHaveBeenCalledWith(
-    hash,
-    policy.observationTimeoutMs,
-  );
+  expect(boundary.observe).toHaveBeenCalledWith(hash);
   expect(boundary.execute).toHaveBeenCalledOnce();
 });
 
@@ -140,7 +131,6 @@ test("queued recovery leaves a terminal reset unchanged", async () => {
   const boundary = {
     execute: vi.fn().mockResolvedValue({
       kind: "preSubmissionFailure",
-      hash: null,
       message: "Offline",
     }),
     observe: vi.fn(),

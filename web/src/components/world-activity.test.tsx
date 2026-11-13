@@ -1,25 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { LifeChainEvent, LifeReadAdapter } from "@/chain/game-of-life";
+import type { GenerationEvent, LifeReadAdapter } from "@/chain/game-of-life";
 import { WorldActivity } from "./world-activity";
 
 function advanced(
   generation: string,
   blockHeight: string,
   byte: string,
-): LifeChainEvent {
+): GenerationEvent {
   return {
-    kind: "GenerationAdvanced",
     epoch: "2",
     generation,
     blockHeight,
     transactionHash: `0x${byte.repeat(32)}`,
     sequenceNumber: 0,
-    requestId: `0x${"11".repeat(32)}`,
-    requester: `0x${"22".repeat(32)}`,
-    population: "100",
-    stateDigest: `0x${"33".repeat(32)}`,
   };
 }
 
@@ -52,31 +47,17 @@ test("loads generations newest first and copies full hashes without explorer lin
   });
   const first = advanced("1", "10", "44");
   const second = advanced("2", "12", "55");
-  const reset: LifeChainEvent = {
-    kind: "WorldInitialized",
+  const reset: GenerationEvent = {
     epoch: "3",
-    size: 1100,
+    generation: "0",
     blockHeight: "15",
     transactionHash: `0x${"66".repeat(32)}`,
     sequenceNumber: 0,
-    seed: "0",
-    maxQueueLength: 8,
-    population: "100",
-    stateDigest: `0x${"77".repeat(32)}`,
   };
-  const requested: LifeChainEvent = {
-    kind: "TickRequested",
-    epoch: "2",
-    blockHeight: "11",
-    transactionHash: `0x${"88".repeat(32)}`,
-    sequenceNumber: 0,
-    requestId: `0x${"11".repeat(32)}`,
-    requester: `0x${"22".repeat(32)}`,
-  };
-  const events = vi
-    .fn()
-    .mockResolvedValue([first, second, requested, reset, second]);
-  render(<WorldActivity reader={{ events } as unknown as LifeReadAdapter} />);
+  const generations = vi.fn().mockResolvedValue([first, second, reset]);
+  render(
+    <WorldActivity reader={{ generations } as unknown as LifeReadAdapter} />,
+  );
   expect(screen.getByText("Activity").closest("details")).toHaveAttribute(
     "open",
   );
@@ -100,15 +81,17 @@ test("loads generations newest first and copies full hashes without explorer lin
     toBase58(hashFromHex(second.transactionHash)),
   );
   expect(buttons[1]).toHaveAttribute("title", "Copy full hash");
-  expect(events).toHaveBeenCalledWith(0n);
+  expect(generations).toHaveBeenCalledWith(0n);
 });
 
 test("shows an empty state and recovers after reopening a failed lookup", async () => {
-  const events = vi
+  const generations = vi
     .fn()
     .mockRejectedValueOnce(new Error("RPC unavailable"))
     .mockResolvedValue([]);
-  render(<WorldActivity reader={{ events } as unknown as LifeReadAdapter} />);
+  render(
+    <WorldActivity reader={{ generations } as unknown as LifeReadAdapter} />,
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent("RPC unavailable");
   const details = screen.getByText("Activity").closest("details")!;
   details.open = false;

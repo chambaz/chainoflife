@@ -11,7 +11,10 @@ import { gasAmount, networkHash, sha256Hash } from "@thruputchain/protocol";
 import { expect, test, vi } from "vitest";
 import { GameOfLife } from "@/contracts/game-of-life";
 import { walletFromSeed } from "@/wallet/visitor-wallet";
-import { isExpiredUncommitted } from "./expired-submission";
+import {
+  isExpiredUncommitted,
+  submissionEvidenceKey,
+} from "./expired-submission";
 import { createWriteBoundary } from "./write-boundary";
 
 const networkId = "00".repeat(32);
@@ -31,7 +34,7 @@ async function fixture() {
   const signed = await signTransaction(tx, wallet.account.signers, network);
   const transactionHash = hashSignedTransaction(signed);
   const hash = toHex0x(transactionHash);
-  const key = `chain-of-life:submission:${networkId}:${hash}`;
+  const key = submissionEvidenceKey(networkId, hash);
   localStorage.setItem(
     key,
     JSON.stringify({
@@ -68,10 +71,10 @@ async function fixture() {
 
 test("releases an unknown expired submission only after complete indexed history", async () => {
   const { boundary, client, hash } = await fixture();
-  await expect(boundary.observe(hash, 300_000)).resolves.toMatchObject({
+  await expect(boundary.observe(hash)).resolves.toMatchObject({
     kind: "invalid",
     hash,
-    reason: expect.stringMatching(/expired without committing/),
+    message: expect.stringMatching(/expired without committing/),
   });
   expect(client.getTransactionsByRootAddress).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -155,7 +158,7 @@ test("a committed status without a receipt cannot be released", async () => {
 test("missing evidence returns a prompt unknown result without clearing the write", async () => {
   const { boundary, hash, key } = await fixture();
   localStorage.removeItem(key);
-  await expect(boundary.observe(hash, 300_000)).resolves.toMatchObject({
+  await expect(boundary.observe(hash)).resolves.toMatchObject({
     kind: "indeterminate",
     message: expect.stringMatching(/Node status: unknown/),
   });

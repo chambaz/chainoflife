@@ -12,15 +12,9 @@ import type { AppConfig } from "@/config";
 export type AppClient = Awaited<ReturnType<typeof createAppClient>>;
 
 export async function createAppClient(
-  config: Pick<
-    AppConfig,
-    "rpcUrl" | "rpcProxyPath" | "networkId" | "localFaucetAddress"
-  >,
+  config: Pick<AppConfig, "rpcProxyPath" | "networkId" | "localFaucetAddress">,
 ) {
-  const url =
-    typeof window === "undefined"
-      ? config.rpcUrl.href
-      : new URL(config.rpcProxyPath, window.location.origin).href;
+  const url = new URL(config.rpcProxyPath, window.location.origin).href;
   const transport = new HttpTransport(url, { timeoutMs: 10_000 });
   const client = await createThruputClient({
     cluster: {
