@@ -123,10 +123,7 @@ export function allowedIndexerRoute(
   )
     return null;
   const base = `/v1/worlds/${networkId}/${contractAddress}`;
-  if (
-    requestUrl === `${base}/latest.json` ||
-    requestUrl === `${base}/status.json`
-  )
+  if (requestUrl === `${base}/latest.json`)
     return { contentType: "application/json", maxBytes: MAX_INDEXER_JSON };
   if (
     new RegExp(`^${base}/0x[0-9a-f]{64}/(?:manifest|provenance)\\.json$`).test(

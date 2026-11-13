@@ -11,10 +11,6 @@ import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { BoardSizeControl } from "@/components/board-size-control";
 import { WorldActivity } from "@/components/world-activity";
 import { abbreviate } from "@/lib/format-identifier";
-import {
-  markBoardReady,
-  subscribeMeasurements,
-} from "@/transactions/measurements";
 import { Activity, CircleAlert, CircleCheck, Dna, Info } from "lucide-react";
 import type { AppConfig } from "@/config";
 import { createAppClient } from "@/chain/client";
@@ -66,7 +62,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
     useState<RendererAvailability>("initializing");
   const rendererAvailabilityRef = useRef(rendererAvailability);
   const ownedRendererKey = useRef<string | null>(null);
-  const [statusClock, setStatusClock] = useState(Date.now());
   const lastAnnouncement = useRef("");
   const [indexer] = useState(() => new IndexerClient(config));
   const [rpcClient] = useState(() => createAppClient(config));
@@ -77,19 +72,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
     }),
   );
   const chainRefresh = useRef<(() => void) | null>(null);
-  const visualizedDigest = state.visualized?.manifest.stateDigest;
-  useEffect(() => {
-    if (!visualizedDigest) return;
-    const recordReady = () => {
-      try {
-        markBoardReady(config, visualizedDigest);
-      } catch (cause) {
-        console.error("Cannot record board-ready timing", cause);
-      }
-    };
-    recordReady();
-    return subscribeMeasurements(config, recordReady);
-  }, [config.networkId, config.contractAddress, visualizedDigest]);
 
   const send = (action: SynchronizationAction) => {
     stateRef.current = synchronizationReducer(stateRef.current, action);
@@ -169,22 +151,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
           throw cause;
         }
       }),
-      createVisiblePoller(5_000, REQUEST_TIMEOUT, async (signal, commit) => {
-        try {
-          const value = await indexer.status(signal);
-          commit(() => send({ type: "status-read", value }));
-        } catch (cause) {
-          commit(() =>
-            send({
-              type: "status-failed",
-              condition:
-                cause instanceof SchemaError ? "malformed" : "unavailable",
-              error: message(cause),
-            }),
-          );
-          throw cause;
-        }
-      }),
     );
 
     const refresh = () => {
@@ -238,16 +204,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
       send({ type: "candidate-invalid", error: message(cause) });
     }
   }, [config, state.candidate, state.chain, state.chainVerification]);
-
-  useEffect(() => {
-    setStatusClock(Date.now());
-    if (!state.status) return;
-    const remaining =
-      Date.parse(state.status.heartbeatAt) + 15_000 - Date.now();
-    if (remaining <= 0) return;
-    const timer = setTimeout(() => setStatusClock(Date.now()), remaining);
-    return () => clearTimeout(timer);
-  }, [state.status, state.statusEndpoint]);
 
   useEffect(() => {
     const generation = state.visualized?.manifest.generation;
@@ -305,7 +261,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
       stateRef.current.visualized?.manifest.stateDigest === identity.digest
     );
   };
-  void statusClock;
   return (
     <main className="flex h-dvh min-w-80 flex-col overflow-hidden bg-background text-foreground">
       <TopBar state={state} rendererAvailability={rendererAvailability}>

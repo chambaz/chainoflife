@@ -23,7 +23,6 @@ test = false
 bench = false
 
 [dependencies]
-sha2 = { workspace = true }
 game-of-life-core = { path = "../core" }
 
 [features]

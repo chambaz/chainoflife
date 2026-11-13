@@ -53,23 +53,6 @@ export function fillCamera(
     ),
   };
 }
-export function zoomAround(
-  camera: Camera,
-  nextZoom: number,
-  pointer: readonly [number, number],
-  viewport: readonly [number, number],
-): Camera {
-  const zoom = clamp(nextZoom, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
-  const oldScale = 2 ** camera.zoom;
-  const newScale = 2 ** zoom;
-  const worldX = camera.x + (pointer[0] - viewport[0] / 2) / oldScale;
-  const worldY = camera.y + (pointer[1] - viewport[1] / 2) / oldScale;
-  return {
-    x: worldX - (pointer[0] - viewport[0] / 2) / newScale,
-    y: worldY - (pointer[1] - viewport[1] / 2) / newScale,
-    zoom,
-  };
-}
 export function parseCamera(search: string): Camera | null {
   const query = new URLSearchParams(search);
   const keys = [...query.keys()];

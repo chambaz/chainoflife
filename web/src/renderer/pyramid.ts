@@ -33,18 +33,6 @@ export function parentIndex(index: TileIndex): TileIndex | null {
         y: Math.floor(index.y / 2),
       };
 }
-export function tileBounds(
-  index: TileIndex,
-  worldSize = WORLD_SIZE,
-): TileBounds {
-  const span = tileSpan(index.z);
-  return {
-    left: index.x * span,
-    top: index.y * span,
-    right: Math.min((index.x + 1) * span, worldSize),
-    bottom: Math.min((index.y + 1) * span, worldSize),
-  };
-}
 export function worldToTile(
   x: number,
   y: number,

@@ -5,14 +5,9 @@ use game_of_life_core::prng::SplitMix64;
 use thruput_sdk::storage::{Bytestring, CapacityConstraint, Flaggable, Map, NNInt, RCQ, Value};
 use thruput_sdk::*;
 
-pub const WORLD_WIDTH: u32 = 10_000;
-pub const WORLD_HEIGHT: u32 = 10_000;
-pub const CELL_COUNT: u64 = 100_000_000;
-pub const ROW_BYTES: usize = 1_250;
-pub const CHUNK_BYTES: usize = 1_000;
-pub const TAIL_BYTES: usize = 250;
-pub const CHUNKS_PER_ROW: u32 = 2;
-pub const CHUNKS_PER_BANK: u32 = 20_000;
+const WORLD_WIDTH: u32 = 10_000;
+const ROW_BYTES: usize = 1_250;
+const CHUNK_BYTES: usize = 1_000;
 
 #[thruput_sdk::storage]
 pub struct GameOfLife {

@@ -145,7 +145,6 @@ describe("read-only indexer proxy policy", () => {
   });
   test.each([
     `/v1/worlds/${network}/${contract}/latest.json`,
-    `/v1/worlds/${network}/${contract}/status.json`,
     `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/manifest.json`,
     `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/provenance.json`,
     `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/tiles/6/39/39.bin`,
@@ -156,6 +155,7 @@ describe("read-only indexer proxy policy", () => {
   test.each([
     `/v1/worlds/${network}/${contract}/latest.json?redirect=x`,
     `/v1/worlds/${network}/${contract}/../status.json`,
+    `/v1/worlds/${network}/${contract}/status.json`,
     `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/tiles/6/40/0.bin`,
     `/v1/worlds/${"33".repeat(32)}/${contract}/latest.json`,
   ])("rejects non-canonical artifact %s", (path) =>

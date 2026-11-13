@@ -28,7 +28,6 @@ import {
 } from "@/transactions/records";
 import type { WriteBoundary, WriteResult } from "@/transactions/write-boundary";
 import { assertNoPendingResize } from "./resize";
-import { recordMeasurement } from "./measurements";
 
 export interface WorkflowResult {
   readonly requests: readonly TickRequestRecord[];
@@ -40,7 +39,6 @@ export async function requestTick(params: {
   readonly profiles: LifeTransactionProfiles;
   readonly wallet: VisitorWallet;
   readonly boundary: WriteBoundary;
-  readonly automaticCrank: boolean;
 }): Promise<WorkflowResult> {
   const scope = transactionScope(params.config, params.wallet.addressHex);
   return withTransactionLock(scope, async () => {
@@ -87,7 +85,7 @@ export async function requestTick(params: {
       params.wallet,
     );
     requests = saveRequests(scope, upsert(loadRequests(scope), record));
-    if (record.status === "accepted" && params.automaticCrank) {
+    if (record.status === "accepted") {
       const processed = await crankWhileLocked({ ...params, scope });
       requests = processed.requests;
       cranks = processed.cranks;
@@ -357,18 +355,6 @@ function crankResult(
     const requestId = toHex0x(event.topics.request_id);
     const requester = toHex0x(event.fields.requested_by);
     const advancedHash = toHex0x(receipt.transactionHash);
-    recordMeasurement(config, {
-      kind: "advance",
-      size: Number(decoded.metadata.width),
-      epoch: decoded.metadata.epoch.toString(),
-      generation: decoded.metadata.generation.toString(),
-      digest: toHex0x(decoded.metadata.state_digest),
-      hash: advancedHash,
-      submittedAt: Date.parse(crank.submittedAt),
-      confirmedAt: Date.parse(completedAt),
-      readyAt: null,
-      gasUsed: receipt.gasUsed.toString(),
-    });
     return {
       crank: {
         ...crank,

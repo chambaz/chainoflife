@@ -56,35 +56,6 @@ impl StateStore {
             .optional()?)
     }
 
-    pub fn set_cursor(&self, scope: &str, cursor: &[u8]) -> Result<(), StateError> {
-        self.connection.execute(
-            "INSERT INTO service_state(key,value) VALUES(?1,?2)
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            params![format!("cursor:{scope}"), cursor],
-        )?;
-        Ok(())
-    }
-
-    pub fn save_chain_events(
-        &self,
-        scope: &str,
-        events: &[crate::source::ChainEvent],
-    ) -> Result<(), StateError> {
-        let mut statement = self.connection.prepare(
-            "INSERT INTO chain_events(scope,transaction_hash,event_index,event)
-             VALUES(?1,?2,?3,?4) ON CONFLICT DO NOTHING",
-        )?;
-        for event in events {
-            statement.execute(params![
-                scope,
-                event.transaction_hash,
-                event.event_index,
-                serde_json::to_vec(event).map_err(|error| crate::Error::Json(error.to_string()))?
-            ])?;
-        }
-        Ok(())
-    }
-
     pub fn save_event_batch(
         &self,
         scope: &str,
@@ -126,11 +97,6 @@ impl StateStore {
                 .map_err(|error| StateError::Provenance(crate::Error::Json(error.to_string())))
         })
         .collect()
-    }
-
-    pub fn save_evidence(&self, provenance: &LifeProvenance) -> Result<(), StateError> {
-        self.persist_evidence(provenance)?;
-        Ok(())
     }
 
     pub fn resolve_evidence(

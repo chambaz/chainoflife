@@ -8,7 +8,6 @@ export const CELLS_CONTENT_TYPE = "application/vnd.chain-of-life.cells-v1";
 const HEX32 = /^0x[0-9a-f]{64}$/;
 const NETWORK = /^[0-9a-f]{64}$/;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
-const ERROR_CODE = /^[A-Z0-9_]+$/;
 
 export interface SnapshotIdentity {
   readonly epoch: string;
@@ -62,29 +61,6 @@ export interface LifeProvenance extends SnapshotIdentity {
   readonly requestId: string | null;
   readonly requester: string | null;
   readonly verifiedAt: string;
-}
-
-export interface PublishedIdentity {
-  readonly epoch: string;
-  readonly generation: string;
-  readonly stateDigest: string;
-}
-
-export interface LifeStatus {
-  readonly schemaVersion: 2;
-  readonly state: "idle" | "preparing" | "error";
-  readonly observed: PublishedIdentity | null;
-  readonly preparing:
-    | (PublishedIdentity & {
-        readonly completedUnits: number;
-        readonly totalUnits: number;
-        readonly unit: "chunks" | "tiles" | "files";
-      })
-    | null;
-  readonly published: PublishedIdentity | null;
-  readonly retry: { readonly attempt: number; readonly nextAt: string } | null;
-  readonly errorCode: string | null;
-  readonly heartbeatAt: string;
 }
 
 export interface CurrentWorldMetadata {
@@ -301,83 +277,6 @@ export function parseProvenance(input: unknown): LifeProvenance {
   };
 }
 
-export function parseStatus(input: unknown): LifeStatus {
-  const value = record(input, "status", [
-    "schemaVersion",
-    "state",
-    "observed",
-    "preparing",
-    "published",
-    "retry",
-    "errorCode",
-    "heartbeatAt",
-  ]);
-  literal(value.schemaVersion, 2, "schemaVersion");
-  const state = oneOf(
-    value.state,
-    ["idle", "preparing", "error"] as const,
-    "state",
-  );
-  const observed = nullableIdentity(value.observed, "observed");
-  const published = nullableIdentity(value.published, "published");
-  const preparingValue = nullableRecord(value.preparing, "preparing", [
-    "epoch",
-    "generation",
-    "stateDigest",
-    "completedUnits",
-    "totalUnits",
-    "unit",
-  ]);
-  const preparing =
-    preparingValue === null
-      ? null
-      : {
-          ...parsePublished(preparingValue),
-          completedUnits: positiveIntegerOrZero(
-            preparingValue.completedUnits,
-            "completedUnits",
-          ),
-          totalUnits: positiveInteger(preparingValue.totalUnits, "totalUnits"),
-          unit: oneOf(
-            preparingValue.unit,
-            ["chunks", "tiles", "files"] as const,
-            "unit",
-          ),
-        };
-  if (preparing && preparing.completedUnits > preparing.totalUnits)
-    throw new SchemaError("completedUnits exceeds totalUnits");
-  const retryValue = nullableRecord(value.retry, "retry", [
-    "attempt",
-    "nextAt",
-  ]);
-  const retry =
-    retryValue === null
-      ? null
-      : {
-          attempt: positiveInteger(retryValue.attempt, "retry.attempt"),
-          nextAt: date(retryValue.nextAt, "retry.nextAt"),
-        };
-  const errorCode =
-    value.errorCode === null ? null : string(value.errorCode, "errorCode");
-  if ((state === "preparing") !== (preparing !== null))
-    throw new SchemaError("preparing must match state");
-  if (
-    (state === "error") !== (errorCode !== null) ||
-    (errorCode !== null && !ERROR_CODE.test(errorCode))
-  )
-    throw new SchemaError("errorCode must match error state");
-  return {
-    schemaVersion: 2,
-    state,
-    observed,
-    preparing,
-    published,
-    retry,
-    errorCode,
-    heartbeatAt: date(value.heartbeatAt, "heartbeatAt"),
-  };
-}
-
 export function assertSnapshotAgreement(
   latest: LatestPointer,
   manifest: LifeManifest,
@@ -504,13 +403,6 @@ function record(
     throw new SchemaError(`${field} has missing or unknown fields`);
   return value;
 }
-function nullableRecord(
-  input: unknown,
-  field: string,
-  keys: readonly string[],
-): Record<string, unknown> | null {
-  return input === null ? null : record(input, field, keys);
-}
 function string(input: unknown, field: string): string {
   if (typeof input !== "string")
     throw new SchemaError(`${field} must be a string`);
@@ -546,32 +438,10 @@ function nullableHex(input: unknown, field: string): string | null {
 function nullableInteger(input: unknown, field: string): number | null {
   return input === null ? null : positiveIntegerOrZero(input, field);
 }
-function positiveInteger(input: unknown, field: string): number {
-  const value = positiveIntegerOrZero(input, field);
-  if (value === 0) throw new SchemaError(`${field} must be positive`);
-  return value;
-}
 function positiveIntegerOrZero(input: unknown, field: string): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0)
     throw new SchemaError(`${field} must be a nonnegative safe integer`);
   return input;
-}
-function parsePublished(value: Record<string, unknown>): PublishedIdentity {
-  return {
-    epoch: decimal(value.epoch, "epoch"),
-    generation: decimal(value.generation, "generation"),
-    stateDigest: canonicalHex32(value.stateDigest, "stateDigest"),
-  };
-}
-function nullableIdentity(
-  input: unknown,
-  field: string,
-): PublishedIdentity | null {
-  return input === null
-    ? null
-    : parsePublished(
-        record(input, field, ["epoch", "generation", "stateDigest"]),
-      );
 }
 function requireAllNull(values: readonly unknown[], message: string): void {
   if (values.some((value) => value !== null)) throw new SchemaError(message);

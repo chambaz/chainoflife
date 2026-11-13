@@ -1,4 +1,3 @@
-import { writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
 test("resizes the live world, advances each workload, and shares state across tabs", async ({
@@ -91,22 +90,6 @@ test("resizes the live world, advances each workload, and shares state across ta
   await expect(
     page.getByText("Ready · generation 1", { exact: true }),
   ).toBeVisible({ timeout: 30_000 });
-  const measurements = await page.evaluate(() =>
-    Object.entries(localStorage)
-      .filter(([key]) => key.startsWith("chain-of-life:measurements:"))
-      .flatMap(([, value]) => JSON.parse(value)),
-  );
-  const advances = measurements.filter((entry) => entry.kind === "advance");
-  expect(advances).toHaveLength(4);
-  expect(BigInt(advances[0].gasUsed)).toBeLessThan(BigInt(advances[1].gasUsed));
-  expect(BigInt(advances[1].gasUsed)).toBeLessThan(BigInt(advances[2].gasUsed));
-  expect(advances[0].digest).not.toBe(advances[3].digest);
-  expect(advances.every((entry) => entry.readyAt !== null)).toBe(true);
-  await writeFile(
-    "test-results/live/resize-measurements.json",
-    JSON.stringify(measurements, null, 2),
-  );
-  console.log(JSON.stringify(measurements));
   await other.close();
   // Leave the shared world at its original size for later live checks.
   if (originalSize !== 100) await setSize(originalSize);

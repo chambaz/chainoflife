@@ -13,7 +13,7 @@ use game_of_life_indexer::source::{
     ChainEvent, ChainSource, CoherentDownload, EventBatch, SourceError,
 };
 use game_of_life_indexer::state::StateStore;
-use game_of_life_indexer::storage::{ProbeFailure, Publisher, StorageError};
+use game_of_life_indexer::storage::{Publisher, StorageError};
 use game_of_life_indexer::web::{HttpService, heartbeat_with_interval};
 use game_of_life_indexer::{
     CHUNK_BYTES, CHUNKS_PER_ROW, ChunkResponse, EventKind, EvidenceKind, LatestPointer,
@@ -29,42 +29,6 @@ const CONTRACT: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 const DIGEST0: &str = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const DIGEST1: &str = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const DIGEST2: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-
-#[test]
-fn filesystem_probe_refuses_startup_when_rename_fails() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let error = Publisher::open_with_probe_failure(temp.path().to_owned(), ProbeFailure::Rename)
-        .err()
-        .expect("probe should fail");
-    assert!(matches!(error, StorageError::Unsupported(message) if message.contains("rename")));
-    assert_no_probe_files(temp.path());
-    let _publisher = Publisher::open(temp.path().to_owned()).expect("reopen after rename failure");
-}
-
-#[test]
-fn filesystem_probe_refuses_startup_when_directory_fsync_fails() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let error =
-        Publisher::open_with_probe_failure(temp.path().to_owned(), ProbeFailure::DirectorySync)
-            .err()
-            .expect("probe should fail");
-    assert!(
-        matches!(error, StorageError::Unsupported(message) if message.contains("directory fsync"))
-    );
-    assert_no_probe_files(temp.path());
-    let _publisher =
-        Publisher::open(temp.path().to_owned()).expect("reopen after directory fsync failure");
-}
-
-fn assert_no_probe_files(root: &std::path::Path) {
-    assert!(fs::read_dir(root).expect("artifact root").all(|entry| {
-        !entry
-            .expect("artifact entry")
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".durability-probe.")
-    }));
-}
 
 #[test]
 fn second_writer_is_refused() {
@@ -281,8 +245,10 @@ fn restart_restores_cursor_and_verified_evidence() {
     let provenance = provenance(0, DIGEST0);
     {
         let state = StateStore::open(&database).expect("open state");
-        state.set_cursor("scope", b"cursor").expect("save cursor");
-        state.save_evidence(&provenance).expect("save evidence");
+        state
+            .save_event_batch("scope", &[], b"cursor")
+            .expect("save cursor");
+        state.persist_evidence(&provenance).expect("save evidence");
     }
     let state = StateStore::open(&database).expect("reopen state");
     assert_eq!(

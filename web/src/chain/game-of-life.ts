@@ -10,7 +10,6 @@ import {
   TickRequested,
   WorldInitialized,
   decodeEvent,
-  type GameOfLifeEvent,
 } from "@/contracts/game-of-life";
 
 export interface ChainMetadata {
@@ -65,10 +64,6 @@ export type LifeChainEvent =
 export interface LifeReadAdapter {
   metadata(): Promise<ContractView<ChainMetadata>>;
   events(fromBlock: bigint): Promise<readonly LifeChainEvent[]>;
-  decodeEvent(event: {
-    topics: Uint8Array[];
-    data: Uint8Array;
-  }): GameOfLifeEvent | null;
 }
 
 export function createLifeReadAdapter(params: {
@@ -206,7 +201,6 @@ export function createLifeReadAdapter(params: {
       }
       return output;
     },
-    decodeEvent,
   };
 }
 

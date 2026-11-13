@@ -185,7 +185,7 @@ export function TransactionActivity({
           void run(() =>
             loadRequests(scope).some(({ status }) => status === "accepted")
               ? processOneTick(common)
-              : requestTick({ ...common, automaticCrank: true }),
+              : requestTick(common),
           )
         }
       >

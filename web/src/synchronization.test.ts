@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import type { ImmutableSnapshot } from "./indexer/client";
 import {
   INITIAL_SYNCHRONIZATION_STATE,
-  isStatusStale,
   synchronizationReducer,
 } from "./synchronization";
 
@@ -109,19 +108,6 @@ describe("generation synchronization", () => {
     expect(conflict.visualized).toBe(current.visualized);
   });
 
-  test("status availability never removes a verified visualization", () => {
-    const ready = commit(
-      stage(INITIAL_SYNCHRONIZATION_STATE, snapshot("5", "a")),
-    );
-    const unavailable = synchronizationReducer(ready, {
-      type: "status-failed",
-      condition: "unavailable",
-      error: "offline",
-    });
-    expect(unavailable.visualized).toBe(ready.visualized);
-    expect(unavailable.statusEndpoint).toBe("unavailable");
-  });
-
   test("clears a staged epoch on chain integrity and rejects its stale commit", () => {
     const first = snapshot("4", "a");
     const next = snapshot("5", "b");
@@ -172,12 +158,5 @@ describe("generation synchronization", () => {
         epoch,
       }).visualized,
     ).toBe(first);
-  });
-
-  test("treats a heartbeat as stale at exactly fifteen seconds", () => {
-    const heartbeatAt = "2026-08-29T12:00:00Z";
-    const status = { heartbeatAt } as never;
-    expect(isStatusStale(status, Date.parse(heartbeatAt) + 14_999)).toBe(false);
-    expect(isStatusStale(status, Date.parse(heartbeatAt) + 15_000)).toBe(true);
   });
 });

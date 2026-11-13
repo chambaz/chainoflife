@@ -15,10 +15,6 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
-    #[error(
-        "artifact filesystem does not provide the required atomic rename and directory fsync semantics: {0}"
-    )]
-    Unsupported(String),
     #[error("invalid artifact path: {0}")]
     InvalidPath(String),
     #[error("immutable artifact collision at {0}")]
@@ -43,13 +39,6 @@ pub struct Publisher {
     _writer_lock: File,
 }
 
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProbeFailure {
-    Rename,
-    DirectorySync,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadyIdentity {
     pub epoch: u64,
@@ -70,18 +59,6 @@ fn parse_epoch(value: &str) -> Result<u64, StorageError> {
 
 impl Publisher {
     pub fn open(root: PathBuf) -> Result<Self, StorageError> {
-        Self::open_inner(root, None)
-    }
-
-    #[doc(hidden)]
-    pub fn open_with_probe_failure(
-        root: PathBuf,
-        failure: ProbeFailure,
-    ) -> Result<Self, StorageError> {
-        Self::open_inner(root, Some(failure))
-    }
-
-    fn open_inner(root: PathBuf, failure: Option<ProbeFailure>) -> Result<Self, StorageError> {
         fs::create_dir_all(&root).map_err(|source| io(&root, source))?;
         let lock_path = root.join(".writer.lock");
         let writer_lock = OpenOptions::new()
@@ -94,12 +71,10 @@ impl Publisher {
         writer_lock
             .try_lock_exclusive()
             .map_err(|_| StorageError::WriterActive)?;
-        let publisher = Self {
+        Ok(Self {
             root,
             _writer_lock: writer_lock,
-        };
-        publisher.probe(failure)?;
-        Ok(publisher)
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -130,61 +105,6 @@ impl Publisher {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(io(path, source)),
         }
-    }
-
-    fn probe(&self, failure: Option<ProbeFailure>) -> Result<(), StorageError> {
-        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let stem = format!(
-            ".durability-probe.{}.{}.{}",
-            std::process::id(),
-            timestamp,
-            sequence
-        );
-        let from = self.root.join(format!("{stem}.tmp"));
-        let to = self.root.join(format!("{stem}.renamed"));
-        let result = (|| {
-            self.write_synced(&from, b"probe")?;
-            if failure == Some(ProbeFailure::Rename) {
-                return Err(StorageError::Unsupported(
-                    "injected startup probe rename failure".into(),
-                ));
-            }
-            fs::rename(&from, &to)
-                .map_err(|source| StorageError::Unsupported(source.to_string()))?;
-            if failure == Some(ProbeFailure::DirectorySync) {
-                return Err(StorageError::Unsupported(
-                    "injected startup probe directory fsync failure".into(),
-                ));
-            }
-            self.sync_dir(&self.root)
-                .map_err(|error| StorageError::Unsupported(error.to_string()))?;
-            fs::remove_file(&to).map_err(|source| io(&to, source))?;
-            self.sync_dir(&self.root)
-                .map_err(|error| StorageError::Unsupported(error.to_string()))
-        })();
-        let cleanup = self.cleanup_probe(&from, &to);
-        match result {
-            Ok(()) => cleanup,
-            Err(error) => {
-                cleanup?;
-                Err(error)
-            }
-        }
-    }
-
-    fn cleanup_probe(&self, from: &Path, to: &Path) -> Result<(), StorageError> {
-        for path in [from, to] {
-            match fs::remove_file(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(source) => return Err(io(path, source)),
-            }
-        }
-        self.sync_dir(&self.root)
     }
 
     pub fn publish_snapshot(

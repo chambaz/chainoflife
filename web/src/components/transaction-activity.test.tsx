@@ -103,10 +103,6 @@ describe("transaction activity", () => {
       await waitFor(() =>
         expect(accepted ? processOneTick : requestTick).toHaveBeenCalledOnce(),
       );
-      if (!accepted)
-        expect(requestTick).toHaveBeenCalledWith(
-          expect.objectContaining({ automaticCrank: true }),
-        );
       expect(accepted ? requestTick : processOneTick).not.toHaveBeenCalled();
     },
   );

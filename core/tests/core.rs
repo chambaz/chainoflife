@@ -21,12 +21,7 @@ fn epoch_digest_matches_independent_sha256_vectors() {
         let mut digest = WorldDigest::for_epoch(100, 100, epoch, 7);
         digest.update(0, &[1, 2, 3]);
         digest.update(1, &[4, 5]);
-        let actual: String = digest
-            .finish()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        assert_eq!(actual, expected);
+        assert_eq!(hex(digest.finish()), expected);
     }
 }
 
@@ -106,41 +101,32 @@ fn byte_stream_continues_across_unaligned_chunks() {
 
 #[test]
 fn digest_pins_field_widths_byte_order_and_actual_chunk_length() {
-    let mut digest = WorldDigest::new(10_000, 10_000, 7);
+    // Python hashlib + struct.pack('>IIQQ') reference.
+    let mut digest = WorldDigest::for_epoch(10_000, 10_000, 0, 7);
     digest.update(0, &[1, 2, 3]);
     digest.update(1, &[4, 5]);
     assert_eq!(
-        digest.finish(),
-        [
-            0x8f, 0x4e, 0xf7, 0xfc, 0xd7, 0x9f, 0x35, 0xb5, 0xbb, 0xd0, 0x30, 0xb0, 0xc9, 0xef,
-            0x2a, 0x2a, 0x78, 0xaa, 0x57, 0xf5, 0xa9, 0xc4, 0x6c, 0x23, 0xee, 0xd9, 0x1e, 0x1e,
-            0x51, 0x8b, 0xe1, 0xf7,
-        ]
+        hex(digest.finish()),
+        "6b27c40c3785e10e7e935562ae2973a5f7b44e7fcc6b627bd86d235384f8bc50"
     );
 }
 
 #[test]
 fn full_scale_seed_vectors_are_reproducible() {
+    // Independent Python SplitMix64/hashlib reference. Seed 0 also matches the
+    // generation-zero digest verified on-chain by deployment.
     assert_eq!(
         initialized_world(0),
         (
             49_999_272,
-            [
-                0x18, 0xb9, 0x62, 0x21, 0x40, 0xdf, 0x6f, 0x9f, 0x0a, 0x03, 0xcb, 0xce, 0x4c, 0x18,
-                0x83, 0x8f, 0x41, 0xe0, 0xa3, 0x95, 0xf2, 0x06, 0xf6, 0x29, 0x0f, 0xb1, 0xe3, 0x18,
-                0x2e, 0xde, 0x16, 0x23,
-            ],
+            "5bc29c418cd47f0d7b3d479a7b70d70ed66521c3881a2610f3d0c5652d7e1927".into()
         )
     );
     assert_eq!(
         initialized_world(1),
         (
             50_010_937,
-            [
-                0xc4, 0x3f, 0x1c, 0x9a, 0xa9, 0x41, 0x8c, 0x5d, 0x08, 0x10, 0x02, 0x4c, 0x95, 0x15,
-                0xa2, 0x2e, 0x58, 0xfb, 0x7d, 0xd3, 0xae, 0x7b, 0x2c, 0xe3, 0x45, 0x02, 0x78, 0xd7,
-                0x5c, 0xfe, 0xf3, 0xbd,
-            ],
+            "e3ef5ec0e63e6ca97179035ee09ffaa4c51e227aa267fa83f9a25887540a4138".into()
         )
     );
 }
@@ -154,8 +140,7 @@ fn full_scale_generation_one_vector() {
         rng.fill_bytes(row);
     }
 
-    let mut digest = WorldDigest::new(10_000, 10_000, 1);
-    let mut epoch_digest = WorldDigest::for_epoch(10_000, 10_000, 0, 1);
+    let mut digest = WorldDigest::for_epoch(10_000, 10_000, 0, 1);
     let mut population = 0u64;
     let mut output = [0u8; 1_250];
     for y in 0..10_000 {
@@ -168,27 +153,13 @@ fn full_scale_generation_one_vector() {
         let key = (y as u32) * 2;
         digest.update(key, &output[..1_000]);
         digest.update(key + 1, &output[1_000..]);
-        epoch_digest.update(key, &output[..1_000]);
-        epoch_digest.update(key + 1, &output[1_000..]);
     }
-    let epoch_hex: String = epoch_digest
-        .finish()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    // Matches the generation-one event verified on-chain by deployment.
     assert_eq!(
-        epoch_hex,
-        "e2d4fa05fcd2d12e661c7d4487748d3b31705b329026209b0cb9f1c7135b0613"
-    );
-    assert_eq!(
-        (population, digest.finish()),
+        (population, hex(digest.finish())),
         (
             27_336_807,
-            [
-                0xe7, 0xa3, 0x3d, 0xc0, 0x3f, 0xc5, 0xee, 0x14, 0x56, 0x05, 0x6f, 0x0f, 0xfe, 0xc5,
-                0xa5, 0x89, 0xd3, 0x2c, 0x04, 0x8a, 0x83, 0x82, 0xac, 0xb8, 0xd4, 0x79, 0x7a, 0x00,
-                0xef, 0x2c, 0x4f, 0xf2,
-            ],
+            "e2d4fa05fcd2d12e661c7d4487748d3b31705b329026209b0cb9f1c7135b0613".into()
         )
     );
 }
@@ -293,9 +264,9 @@ fn cell<const H: usize, const N: usize>(world: &[[u8; N]; H], x: usize, y: usize
     (world[y][x / 8] >> (x % 8)) & 1
 }
 
-fn initialized_world(seed: u64) -> (u64, [u8; 32]) {
+fn initialized_world(seed: u64) -> (u64, String) {
     let mut rng = SplitMix64::new(seed);
-    let mut digest = WorldDigest::new(10_000, 10_000, 0);
+    let mut digest = WorldDigest::for_epoch(10_000, 10_000, 0, 0);
     let mut population = 0u64;
     let mut full = [0u8; 1_000];
     let mut tail = [0u8; 250];
@@ -314,5 +285,9 @@ fn initialized_world(seed: u64) -> (u64, [u8; 32]) {
             .sum::<u64>();
         digest.update(key + 1, &tail);
     }
-    (population, digest.finish())
+    (population, hex(digest.finish()))
+}
+
+fn hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

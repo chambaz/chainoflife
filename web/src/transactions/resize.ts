@@ -18,18 +18,13 @@ import {
   type TransactionScope,
 } from "./records";
 import type { WriteBoundary, WriteResult } from "./write-boundary";
-import { recordMeasurement } from "./measurements";
 
 export interface ResizeRecord {
   readonly version: 1;
   readonly size: number;
   readonly status: "signing" | "indeterminate" | "committed" | "failed";
   readonly hash: string | null;
-  readonly submittedAt: number;
-  readonly confirmedAt: number | null;
   readonly epoch: string | null;
-  readonly digest: string | null;
-  readonly gasUsed: string | null;
   readonly message: string | null;
 }
 
@@ -73,27 +68,12 @@ export function loadResize(scope: TransactionScope): ResizeRecord | null {
       value.status ?? "",
     ) ||
     !hash(value.hash) ||
-    !hash(value.digest) ||
     !decimal(value.epoch) ||
-    !decimal(value.gasUsed) ||
-    typeof value.submittedAt !== "number" ||
-    !Number.isFinite(value.submittedAt) ||
-    !(
-      value.confirmedAt === null ||
-      (typeof value.confirmedAt === "number" &&
-        Number.isFinite(value.confirmedAt))
-    ) ||
     !(value.message === null || typeof value.message === "string")
   )
     throw new Error("Stored resize evidence is invalid");
   worldSize(value.size);
-  if (
-    value.status === "committed" &&
-    (!value.hash ||
-      !value.digest ||
-      value.epoch === null ||
-      value.confirmedAt === null)
-  )
+  if (value.status === "committed" && (!value.hash || value.epoch === null))
     throw new Error("Stored resize receipt is incomplete");
   return value as ResizeRecord;
 }
@@ -152,11 +132,7 @@ export async function resizeWorld(
       size,
       status: "signing",
       hash: null,
-      submittedAt: Date.now(),
-      confirmedAt: null,
       epoch: null,
-      digest: null,
-      gasUsed: null,
       message: null,
     });
     const result = await params.boundary.execute(
@@ -178,12 +154,10 @@ export async function resizeWorld(
         },
       },
     );
-    const applied = save(
+    return save(
       scope,
       applyResult(record, result, params.config.contractAddress),
     );
-    measure(params.config, applied);
-    return applied;
   });
 }
 
@@ -202,7 +176,7 @@ export async function recoverResize(params: Parameters): Promise<ResizeRecord> {
         status: "failed",
         message: "Reset interrupted. Try again.",
       });
-    const applied = save(
+    return save(
       scope,
       applyResult(
         record,
@@ -213,24 +187,6 @@ export async function recoverResize(params: Parameters): Promise<ResizeRecord> {
         params.config.contractAddress,
       ),
     );
-    measure(params.config, applied);
-    return applied;
-  });
-}
-
-function measure(config: Parameters["config"], record: ResizeRecord): void {
-  if (record.status !== "committed") return;
-  recordMeasurement(config, {
-    kind: "reset",
-    size: record.size,
-    epoch: record.epoch!,
-    generation: "0",
-    digest: record.digest!,
-    hash: record.hash!,
-    submittedAt: record.submittedAt,
-    confirmedAt: record.confirmedAt!,
-    gasUsed: record.gasUsed!,
-    readyAt: null,
   });
 }
 
@@ -264,10 +220,7 @@ function applyResult(
         ...record,
         hash: result.hash,
         status: "committed",
-        confirmedAt: Date.now(),
         epoch: metadata.epoch.toString(),
-        digest: toHex0x(metadata.state_digest),
-        gasUsed: result.receipt.gasUsed.toString(),
         message: null,
       };
     } catch (error) {

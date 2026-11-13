@@ -17,9 +17,6 @@ export class ByteBudget<T> {
   get byteLength(): number {
     return this.used;
   }
-  get size(): number {
-    return this.entries.size;
-  }
   get(key: string): T | undefined {
     const entry = this.entries.get(key);
     if (!entry) return undefined;

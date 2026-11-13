@@ -5,7 +5,6 @@ import {
   type ChainVerification,
 } from "@/chain/metadata-state";
 import type { ImmutableSnapshot } from "@/indexer/client";
-import type { LifeStatus } from "@/indexer/schema";
 import { compareWorldVersion } from "@/indexer/schema";
 
 export type ArtifactState =
@@ -17,7 +16,6 @@ export type ArtifactState =
   | "malformed"
   | "invalid";
 export type TransitionState = "idle" | "staging" | "crossfading";
-export type StatusEndpointState = "fresh" | "unavailable" | "malformed";
 export type RendererAvailability =
   "initializing" | "available" | "context-lost" | "unavailable";
 
@@ -33,9 +31,6 @@ export interface SynchronizationState {
   readonly artifactState: ArtifactState;
   readonly artifactError: string | null;
   readonly transition: TransitionState;
-  readonly status: LifeStatus | null;
-  readonly statusEndpoint: StatusEndpointState;
-  readonly statusError: string | null;
 }
 
 export const INITIAL_SYNCHRONIZATION_STATE: SynchronizationState = {
@@ -50,9 +45,6 @@ export const INITIAL_SYNCHRONIZATION_STATE: SynchronizationState = {
   artifactState: "idle",
   artifactError: null,
   transition: "idle",
-  status: null,
-  statusEndpoint: "unavailable",
-  statusError: null,
 };
 
 export type SynchronizationAction =
@@ -73,12 +65,6 @@ export type SynchronizationAction =
       readonly type: "visualization-committed";
       readonly digest: string;
       readonly epoch: number;
-    }
-  | { readonly type: "status-read"; readonly value: LifeStatus }
-  | {
-      readonly type: "status-failed";
-      readonly condition: "unavailable" | "malformed";
-      readonly error: string;
     };
 
 export function synchronizationReducer(
@@ -183,19 +169,6 @@ export function synchronizationReducer(
         transition: "idle",
         artifactState: "ready",
       };
-    case "status-read":
-      return {
-        ...state,
-        status: action.value,
-        statusEndpoint: "fresh",
-        statusError: null,
-      };
-    case "status-failed":
-      return {
-        ...state,
-        statusEndpoint: action.condition,
-        statusError: action.error,
-      };
   }
 }
 
@@ -217,11 +190,4 @@ function compareSnapshot(
   right: ImmutableSnapshot,
 ): number {
   return compareWorldVersion(left.manifest, right.manifest);
-}
-
-export function isStatusStale(
-  status: LifeStatus | null,
-  now = Date.now(),
-): boolean {
-  return status === null || now - Date.parse(status.heartbeatAt) >= 15_000;
 }

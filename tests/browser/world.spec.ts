@@ -870,30 +870,6 @@ test("publishes a candidate tile level selected across a hysteresis boundary", a
   ).toBeVisible();
 });
 
-test("stale status degrades health without invalidating static artifacts", async ({
-  page,
-}) => {
-  await page.request.get("/__life-fixture?stale=1");
-  await page.goto("/");
-  await expect(page.getByText(/Indexer (status|idle)/)).toHaveCount(0);
-  await expect(
-    page.getByLabel("Pan and zoom the 10,000 by 10,000 cell world"),
-  ).toBeVisible();
-  await expect(page.getByText("Ready · generation 0")).toBeVisible();
-});
-
-test("an unavailable status endpoint preserves the verified world", async ({
-  page,
-}) => {
-  await page.request.get("/__life-fixture?status=unavailable");
-  await page.goto("/");
-  await expect(page.getByText(/Indexer (status|idle)/)).toHaveCount(0);
-  await expect(page.getByText("Ready · generation 0")).toBeVisible();
-  await expect(
-    page.getByLabel("Pan and zoom the 10,000 by 10,000 cell world"),
-  ).toBeVisible();
-});
-
 test("latest endpoint failure retains an owned immutable snapshot", async ({
   page,
 }) => {
@@ -926,15 +902,6 @@ test("RPC loss retains the last verified chain and visualization", async ({
       .getByText("Generation", { exact: true })
       .locator("+ dd"),
   ).toHaveText("0");
-});
-
-test("a malformed status remains distinct from endpoint unavailability", async ({
-  page,
-}) => {
-  await page.request.get("/__life-fixture?status=malformed");
-  await page.goto("/");
-  await expect(page.getByText(/Indexer (status|idle)/)).toHaveCount(0);
-  await expect(page.getByText("Ready · generation 0")).toBeVisible();
 });
 
 test("reduced motion uses the same candidate coverage gate", async ({

@@ -54,7 +54,6 @@ describe("request and crank workflow", () => {
       profiles,
       wallet,
       boundary: { execute, observe: vi.fn() },
-      automaticCrank: true,
     });
     expect(execute).toHaveBeenCalledOnce();
     expect(result.requests[0]).toMatchObject({

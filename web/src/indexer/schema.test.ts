@@ -5,7 +5,6 @@ import {
   parseLatest,
   parseManifest,
   parseProvenance,
-  parseStatus,
 } from "./schema";
 const network = "11".repeat(32);
 const contract = `0x${"22".repeat(32)}`;
@@ -120,35 +119,6 @@ describe("artifact schemas", () => {
     expect(() => parseProvenance({ ...advanced, requester: null })).toThrow(
       /disagree/,
     );
-  });
-  test("enforces status state cross-fields", () => {
-    const status = {
-      schemaVersion: 2,
-      state: "preparing",
-      observed: null,
-      preparing: {
-        epoch: "0",
-        generation: "1",
-        stateDigest: digest,
-        completedUnits: 2,
-        totalUnits: 3,
-        unit: "tiles",
-      },
-      published: null,
-      retry: null,
-      errorCode: null,
-      heartbeatAt: "2026-08-28T01:02:03Z",
-    };
-    expect(parseStatus(status).preparing?.completedUnits).toBe(2);
-    expect(() => parseStatus({ ...status, state: "idle" })).toThrow(
-      /match state/,
-    );
-    expect(() =>
-      parseStatus({
-        ...status,
-        preparing: { ...status.preparing, completedUnits: 4 },
-      }),
-    ).toThrow(/exceeds/);
   });
   test("detects cross-document disagreement", () => {
     const l = parseLatest(latest, network, contract);

@@ -505,7 +505,6 @@ name = "game-of-life"
 version = "0.1.0"
 dependencies = [
  "game-of-life-core",
- "sha2",
  "thruput-sdk",
 ]
 

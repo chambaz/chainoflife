@@ -4,11 +4,9 @@ import {
   parseLatest,
   parseManifest,
   parseProvenance,
-  parseStatus,
   type LatestPointer,
   type LifeManifest,
   type LifeProvenance,
-  type LifeStatus,
 } from "./schema";
 
 export interface ImmutableSnapshot {
@@ -65,12 +63,6 @@ export class IndexerClient {
     )
       throw new Error("snapshot is outside the configured world scope");
     return Object.freeze({ latest, manifest, provenance, manifestUrl });
-  }
-
-  async status(signal?: AbortSignal): Promise<LifeStatus> {
-    return parseStatus(
-      await this.json(new URL("status.json", this.worldBase()), signal),
-    );
   }
 
   tileUrl(snapshot: ImmutableSnapshot, z: number, x: number, y: number): URL {

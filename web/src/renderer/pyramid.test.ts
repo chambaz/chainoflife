@@ -4,7 +4,6 @@ import {
   parentIndex,
   ring,
   selectPyramidLevel,
-  tileBounds,
   tileCount,
   tileSpan,
   worldToTile,
@@ -19,13 +18,7 @@ describe("tile pyramid", () => {
       16384, 8192, 4096, 2048, 1024, 512, 256,
     ]);
   });
-  test("clips edge bounds and maps edge cells", () => {
-    expect(tileBounds({ z: 6, x: 39, y: 39 })).toEqual({
-      left: 9984,
-      top: 9984,
-      right: 10000,
-      bottom: 10000,
-    });
+  test("maps edge cells", () => {
     expect(worldToTile(9999, 9999, 6)).toMatchObject({
       tile: { z: 6, x: 39, y: 39 },
       localX: 15,

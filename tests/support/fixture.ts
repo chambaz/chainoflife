@@ -19,9 +19,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
     resizable: true,
     chainGeneration: 0,
     publishedGeneration: 0,
-    status: "idle" as
-      "idle" | "preparing" | "error" | "unavailable" | "malformed",
-    stale: false,
     tileDelay: 0,
     holdCandidateTiles: false,
     candidateTileHeld: false,
@@ -59,40 +56,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
         sourceBlockHeight: String(9 + published),
         sourceBlockHash: block,
         publishedAt: "2026-08-28T01:02:03Z",
-      };
-    }
-    if (pathname === `${base}/status.json`) {
-      if (fixture.status === "unavailable") return undefined;
-      if (fixture.status === "malformed") return { schemaVersion: 2 };
-      const preparing = fixture.status === "preparing" ? 1 : null;
-      return {
-        schemaVersion: 2,
-        state: fixture.status,
-        observed: { epoch: "0", generation: "1", stateDigest: digests[1] },
-        preparing:
-          preparing === null
-            ? null
-            : {
-                generation: "1",
-                epoch: "0",
-                stateDigest: digests[1],
-                completedUnits: 7,
-                totalUnits: 12,
-                unit: "tiles",
-              },
-        published: {
-          epoch: "0",
-          generation: String(published),
-          stateDigest: digest,
-        },
-        retry:
-          fixture.status === "error"
-            ? { attempt: 2, nextAt: "2026-08-29T01:03:00Z" }
-            : null,
-        errorCode: fixture.status === "error" ? "BUILD_FAILED" : null,
-        heartbeatAt: fixture.stale
-          ? "2026-08-28T01:02:03Z"
-          : new Date().toISOString(),
       };
     }
     for (const generation of [0, 1]) {
@@ -191,8 +154,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
             fixture.resizable = true;
             fixture.chainGeneration = 0;
             fixture.publishedGeneration = 0;
-            fixture.status = "idle";
-            fixture.stale = false;
             fixture.tileDelay = 0;
             fixture.holdCandidateTiles = false;
             fixture.candidateTileHeld = false;
@@ -214,17 +175,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
             if (published === 0 || published === 1)
               fixture.publishedGeneration = published;
           }
-          const status = url.searchParams.get("status");
-          if (
-            status === "idle" ||
-            status === "preparing" ||
-            status === "error" ||
-            status === "unavailable" ||
-            status === "malformed"
-          )
-            fixture.status = status;
-          if (url.searchParams.has("stale"))
-            fixture.stale = url.searchParams.get("stale") === "1";
           if (url.searchParams.has("tileDelay")) {
             const delay = Number(url.searchParams.get("tileDelay"));
             if (Number.isSafeInteger(delay) && delay >= 0 && delay <= 10_000)

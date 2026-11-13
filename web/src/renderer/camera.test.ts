@@ -5,7 +5,6 @@ import {
   fillCamera,
   parseCamera,
   serializeCamera,
-  zoomAround,
 } from "./camera";
 describe("camera", () => {
   test("fits the complete world", () =>
@@ -26,11 +25,6 @@ describe("camera", () => {
       y: 4,
       zoom: 6,
     }));
-  test("preserves the world point under pointer zoom", () => {
-    const camera = { x: 5000, y: 5000, zoom: -2 };
-    const next = zoomAround(camera, -1, [700, 300], [800, 600]);
-    expect(next).toEqual({ x: 5600, y: 5000, zoom: -1 });
-  });
   test("round trips bounded URL state", () => {
     const camera = { x: 123.25, y: 9876.5, zoom: -2.5 };
     expect(parseCamera(serializeCamera(camera))).toEqual(camera);

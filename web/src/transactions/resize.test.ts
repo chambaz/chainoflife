@@ -45,9 +45,7 @@ test("persists signed reset identity before broadcast and only observes it after
   const params = { config, profiles, wallet, boundary: { execute, observe } };
   await resizeWorld(params, 100);
   await expect(resizeWorld(params, 200)).rejects.toThrow(/pending resize/);
-  await expect(
-    requestTick({ ...params, automaticCrank: true }),
-  ).rejects.toThrow(/pending resize/);
+  await expect(requestTick(params)).rejects.toThrow(/pending resize/);
   await recoverResize(params);
   expect(execute).toHaveBeenCalledOnce();
   expect(observe).toHaveBeenCalledWith(hash, policy.observationTimeoutMs);
