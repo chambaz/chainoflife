@@ -11,7 +11,7 @@ import {
   WorldInitialized,
   decodeEvent,
 } from "@/contracts/game-of-life";
-import { WORLD_SIZE } from "@/indexer/schema";
+import { MAX_WORLD_SIZE } from "@/indexer/schema";
 import { isHex32 } from "@/lib/validation";
 
 export interface ChainMetadata {
@@ -57,7 +57,7 @@ export function createLifeReadAdapter(params: {
       const value = result.value;
       if (
         value.size < 100n ||
-        value.size > BigInt(WORLD_SIZE) ||
+        value.size > BigInt(MAX_WORLD_SIZE) ||
         value.size % 100n !== 0n ||
         value.population > value.size * value.size
       )

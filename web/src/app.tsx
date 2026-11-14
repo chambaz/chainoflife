@@ -222,13 +222,6 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   const rendererKey = visualized
     ? (ownedRendererKey.current ??= visualized.manifest.stateDigest)
     : rendererSnapshot?.manifest.stateDigest;
-  const initialIdentity =
-    !visualized && state.candidate && state.candidateEpoch !== null
-      ? {
-          epoch: state.candidateEpoch,
-          digest: state.candidate.manifest.stateDigest,
-        }
-      : null;
   const approveCommit = (
     snapshot: ImmutableSnapshot,
     identity: { readonly epoch: number; readonly digest: string },
@@ -275,14 +268,10 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
             <WorldViewport
               key={rendererKey}
               client={indexer}
-              initialSnapshot={rendererSnapshot}
+              visualized={visualized}
               previewSize={previewSize}
-              initialIdentity={initialIdentity}
-              candidate={visualized ? state.candidate : null}
-              candidateEpoch={visualized ? state.candidateEpoch : null}
-              onTransition={(value) => {
-                send({ type: "transition", value });
-              }}
+              candidate={state.candidate}
+              candidateEpoch={state.candidateEpoch}
               approveCommit={approveCommit}
               onAnnouncement={announce}
               onAvailability={updateRendererAvailability}
@@ -403,7 +392,7 @@ export function GenerationReadout({
           ? "No ready visualization"
           : rendererAvailability !== "available"
             ? "Visualization unavailable"
-            : state.transition !== "idle"
+            : state.candidate
               ? `Preparing visualization ${state.candidate?.manifest.generation ?? ""}`
               : state.chainIntegrityFailed
                 ? `Chain integrity warning · retained generation ${visualized ?? "—"}`

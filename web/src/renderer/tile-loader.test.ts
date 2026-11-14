@@ -1,5 +1,6 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { CELLS_CONTENT_TYPE } from "@/indexer/schema";
+import { ByteBudget, CPU_TILE_CACHE_BYTES } from "./budget";
 import { TileLoader } from "./tile-loader";
 
 const digest = `0x${"aa".repeat(32)}`;
@@ -9,19 +10,20 @@ function setup(fetcher: typeof fetch) {
   const pool = {
     decode: vi.fn(async (bytes: ArrayBuffer) => ({
       kind: "cells" as const,
-      packed: new Uint8Array(bytes),
-      values: new Uint8Array(65_536),
+      values: new Uint8Array(bytes.byteLength * 8),
     })),
     close: vi.fn(),
   };
+  vi.stubGlobal("fetch", fetcher);
   const loader = new TileLoader(
     { tileUrl: () => new URL("http://127.0.0.1/tile.bin") } as never,
     { manifest: { stateDigest: digest } } as never,
-    pool as never,
-    fetcher,
+    { cache: new ByteBudget(CPU_TILE_CACHE_BYTES), pool },
   );
   return { loader, pool };
 }
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("tile loader", () => {
   test("accepts a genuine multi-chunk body without Content-Length", async () => {

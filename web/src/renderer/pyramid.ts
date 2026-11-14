@@ -1,4 +1,4 @@
-import { MAX_ZOOM, TILE_SIZE, WORLD_SIZE } from "@/indexer/schema";
+import { MAX_ZOOM, TILE_SIZE } from "@/indexer/schema";
 
 export interface TileIndex {
   readonly x: number;
@@ -21,7 +21,7 @@ export interface RefinementTile {
 
 export const cellsPerTexel = (z: number): number => 2 ** (MAX_ZOOM - z);
 export const tileSpan = (z: number): number => TILE_SIZE * cellsPerTexel(z);
-export const tileCount = (z: number, worldSize = WORLD_SIZE): number =>
+export const tileCount = (z: number, worldSize: number): number =>
   Math.ceil(worldSize / tileSpan(z));
 export const tileId = ({ z, x, y }: TileIndex): string => `${z}/${x}/${y}`;
 export function parentIndex(index: TileIndex): TileIndex | null {
@@ -37,7 +37,7 @@ export function worldToTile(
   x: number,
   y: number,
   z: number,
-  worldSize = WORLD_SIZE,
+  worldSize: number,
 ) {
   if (x < 0 || x >= worldSize || y < 0 || y >= worldSize)
     throw new RangeError("world coordinate is out of bounds");
@@ -84,7 +84,7 @@ export function immediateParentRefinement(
 }
 export function ring(
   indices: readonly TileIndex[],
-  worldSize = WORLD_SIZE,
+  worldSize: number,
 ): TileIndex[] {
   const output = new Map<string, TileIndex>();
   for (const index of indices) {
@@ -110,4 +110,41 @@ function usable(tile: RefinementTile, digest: string): boolean {
 }
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+export function clippedBounds(
+  bounds: TileBounds,
+  worldSize: number,
+): TileBounds {
+  return {
+    left: Math.max(0, bounds.left),
+    top: Math.max(0, bounds.top),
+    right: Math.min(worldSize, bounds.right),
+    bottom: Math.min(worldSize, bounds.bottom),
+  };
+}
+export function sameBounds(left: TileBounds, right: TileBounds): boolean {
+  return (
+    left.left === right.left &&
+    left.top === right.top &&
+    left.right === right.right &&
+    left.bottom === right.bottom
+  );
+}
+/** Triangle-strip corners of a tile quad: top-left, top-right, bottom-left, bottom-right. */
+export function quadPositions(bounds: TileBounds): Float32Array {
+  const { left, top, right, bottom } = bounds;
+  return new Float32Array([
+    left,
+    top,
+    0,
+    right,
+    top,
+    0,
+    left,
+    bottom,
+    0,
+    right,
+    bottom,
+    0,
+  ]);
 }

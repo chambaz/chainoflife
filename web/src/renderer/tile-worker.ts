@@ -10,11 +10,7 @@ interface Request {
 self.onmessage = ({ data }: MessageEvent<Request>) => {
   try {
     const tile = decodeTile(data.bytes, data.contentType, data.z);
-    const transfers =
-      tile.kind === "cells"
-        ? [tile.packed.buffer, tile.values.buffer]
-        : [tile.values.buffer];
-    self.postMessage({ id: data.id, tile }, { transfer: transfers });
+    self.postMessage({ id: data.id, tile }, { transfer: [tile.values.buffer] });
   } catch (error) {
     self.postMessage({
       id: data.id,

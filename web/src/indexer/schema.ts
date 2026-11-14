@@ -1,7 +1,7 @@
 import { DECIMAL, HEX32 } from "@/lib/validation";
 
 /** The largest supported world width and height. */
-export const WORLD_SIZE = 10_000;
+export const MAX_WORLD_SIZE = 10_000;
 export const TILE_SIZE = 256;
 export const MAX_ZOOM = 6;
 export const DENSITY_CONTENT_TYPE =
@@ -73,7 +73,7 @@ export function worldSize(value: unknown): number {
   if (
     typeof value !== "number" ||
     value < 100 ||
-    value > WORLD_SIZE ||
+    value > MAX_WORLD_SIZE ||
     value % 100 !== 0
   )
     throw new SchemaError("world size must be 100–10,000 in steps of 100");
@@ -274,7 +274,7 @@ function canonicalHex32(input: unknown, field: string): string {
 
 function parseIdentity(value: Record<string, unknown>): SnapshotIdentity {
   const population = decimal(value.population, "population");
-  if (BigInt(population) > BigInt(WORLD_SIZE ** 2))
+  if (BigInt(population) > BigInt(MAX_WORLD_SIZE ** 2))
     throw new SchemaError("population exceeds world capacity");
   return {
     networkId: canonicalNetwork(value.networkId),

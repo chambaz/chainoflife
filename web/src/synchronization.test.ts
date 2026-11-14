@@ -56,7 +56,6 @@ describe("generation synchronization", () => {
     expect(state.visualized).toBeNull();
     expect(state.candidate).toBe(first);
     expect(state.candidateEpoch).toBe(1);
-    expect(state.transition).toBe("staging");
   });
 
   test("keeps a verified visualization while a newer candidate is staged", () => {
@@ -66,7 +65,6 @@ describe("generation synchronization", () => {
     state = stage(state, next);
     expect(state.visualized).toBe(first);
     expect(state.candidate).toBe(next);
-    expect(state.transition).toBe("staging");
   });
 
   test("commits only the exact staged digest", () => {
@@ -142,7 +140,6 @@ describe("generation synchronization", () => {
       },
     );
     expect(state.candidate).toBeNull();
-    expect(state.transition).toBe("idle");
     expect(
       synchronizationReducer(state, {
         type: "visualization-committed",

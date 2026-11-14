@@ -1,3 +1,4 @@
+import { MAX_ZOOM } from "@/indexer/schema";
 import { parentIndex, tileId, type TileIndex } from "./pyramid";
 
 export function hasRequiredCoverage(
@@ -9,7 +10,7 @@ export function hasRequiredCoverage(
     visible.length > 0 &&
     visible.every((index) => {
       if (isReady(`${digest}:${tileId(index)}`)) return true;
-      if (index.z === 6) return false;
+      if (index.z === MAX_ZOOM) return false;
       const parent = parentIndex(index);
       return Boolean(parent && isReady(`${digest}:${tileId(parent)}`));
     })

@@ -7,27 +7,16 @@ import { readBody } from "../../scripts/proxy";
 
 export function fixtureArtifacts(network: string, contract: string): Plugin {
   const fundedAccounts = new Set<string>();
-  const digests = [
-    `0x${"aa".repeat(32)}`,
-    `0x${"dd".repeat(32)}`,
-    `0x${"ee".repeat(32)}`,
-  ] as const;
+  const digests = [`0x${"aa".repeat(32)}`, `0x${"dd".repeat(32)}`] as const;
   const block = `0x${"bb".repeat(32)}`;
   const base = `/v1/worlds/${network}/${contract}`;
   const fixture = {
     resizable: true,
     chainGeneration: 0,
     publishedGeneration: 0,
-    tileDelay: 0,
     holdCandidateTiles: false,
     candidateTileHeld: false,
-    latestState: "ready" as "ready" | "unavailable" | "malformed",
-    rpcState: "ready" as
-      | "ready"
-      | "unavailable"
-      | "malformed"
-      | "malformed-schema"
-      | "malformed-envelope",
+    latestUnavailable: false,
   };
   let heldCandidateTiles: Array<() => void> = [];
   const identity = (generation: number) => ({
@@ -42,9 +31,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
   const artifact = (pathname: string): unknown => {
     const published = fixture.publishedGeneration;
     const digest = digests[published]!;
-    if (pathname === `${base}/latest.json`) {
-      if (fixture.latestState === "unavailable") return undefined;
-      if (fixture.latestState === "malformed") return { schemaVersion: 2 };
+    if (pathname === `${base}/latest.json`)
       return {
         schemaVersion: 2,
         epoch: "0",
@@ -55,7 +42,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
         sourceBlockHash: block,
         publishedAt: "2026-08-28T01:02:03Z",
       };
-    }
     for (const generation of [0, 1]) {
       const value = identity(generation);
       const root = `${base}/${value.stateDigest}`;
@@ -101,9 +87,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
         generation: BigInt(generation),
         seed: 7n,
         population: BigInt(32_768 + generation),
-        state_digest: new Uint8Array(32).fill(
-          generation === 0 ? 0xaa : generation === 1 ? 0xdd : 0xee,
-        ),
+        state_digest: new Uint8Array(32).fill(generation === 0 ? 0xaa : 0xdd),
         resizable: fixture.resizable,
       },
       metadataCodec,
@@ -120,11 +104,9 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
             fixture.resizable = true;
             fixture.chainGeneration = 0;
             fixture.publishedGeneration = 0;
-            fixture.tileDelay = 0;
             fixture.holdCandidateTiles = false;
             fixture.candidateTileHeld = false;
-            fixture.latestState = "ready";
-            fixture.rpcState = "ready";
+            fixture.latestUnavailable = false;
             for (const release of heldCandidateTiles) release();
             heldCandidateTiles = [];
           }
@@ -132,67 +114,33 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
             fixture.resizable = url.searchParams.get("fixed") !== "1";
           if (url.searchParams.has("chain")) {
             const chain = Number(url.searchParams.get("chain"));
-            if (chain === 0 || chain === 1 || chain === 2)
-              fixture.chainGeneration = chain;
+            if (chain === 0 || chain === 1) fixture.chainGeneration = chain;
           }
           if (url.searchParams.has("published")) {
             const published = Number(url.searchParams.get("published"));
             if (published === 0 || published === 1)
               fixture.publishedGeneration = published;
           }
-          if (url.searchParams.has("tileDelay")) {
-            const delay = Number(url.searchParams.get("tileDelay"));
-            if (Number.isSafeInteger(delay) && delay >= 0 && delay <= 10_000)
-              fixture.tileDelay = delay;
-          }
-          if (url.searchParams.has("holdCandidate"))
-            fixture.holdCandidateTiles =
-              url.searchParams.get("holdCandidate") === "1";
+          if (url.searchParams.get("holdCandidate") === "1")
+            fixture.holdCandidateTiles = true;
           if (url.searchParams.get("releaseCandidate") === "1") {
             fixture.holdCandidateTiles = false;
             fixture.candidateTileHeld = false;
             for (const release of heldCandidateTiles) release();
             heldCandidateTiles = [];
           }
-          if (url.searchParams.has("latest"))
-            fixture.latestState =
-              url.searchParams.get("latest") === "unavailable"
-                ? "unavailable"
-                : url.searchParams.get("latest") === "malformed"
-                  ? "malformed"
-                  : "ready";
-          if (url.searchParams.has("rpc"))
-            fixture.rpcState =
-              url.searchParams.get("rpc") === "unavailable"
-                ? "unavailable"
-                : url.searchParams.get("rpc") === "malformed"
-                  ? "malformed"
-                  : url.searchParams.get("rpc") === "malformed-schema"
-                    ? "malformed-schema"
-                    : url.searchParams.get("rpc") === "malformed-envelope"
-                      ? "malformed-envelope"
-                      : "ready";
+          if (url.searchParams.get("latest") === "unavailable")
+            fixture.latestUnavailable = true;
           response.statusCode = 204;
           response.end();
           return;
         }
         if (request.method === "POST" && pathname === "/") {
-          if (fixture.rpcState === "unavailable") {
-            response.statusCode = 503;
-            response.end("unavailable");
-            return;
-          }
           const envelope = JSON.parse(await readBody(request)) as {
             readonly id: string | number;
             readonly method: string;
             readonly params?: { address?: string; recipient?: string };
           };
-          if (fixture.rpcState === "malformed-envelope") {
-            response.statusCode = 200;
-            response.setHeader("content-type", "application/json");
-            response.end("not-json");
-            return;
-          }
           let walletResult: unknown;
           if (envelope.method === "getBalance") {
             const address = envelope.params!.address!;
@@ -226,20 +174,15 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
                     latestIndexedBlockHeight: "9",
                     oldestIndexedBlockHeight: "0",
                   }
-                : fixture.rpcState === "malformed-schema"
-                  ? { output: null, events: "invalid", stateBlockHeight: "9" }
-                  : {
-                      output: {
-                        result: "return",
-                        returnData:
-                          fixture.rpcState === "malformed"
-                            ? "0x00"
-                            : hex(metadataBytes(fixture.chainGeneration)),
-                      },
-                      events: [],
-                      stateBlockHeight: "9",
-                      gasUsed: "100",
-                    }),
+                : {
+                    output: {
+                      result: "return",
+                      returnData: hex(metadataBytes(fixture.chainGeneration)),
+                    },
+                    events: [],
+                    stateBlockHeight: "9",
+                    gasUsed: "100",
+                  }),
           });
           response.statusCode = 200;
           response.setHeader("content-type", "application/json");
@@ -247,10 +190,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
           response.end(body);
           return;
         }
-        if (
-          pathname === `${base}/latest.json` &&
-          fixture.latestState === "unavailable"
-        ) {
+        if (pathname === `${base}/latest.json` && fixture.latestUnavailable) {
           response.statusCode = 503;
           response.end("unavailable");
           return;
@@ -285,10 +225,6 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
             heldCandidateTiles.push(resolve),
           );
         }
-        if (generation === 1 && fixture.tileDelay)
-          await new Promise((resolve) =>
-            setTimeout(resolve, fixture.tileDelay),
-          );
         response.statusCode = 200;
         response.setHeader(
           "content-type",

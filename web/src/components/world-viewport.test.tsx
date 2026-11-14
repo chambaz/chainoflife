@@ -13,7 +13,8 @@ vi.mock("@/renderer/world-renderer", () => ({
     constructor(
       _canvas: HTMLCanvasElement,
       _client: IndexerClient,
-      _snapshot: ImmutableSnapshot,
+      _visualized: ImmutableSnapshot | null,
+      _worldSize: number,
       callbacks: RendererCallbacks,
     ) {
       mockRenderer.callbacks = callbacks;
@@ -23,9 +24,10 @@ vi.mock("@/renderer/world-renderer", () => ({
     stageSnapshot() {}
     cancelCandidate() {}
     handleKey() {}
+    resize() {}
     zoom() {}
     fit() {}
-    reset() {}
+    fill() {}
   },
 }));
 
@@ -63,13 +65,13 @@ describe("world viewport renderer failures", () => {
     expect(onAvailability).toHaveBeenLastCalledWith("unavailable");
   });
 
-  test("clears a transient tile warning after a successful tile load", () => {
+  test("clears a tile warning once the renderer resolves it", () => {
     renderViewport(vi.fn());
 
-    act(() => mockRenderer.callbacks!.onTileError("tile failed"));
+    act(() => mockRenderer.callbacks!.onTileWarning("tile failed"));
     expect(screen.getByRole("status")).toHaveTextContent("tile failed");
 
-    act(() => mockRenderer.callbacks!.onTileLoad());
+    act(() => mockRenderer.callbacks!.onTileWarning(null));
     expect(screen.queryByText("tile failed")).not.toBeInTheDocument();
   });
 });
@@ -78,11 +80,9 @@ function renderViewport(onAvailability: (value: string) => void) {
   render(
     <WorldViewport
       client={{} as IndexerClient}
-      initialSnapshot={{ manifest: { width: 10_000 } } as ImmutableSnapshot}
-      initialIdentity={null}
+      visualized={{ manifest: { width: 10_000 } } as ImmutableSnapshot}
       candidate={null}
       candidateEpoch={null}
-      onTransition={vi.fn()}
       approveCommit={() => true}
       onAnnouncement={vi.fn()}
       onAvailability={onAvailability}

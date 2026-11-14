@@ -1,13 +1,9 @@
-import { MAX_ZOOM, TILE_SIZE, WORLD_SIZE } from "@/indexer/schema";
+import { MAX_ZOOM, TILE_SIZE } from "@/indexer/schema";
 import { cellsPerTexel, worldToTile } from "./pyramid";
 
 export type DecodedTile =
   | { readonly kind: "density"; readonly values: Uint16Array }
-  | {
-      readonly kind: "cells";
-      readonly packed: Uint8Array;
-      readonly values: Uint8Array;
-    };
+  | { readonly kind: "cells"; readonly values: Uint8Array };
 export type Inspection =
   | {
       readonly kind: "density";
@@ -32,19 +28,17 @@ export function inspect(
   y: number,
   z: number,
   generation: string,
-  worldSize = WORLD_SIZE,
+  worldSize: number,
 ): Inspection {
   const mapped = worldToTile(x, y, z, worldSize);
   if (tile.kind === "cells") {
     if (z !== MAX_ZOOM) throw new Error("cell tile used below exact zoom");
-    const byte =
-      tile.packed[mapped.localY * 32 + Math.floor(mapped.localX / 8)] ?? 0;
     return {
       kind: "cell",
       generation,
       x: Math.floor(x),
       y: Math.floor(y),
-      alive: ((byte >> (mapped.localX % 8)) & 1) === 1,
+      alive: tile.values[mapped.localY * TILE_SIZE + mapped.localX] === 1,
     };
   }
   const scale = cellsPerTexel(z);

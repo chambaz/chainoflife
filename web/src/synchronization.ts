@@ -14,7 +14,6 @@ export type ArtifactState =
   | "unavailable"
   | "malformed"
   | "invalid";
-export type TransitionState = "idle" | "staging" | "crossfading";
 export type RendererAvailability =
   "initializing" | "available" | "context-lost" | "unavailable";
 
@@ -29,7 +28,6 @@ export interface SynchronizationState {
   readonly pendingSnapshot: ImmutableSnapshot | null;
   readonly artifactState: ArtifactState;
   readonly artifactError: string | null;
-  readonly transition: TransitionState;
 }
 
 export const INITIAL_SYNCHRONIZATION_STATE: SynchronizationState = {
@@ -43,7 +41,6 @@ export const INITIAL_SYNCHRONIZATION_STATE: SynchronizationState = {
   pendingSnapshot: null,
   artifactState: "idle",
   artifactError: null,
-  transition: "idle",
 };
 
 export type SynchronizationAction =
@@ -59,7 +56,6 @@ export type SynchronizationAction =
     }
   | { readonly type: "candidate-ready"; readonly snapshot: ImmutableSnapshot }
   | { readonly type: "candidate-invalid"; readonly error: string }
-  | { readonly type: "transition"; readonly value: TransitionState }
   | {
       readonly type: "visualization-committed";
       readonly digest: string;
@@ -146,13 +142,8 @@ export function synchronizationReducer(
         pendingSnapshot: null,
         artifactState: "ready",
         artifactError: null,
-        transition: "staging",
       };
     }
-    case "transition":
-      return state.candidate
-        ? { ...state, transition: action.value }
-        : { ...state, transition: "idle" };
     case "visualization-committed":
       if (
         state.candidate?.manifest.stateDigest !== action.digest ||
@@ -165,7 +156,6 @@ export function synchronizationReducer(
         visualized: state.candidate,
         candidate: null,
         candidateEpoch: null,
-        transition: "idle",
         artifactState: "ready",
       };
   }
@@ -179,7 +169,6 @@ function clearCandidate(
     ...state,
     candidate: null,
     candidateEpoch: null,
-    transition: "idle",
     artifactError: error,
   };
 }

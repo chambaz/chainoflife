@@ -8,19 +8,21 @@ import {
 } from "./camera";
 describe("camera", () => {
   test("fits the complete world", () =>
-    expect(fitCamera(1000, 500)).toEqual({
+    expect(fitCamera(1000, 500, 10_000)).toEqual({
       x: 5000,
       y: 5000,
       zoom: Math.log2(0.05),
     }));
   test("clamps to real world bounds", () =>
-    expect(clampCamera({ x: -5, y: 10050, zoom: 0 }, 512, 512)).toEqual({
-      x: 256,
-      y: 9744,
-      zoom: 0,
-    }));
+    expect(clampCamera({ x: -5, y: 10050, zoom: 0 }, 512, 512, 10_000)).toEqual(
+      {
+        x: 256,
+        y: 9744,
+        zoom: 0,
+      },
+    ));
   test("uses the clamped zoom when constraining the center", () =>
-    expect(clampCamera({ x: 0, y: 0, zoom: 10 }, 512, 512)).toEqual({
+    expect(clampCamera({ x: 0, y: 0, zoom: 10 }, 512, 512, 10_000)).toEqual({
       x: 4,
       y: 4,
       zoom: 6,

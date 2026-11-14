@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Focus, Minus, Plus, RotateCcw } from "lucide-react";
+import { Expand, Focus, Minus, Plus } from "lucide-react";
 import type { ImmutableSnapshot, IndexerClient } from "@/indexer/client";
 import type { RendererAvailability } from "@/synchronization";
 import { Button } from "@/components/ui/button";
@@ -20,11 +20,10 @@ import {
 interface Props {
   readonly previewSize?: number | null;
   readonly client: IndexerClient;
-  readonly initialSnapshot: ImmutableSnapshot;
-  readonly initialIdentity: CandidateIdentity | null;
+  /** The owned snapshot at mount, or null until the first candidate commits. */
+  readonly visualized: ImmutableSnapshot | null;
   readonly candidate: ImmutableSnapshot | null;
   readonly candidateEpoch: number | null;
-  readonly onTransition: (state: "staging" | "crossfading" | "idle") => void;
   readonly approveCommit: (
     snapshot: ImmutableSnapshot,
     identity: CandidateIdentity,
@@ -32,15 +31,12 @@ interface Props {
   readonly onAnnouncement: (message: string) => void;
   readonly onAvailability: (value: RendererAvailability) => void;
 }
-const INITIAL_CAMERA: Camera = { x: 5_000, y: 5_000, zoom: -6 };
 
 export function WorldViewport({
   client,
-  initialSnapshot,
-  initialIdentity,
+  visualized,
   candidate,
   candidateEpoch,
-  onTransition,
   approveCommit,
   onAnnouncement,
   onAvailability,
@@ -50,22 +46,25 @@ export function WorldViewport({
   const canvasDescription = useId();
   const canvas = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<WorldRenderer>(null);
-  const mountedSnapshot = useRef(initialSnapshot);
-  const mountedIdentity = useRef(initialIdentity);
+  const initialWorldSize = (visualized ?? candidate)?.manifest.width ?? 0;
+  const mountedSnapshot = useRef(visualized);
+  const mountedWorldSize = useRef(initialWorldSize);
   const lifecycle = useRef({
-    onTransition,
     approveCommit,
     onAnnouncement,
     onAvailability,
   });
   lifecycle.current = {
-    onTransition,
     approveCommit,
     onAnnouncement,
     onAvailability,
   };
-  const [camera, setCamera] = useState(INITIAL_CAMERA);
-  const [worldSize, setWorldSize] = useState(initialSnapshot.manifest.width);
+  const [camera, setCamera] = useState<Camera>(() => ({
+    x: initialWorldSize / 2,
+    y: initialWorldSize / 2,
+    zoom: MIN_CAMERA_ZOOM,
+  }));
+  const [worldSize, setWorldSize] = useState(initialWorldSize);
   const [level, setLevel] = useState(0);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [cellHighlight, setCellHighlight] = useState<CellHighlight | null>(
@@ -80,11 +79,12 @@ export function WorldViewport({
   useEffect(() => {
     if (!section.current) return;
     const observer = new ResizeObserver(([entry]) => {
-      if (entry)
-        setViewport({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height,
-        });
+      if (!entry) return;
+      setViewport({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
+      renderer.current?.resize();
     });
     observer.observe(section.current);
     return () => observer.disconnect();
@@ -97,6 +97,7 @@ export function WorldViewport({
         canvas.current,
         client,
         mountedSnapshot.current,
+        mountedWorldSize.current,
         {
           onCamera: setCamera,
           onLevel: setLevel,
@@ -108,8 +109,7 @@ export function WorldViewport({
             else if (!value) lifecycle.current.onAnnouncement("");
           },
           onError: setRendererWarning,
-          onTileError: setTileWarning,
-          onTileLoad: () => setTileWarning(null),
+          onTileWarning: setTileWarning,
           onContext: (lost) => {
             setContextLost(lost);
             lifecycle.current.onAvailability(
@@ -121,14 +121,12 @@ export function WorldViewport({
             setFatalError(message);
             lifecycle.current.onAvailability("unavailable");
           },
-          onTransition: (value) => lifecycle.current.onTransition(value),
           approveSnapshotCommit: (value, identity) => {
             const approved = lifecycle.current.approveCommit(value, identity);
             if (approved) setWorldSize(value.manifest.width);
             return approved;
           },
         },
-        mountedIdentity.current,
       );
       lifecycle.current.onAvailability("available");
     } catch (cause) {
@@ -145,7 +143,7 @@ export function WorldViewport({
 
   useEffect(() => {
     if (candidate && candidateEpoch !== null)
-      renderer.current?.stageSnapshot(candidate, client, candidateEpoch);
+      renderer.current?.stageSnapshot(candidate, candidateEpoch);
     else renderer.current?.cancelCandidate();
   }, [candidate, candidateEpoch, client]);
 
@@ -167,7 +165,6 @@ export function WorldViewport({
     >
       <canvas
         ref={canvas}
-        tabIndex={-1}
         aria-label={`Pan and zoom the ${worldSize.toLocaleString()} by ${worldSize.toLocaleString()} cell world`}
         className="size-full touch-none"
       />
@@ -302,11 +299,11 @@ export function WorldViewport({
               variant="ghost"
               size="icon"
               className="size-12 sm:size-9 [@media(pointer:coarse)]:size-12"
-              aria-label="Reset north-up"
+              aria-label="Fill viewport"
               disabled={controlsDisabled}
-              onClick={() => renderer.current?.reset()}
+              onClick={() => renderer.current?.fill()}
             >
-              <RotateCcw />
+              <Expand />
             </Button>
           </div>
         </div>

@@ -11,7 +11,6 @@ interface Job {
   reject: (error: unknown) => void;
 }
 export class TileWorkerPool {
-  readonly size: number;
   private nextId = 1;
   private readonly workers: Worker[] = [];
   private readonly idle: Worker[] = [];
@@ -27,7 +26,6 @@ export class TileWorkerPool {
   ) {
     if (!Number.isInteger(size) || size < 1 || size > 2)
       throw new RangeError("worker pool size must be one or two");
-    this.size = size;
     try {
       for (let index = 0; index < size; index += 1) {
         const worker = this.createWorker();

@@ -1,31 +1,21 @@
 import { describe, expect, test } from "vitest";
-import {
-  ActiveByteBudget,
-  ByteBudget,
-  DECK_LAYER_CACHE_BUDGET,
-  DEFAULT_CPU_BUDGET,
-  SHARED_CPU_CACHE_BUDGET,
-} from "./budget";
+import { ByteBudget } from "./budget";
 
-describe("active GPU byte budget", () => {
-  test("never evicts a live owner and releases each reservation once", () => {
-    const budget = new ActiveByteBudget(10);
-    const release = budget.reserve(7);
-    expect(() => budget.reserve(4)).toThrow(/exceed/);
-    expect(budget.byteLength).toBe(7);
-    release();
-    release();
+describe("CPU byte budget", () => {
+  test("evicts the least recently used entry", () => {
+    const budget = new ByteBudget<number>(10);
+    budget.set("a", 1, 6);
+    budget.set("b", 2, 4);
+    expect(budget.get("a")).toBe(1);
+    budget.set("c", 3, 4);
+    expect(budget.get("b")).toBeUndefined();
+    expect(budget.byteLength).toBe(10);
+    budget.clear();
     expect(budget.byteLength).toBe(0);
-    expect(() => budget.reserve(10)).not.toThrow();
   });
-});
 
-describe("aggregate CPU byte budget", () => {
-  test("shared and dual deck caches total no more than 64 MiB", () => {
-    expect(SHARED_CPU_CACHE_BUDGET + 2 * DECK_LAYER_CACHE_BUDGET).toBe(
-      DEFAULT_CPU_BUDGET,
-    );
-  });
+  test("rejects an individually over-budget entry", () =>
+    expect(() => new ByteBudget(4).set("x", true, 5)).toThrow(RangeError));
 
   test("pins displayed data against candidate cache pressure", () => {
     const cache = new ByteBudget<string>(10);

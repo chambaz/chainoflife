@@ -44,7 +44,6 @@ const state = {
     ...snapshot,
     manifest: { ...snapshot.manifest, generation: "4" },
   },
-  transition: "staging",
 } satisfies SynchronizationState;
 
 afterEach(cleanup);
@@ -61,7 +60,6 @@ describe("World instrument surfaces", () => {
         state={{
           ...state,
           candidate: null,
-          transition: "idle",
           chainIntegrityFailed: true,
         }}
       />,

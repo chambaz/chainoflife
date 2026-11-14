@@ -72,7 +72,7 @@ test("renders one immutable generation with accessible controls", async ({
   await expect(
     page.getByLabel("Pan and zoom the 10,000 by 10,000 cell world"),
   ).toBeVisible();
-  for (const name of ["Zoom out", "Zoom in", "Fit world", "Reset north-up"])
+  for (const name of ["Zoom out", "Zoom in", "Fit world", "Fill viewport"])
     await expect(page.getByRole("button", { name })).toBeEnabled();
   await expect(page.getByText(/Visualization unavailable/)).toHaveCount(0);
   await expect(page.getByText("3,072 cells")).toHaveCount(0);
@@ -434,7 +434,7 @@ test("supports tab focus and keyboard center inspection", async ({ page }) => {
   );
 });
 
-test("never exceeds eight concurrent immutable tile requests", async ({
+test("limits tile requests to four visible and one prefetch at a time", async ({
   page,
 }) => {
   let active = 0;
@@ -463,7 +463,7 @@ test("never exceeds eight concurrent immutable tile requests", async ({
   await expect.poll(() => active).toBe(0);
   await page.getByRole("button", { name: "Zoom in" }).click();
   await expect.poll(() => active).toBe(0);
-  expect(maximum).toBeLessThanOrEqual(8);
+  expect(maximum).toBeLessThanOrEqual(5);
 });
 
 test("renders deterministic pixels and rebuilds after real context loss", async ({
@@ -655,7 +655,7 @@ test("preserves controls and world context at 320 CSS pixels", async ({
       "Zoom out",
       "Zoom in",
       "Fit world",
-      "Reset north-up",
+      "Fill viewport",
     ]),
   );
   expect(
@@ -676,7 +676,7 @@ test("preserves controls and world context at 320 CSS pixels", async ({
   expect(scale).not.toBeNull();
   expect(scale!.x).toBeGreaterThanOrEqual(11);
   expect(scale!.x + scale!.width).toBeLessThanOrEqual(303);
-  for (const name of ["Zoom out", "Zoom in", "Fit world", "Reset north-up"])
+  for (const name of ["Zoom out", "Zoom in", "Fit world", "Fill viewport"])
     await page.getByRole("button", { name }).click();
   await activity.click();
   const activityDialog = page.getByRole("dialog", {
@@ -840,32 +840,6 @@ test("RPC loss retains the last verified chain and visualization", async ({
       .getByText("Generation", { exact: true })
       .locator("+ dd"),
   ).toHaveText("0");
-});
-
-test("reduced motion uses the same candidate coverage gate", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.request.get("/__life-fixture?chain=1&published=0");
-  await page.goto("/?x=5000&y=5000&z=0");
-  await expect(page.getByText("Displaying older generation 0")).toBeVisible();
-  const canvas = page.getByLabel(
-    "Pan and zoom the 10,000 by 10,000 cell world",
-  );
-  const background = await worldBackgroundHash(canvas);
-  await expect.poll(() => worldPixelsHash(canvas)).not.toBe(background);
-  const oldPixels = await worldPixelsHash(canvas);
-  await page.request.get("/__life-fixture?published=1&holdCandidate=1");
-  await expect(page.getByText("Preparing visualization 1")).toBeVisible({
-    timeout: 10_000,
-  });
-  await page.waitForTimeout(150);
-  expect(await worldPixelsHash(canvas)).toBe(oldPixels);
-  await page.request.get("/__life-fixture?releaseCandidate=1");
-  await expect(page.getByText("Ready · generation 1")).toBeVisible({
-    timeout: 10_000,
-  });
-  await expect.poll(() => worldPixelsHash(canvas)).not.toBe(oldPixels);
 });
 
 test("keeps the world and required controls usable in mobile landscape", async ({

@@ -1,4 +1,4 @@
-import { WORLD_SIZE } from "@/indexer/schema";
+import { MAX_WORLD_SIZE } from "@/indexer/schema";
 
 export interface Camera {
   readonly x: number;
@@ -11,7 +11,7 @@ export function clampCamera(
   camera: Camera,
   width: number,
   height: number,
-  worldSize = WORLD_SIZE,
+  worldSize: number,
 ): Camera {
   const zoom = clamp(camera.zoom, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
   const scale = 2 ** zoom;
@@ -26,7 +26,7 @@ export function clampCamera(
 export function fitCamera(
   width: number,
   height: number,
-  worldSize = WORLD_SIZE,
+  worldSize: number,
 ): Camera {
   return {
     x: worldSize / 2,
@@ -41,7 +41,7 @@ export function fitCamera(
 export function fillCamera(
   width: number,
   height: number,
-  worldSize = WORLD_SIZE,
+  worldSize: number,
 ): Camera {
   return {
     x: worldSize / 2,
@@ -53,6 +53,7 @@ export function fillCamera(
     ),
   };
 }
+/** Parses a shared camera; the world size is unknown here, so it bounds against the maximum. */
 export function parseCamera(search: string): Camera | null {
   const query = new URLSearchParams(search);
   const keys = [...query.keys()];
@@ -67,9 +68,9 @@ export function parseCamera(search: string): Camera | null {
   const [x, y, zoom] = values as [number, number, number];
   if (
     x < 0 ||
-    x > WORLD_SIZE ||
+    x > MAX_WORLD_SIZE ||
     y < 0 ||
-    y > WORLD_SIZE ||
+    y > MAX_WORLD_SIZE ||
     zoom < MIN_CAMERA_ZOOM ||
     zoom > MAX_CAMERA_ZOOM
   )

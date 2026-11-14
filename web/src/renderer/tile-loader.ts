@@ -1,10 +1,11 @@
 import type { ImmutableSnapshot, IndexerClient } from "@/indexer/client";
-import { CELLS_CONTENT_TYPE, DENSITY_CONTENT_TYPE } from "@/indexer/schema";
 import {
-  ByteBudget,
-  DEFAULT_CPU_BUDGET,
-  SHARED_CPU_CACHE_BUDGET,
-} from "./budget";
+  CELLS_CONTENT_TYPE,
+  DENSITY_CONTENT_TYPE,
+  MAX_ZOOM,
+} from "@/indexer/schema";
+import { ByteBudget, CPU_TILE_CACHE_BYTES } from "./budget";
+import { CELL_BYTES, DENSITY_BYTES } from "./decode";
 import type { DecodedTile } from "./inspection";
 import { tileId, type TileIndex } from "./pyramid";
 import { TileWorkerPool } from "./worker-pool";
@@ -23,20 +24,15 @@ export interface MissingTileData {
   readonly index: TileIndex;
 }
 export type TileData = LoadedTileData | MissingTileData;
+/** Shared by the displayed and candidate loaders of one renderer. */
 export interface TileResources {
   readonly cache: ByteBudget<TileData>;
-  readonly requests: ConcurrencyGate;
-  readonly prefetchRequests: ConcurrencyGate;
-  readonly pool: TileWorkerPool;
+  readonly pool: Pick<TileWorkerPool, "decode" | "close">;
 }
 
-export function createTileResources(
-  budget = SHARED_CPU_CACHE_BUDGET,
-): TileResources {
+export function createTileResources(): TileResources {
   return {
-    cache: new ByteBudget(budget),
-    requests: new ConcurrencyGate(7),
-    prefetchRequests: new ConcurrencyGate(1),
+    cache: new ByteBudget(CPU_TILE_CACHE_BYTES),
     pool: new TileWorkerPool(2),
   };
 }
@@ -49,26 +45,15 @@ interface InFlightTile {
 export class TileLoader {
   readonly cache: ByteBudget<TileData>;
   private readonly inFlight = new Map<string, InFlightTile>();
-  private readonly requests: ConcurrencyGate;
-  private readonly prefetchRequests: ConcurrencyGate;
-  private readonly pool: Pick<TileWorkerPool, "decode" | "close">;
-  private readonly ownsResources: boolean;
+  private readonly pool: TileResources["pool"];
   private readonly lifetime = new AbortController();
   constructor(
     private readonly client: IndexerClient,
     private readonly snapshot: ImmutableSnapshot,
-    pool: Pick<TileWorkerPool, "decode" | "close"> | undefined = undefined,
-    private readonly fetcher: typeof fetch = (...args) =>
-      globalThis.fetch(...args),
-    budget = DEFAULT_CPU_BUDGET,
-    resources?: TileResources,
+    resources: TileResources,
   ) {
-    this.ownsResources = resources === undefined;
-    this.pool = resources?.pool ?? pool ?? new TileWorkerPool(2);
-    this.cache = resources?.cache ?? new ByteBudget(budget);
-    this.requests = resources?.requests ?? new ConcurrencyGate(7);
-    this.prefetchRequests =
-      resources?.prefetchRequests ?? new ConcurrencyGate(1);
+    this.cache = resources.cache;
+    this.pool = resources.pool;
   }
   load(index: TileIndex, signal?: AbortSignal): Promise<TileData> {
     if (signal?.aborted) return Promise.reject(signal.reason);
@@ -77,14 +62,9 @@ export class TileLoader {
     if (cached) return Promise.resolve(cached);
     const existing = this.inFlight.get(key);
     if (existing) return this.consume(key, existing, signal);
-    const entry = this.start(index, key, this.requests);
-    return this.consume(key, entry, signal);
+    return this.consume(key, this.start(index, key), signal);
   }
-  private start(
-    index: TileIndex,
-    key: string,
-    gate: ConcurrencyGate,
-  ): InFlightTile {
+  private start(index: TileIndex, key: string): InFlightTile {
     const controller = new AbortController();
     const effectiveSignal = AbortSignal.any([
       controller.signal,
@@ -95,7 +75,7 @@ export class TileLoader {
       consumers: 0,
       settled: false,
     } as InFlightTile;
-    entry.promise = this.fetchDecode(index, effectiveSignal, gate)
+    entry.promise = this.fetchDecode(index, effectiveSignal)
       .then((data) => {
         this.cache.set(key, data, data.byteLength);
         return data;
@@ -109,10 +89,6 @@ export class TileLoader {
   }
   close(): void {
     this.lifetime.abort(new DOMException("Tile loader closed", "AbortError"));
-    if (this.ownsResources) {
-      this.pool.close();
-      this.cache.clear();
-    }
   }
   pin(indices: readonly TileIndex[]): void {
     for (const index of indices)
@@ -127,6 +103,7 @@ export class TileLoader {
   purge(): void {
     this.cache.deletePrefix(`${this.snapshot.manifest.stateDigest}:`);
   }
+  /** Loads tiles one at a time so prefetching never competes with visible loads. */
   async prefetch(
     indices: readonly TileIndex[],
     signal: AbortSignal,
@@ -136,19 +113,17 @@ export class TileLoader {
       effectiveSignal.throwIfAborted();
       const key = `${this.snapshot.manifest.stateDigest}:${tileId(index)}`;
       if (this.cache.get(key)) continue;
-      const entry =
-        this.inFlight.get(key) ?? this.start(index, key, this.prefetchRequests);
+      const entry = this.inFlight.get(key) ?? this.start(index, key);
       await this.consume(key, entry, effectiveSignal);
     }
   }
   private async fetchDecode(
     index: TileIndex,
     signal: AbortSignal,
-    gate: ConcurrencyGate,
   ): Promise<TileData> {
     let result: { bytes: ArrayBuffer; contentType: string };
     try {
-      result = await this.fetchBytes(index, signal, gate);
+      result = await this.fetchBytes(index, signal);
     } catch (cause) {
       if (cause instanceof TileUnavailableError)
         return {
@@ -161,13 +136,9 @@ export class TileLoader {
     }
     const { bytes, contentType } = result;
     const tile = await this.pool.decode(bytes, contentType, index.z, signal);
-    const byteLength =
-      tile.kind === "cells"
-        ? tile.packed.byteLength + tile.values.byteLength
-        : tile.values.byteLength;
     return {
       availability: "loaded",
-      byteLength,
+      byteLength: tile.values.byteLength,
       digest: this.snapshot.manifest.stateDigest,
       index,
       tile,
@@ -175,51 +146,38 @@ export class TileLoader {
   }
   private async fetchBytes(
     index: TileIndex,
-    signal: AbortSignal | undefined,
-    gate: ConcurrencyGate,
+    signal: AbortSignal,
   ): Promise<{ bytes: ArrayBuffer; contentType: string }> {
-    const release = await gate.acquire(signal);
-    try {
-      const response = await this.fetcher(
-        this.client.tileUrl(this.snapshot, index.z, index.x, index.y),
-        {
-          headers: {
-            accept: index.z === 6 ? CELLS_CONTENT_TYPE : DENSITY_CONTENT_TYPE,
-          },
-          redirect: "error",
-          ...(signal ? { signal } : {}),
-        },
-      );
-      if (!response.ok) {
-        if (response.status === 404) throw new TileUnavailableError();
-        throw new Error(`Tile request failed (${response.status})`);
-      }
-      const contentType = response.headers
-        .get("content-type")
-        ?.split(";", 1)[0]
-        ?.trim()
-        .toLowerCase();
-      const expected =
-        index.z === 6 ? CELLS_CONTENT_TYPE : DENSITY_CONTENT_TYPE;
-      if (contentType !== expected)
-        throw new Error(
-          `Unexpected tile content type: ${contentType ?? "missing"}`,
-        );
-      const expectedLength = index.z === 6 ? 8192 : 131072;
-      const declaredLength = response.headers.get("content-length");
-      const contentEncoding = response.headers.get("content-encoding");
-      if (
-        declaredLength !== null &&
-        contentEncoding === null &&
-        (!/^\d+$/.test(declaredLength) ||
-          Number(declaredLength) !== expectedLength)
-      )
-        throw new Error("Unexpected tile content length");
-      const bytes = await readExactBody(response, expectedLength, signal);
-      return { bytes, contentType };
-    } finally {
-      release();
+    const exact = index.z === MAX_ZOOM;
+    const expected = exact ? CELLS_CONTENT_TYPE : DENSITY_CONTENT_TYPE;
+    const response = await globalThis.fetch(
+      this.client.tileUrl(this.snapshot, index.z, index.x, index.y),
+      { headers: { accept: expected }, redirect: "error", signal },
+    );
+    if (!response.ok) {
+      if (response.status === 404) throw new TileUnavailableError();
+      throw new Error(`Tile request failed (${response.status})`);
     }
+    const contentType = response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (contentType !== expected)
+      throw new Error(
+        `Unexpected tile content type: ${contentType ?? "missing"}`,
+      );
+    const expectedLength = exact ? CELL_BYTES : DENSITY_BYTES;
+    const declaredLength = response.headers.get("content-length");
+    if (
+      declaredLength !== null &&
+      response.headers.get("content-encoding") === null &&
+      (!/^\d+$/.test(declaredLength) ||
+        Number(declaredLength) !== expectedLength)
+    )
+      throw new Error("Unexpected tile content length");
+    const bytes = await readExactBody(response, expectedLength, signal);
+    return { bytes, contentType };
   }
   private consume(
     key: string,
@@ -269,7 +227,7 @@ class TileUnavailableError extends Error {
 async function readExactBody(
   response: Response,
   expectedLength: number,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<ArrayBuffer> {
   if (!response.body) throw new Error("Tile response body is missing");
   const reader = response.body.getReader();
@@ -277,7 +235,7 @@ async function readExactBody(
   let offset = 0;
   try {
     while (true) {
-      signal?.throwIfAborted();
+      signal.throwIfAborted();
       const { done, value } = await reader.read();
       if (done) break;
       if (offset + value.byteLength > expectedLength)
@@ -292,54 +250,4 @@ async function readExactBody(
   if (offset !== expectedLength)
     throw new Error("Unexpected decoded tile length");
   return output.buffer;
-}
-
-export class ConcurrencyGate {
-  private active = 0;
-  private readonly queue: Array<{
-    resolve: (release: () => void) => void;
-    reject: (reason: unknown) => void;
-    signal?: AbortSignal;
-    abort?: () => void;
-  }> = [];
-  constructor(readonly limit: number) {
-    if (!Number.isInteger(limit) || limit < 1)
-      throw new RangeError("concurrency limit must be positive");
-  }
-  acquire(signal?: AbortSignal): Promise<() => void> {
-    if (signal?.aborted) return Promise.reject(signal.reason);
-    return new Promise((resolve, reject) => {
-      const entry = {
-        resolve,
-        reject,
-        ...(signal ? { signal } : {}),
-      } as (typeof this.queue)[number];
-      entry.abort = () => {
-        const index = this.queue.indexOf(entry);
-        if (index >= 0) this.queue.splice(index, 1);
-        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-      };
-      signal?.addEventListener("abort", entry.abort, { once: true });
-      this.queue.push(entry);
-      this.drain();
-    });
-  }
-  private drain(): void {
-    while (this.active < this.limit && this.queue.length) {
-      const entry = this.queue.shift()!;
-      entry.signal?.removeEventListener("abort", entry.abort!);
-      if (entry.signal?.aborted) {
-        entry.reject(entry.signal.reason);
-        continue;
-      }
-      this.active += 1;
-      let released = false;
-      entry.resolve(() => {
-        if (released) return;
-        released = true;
-        this.active -= 1;
-        this.drain();
-      });
-    }
-  }
 }
