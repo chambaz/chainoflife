@@ -74,7 +74,7 @@ test("releases an unknown expired submission only after complete indexed history
   await expect(boundary.observe(hash)).resolves.toMatchObject({
     kind: "invalid",
     hash,
-    message: expect.stringMatching(/expired without committing/),
+    message: expect.stringMatching(/expired/),
   });
   expect(client.getTransactionsByRootAddress).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -86,6 +86,23 @@ test("releases an unknown expired submission only after complete indexed history
     expect.anything(),
   );
 });
+
+test.each(["retry", "dropped"])(
+  "treats a %s status as not committed without waiting for expiry",
+  async (status) => {
+    const { boundary, client, hash } = await fixture();
+    client.getTransactionStatus.mockResolvedValue({
+      status,
+      error: { source: "executor", code: 3 },
+    });
+    await expect(boundary.observe(hash)).resolves.toMatchObject({
+      kind: "invalid",
+      hash,
+      message: expect.stringMatching(/Another visitor/),
+    });
+    expect(client.getTransactionsByRootAddress).not.toHaveBeenCalled();
+  },
+);
 
 test.each([
   { oldestIndexedBlockHeight: 1n, latestIndexedBlockHeight: 200n },

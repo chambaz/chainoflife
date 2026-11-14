@@ -60,8 +60,8 @@ describe("Life write boundary", () => {
       { onSigned: vi.fn() },
     );
     expect(execute).toHaveBeenCalledWith(
-      { invocation, gasLimit: 10_010_000_000n, expiryBlocks: 64n },
-      { timeoutMs: 60_000 },
+      { invocation, gasLimit: 10_010_000_000n, expiryBlocks: 32n },
+      { timeoutMs: 20_000 },
     );
     expect(invocation.gas_limit).toBe(10_000_000_000n);
     expect(result.kind).toBe("preSubmissionFailure");

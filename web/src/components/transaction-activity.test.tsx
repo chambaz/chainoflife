@@ -85,7 +85,7 @@ describe("advance control", () => {
       kind: "advance",
       status: "failed",
       message:
-        "The transaction expired without committing. Another visitor may have changed the world first. You can try again.",
+        "The network did not commit this transaction. Another visitor may have changed the world first. You can try again.",
     });
     render(
       <TransactionActivity wallet={wallet} worldSize={10_000} writes={state} />,

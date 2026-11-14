@@ -43,11 +43,13 @@ export type WriteResult =
 
 // Each observation is one quick check; pending writes are checked again later.
 const OBSERVATION_TIMEOUT_MS = 10_000;
-// Wait briefly for a receipt; a pending write is then observed by its hash
-// until it commits or expires. A write that loses a concurrent advance or
-// reset to the exclusive state lock is dropped and expires.
-const EXECUTION_TIMEOUT_MS = 60_000;
-const EXPIRY_BLOCKS = 64n;
+// Wait briefly for a receipt. A pending write is then observed by its hash.
+// A write that loses the exclusive world lock to another visitor reports
+// "retry" for about half a minute, so observation must start within that time.
+const EXECUTION_TIMEOUT_MS = 20_000;
+const EXPIRY_BLOCKS = 32n;
+const NOT_COMMITTED =
+  "The network did not commit this transaction. Another visitor may have changed the world first. You can try again.";
 
 export interface WriteBoundary {
   execute(
@@ -171,6 +173,13 @@ export function createWriteBoundary(
           { transactionHash },
           { signal },
         );
+        // The mempool never retries "retry" on its own, and this app never
+        // broadcasts again, so neither outcome can commit.
+        if (
+          !(status instanceof UnsupportedRpcValue) &&
+          (status.status === "retry" || status.status === "dropped")
+        )
+          return { kind: "invalid", hash, message: NOT_COMMITTED };
         if (
           !(status instanceof UnsupportedRpcValue) &&
           status.status !== "committed" &&
@@ -179,8 +188,7 @@ export function createWriteBoundary(
           return {
             kind: "invalid",
             hash,
-            message:
-              "The transaction expired without committing. Another visitor may have changed the world first. You can try again.",
+            message: `The transaction expired. ${NOT_COMMITTED}`,
           };
         return {
           kind: "indeterminate",
