@@ -9,7 +9,7 @@ import {
 
 /** Signed transaction bytes, saved before broadcast. */
 export function submissionEvidenceKey(networkId: string, hash: string): string {
-  return `chain-of-life:submission:${networkId}:${hash}`;
+  return `chain-of-life:submission:v1:${networkId}:${hash}`;
 }
 
 // An unknown status alone cannot establish failure. Require the signed expiry

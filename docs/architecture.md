@@ -56,10 +56,15 @@ Vite connects the browser to the RPC and read-only indexer proxies in
 `scripts/proxy.ts`. Browser fixture serving lives in `tests/support/fixture.ts`.
 Hosting needs equivalent routing and remains a separate deployment task.
 
-## Compatibility
+## Protocol identifiers
 
-Directory names are independent of stored protocol identities. The digest domain
-remains `chain-of-life/world/v2`, JSON uses `schemaVersion: 2`, and HTTP paths use
-`/v1/worlds`. The epoch distinguishes resets in digests and immutable tile paths.
-Browser storage identities remain stable.
-Rust package names also remain stable because artifacts and event identities use them.
+| Identifier             | Value                              | Changes require                               |
+| ---------------------- | ---------------------------------- | --------------------------------------------- |
+| World digest domain    | `chain-of-life/world/v1`           | New reference vectors and a new deployment    |
+| Indexer JSON documents | `schemaVersion: 1`                 | Matching indexer and browser releases         |
+| Indexer HTTP paths     | `/v1/worlds/<network>/<contract>/` | Matching indexer, proxy, and browser releases |
+| Browser storage keys   | `chain-of-life:<kind>:v1:…`        | A new key; old records are ignored            |
+
+The digest binds the size, epoch, and generation, so each reset has a distinct
+digest and immutable artifact directory. Rust package names appear in contract
+event identities and build artifacts; renaming them changes the contract.

@@ -182,7 +182,7 @@ impl<S: ChainSource> IndexerService<S> {
         )?;
         let pointer = LatestPointer {
             epoch: metadata.epoch.to_string(),
-            schema_version: 2,
+            schema_version: crate::schema::SCHEMA_VERSION,
             generation: metadata.generation.to_string(),
             state_digest: digest.clone(),
             manifest_url: format!(
@@ -235,7 +235,7 @@ impl<S: ChainSource> IndexerService<S> {
         hash: [u8; 32],
     ) -> LifeProvenance {
         LifeProvenance {
-            schema_version: 2,
+            schema_version: crate::schema::SCHEMA_VERSION,
             network_id: self.config.network_id.clone(),
             contract_address: self.config.contract_address.clone(),
             epoch: metadata.epoch.to_string(),
@@ -359,7 +359,7 @@ impl<S: ChainSource> IndexerService<S> {
 
 pub fn initial_status() -> LifeStatus {
     LifeStatus {
-        schema_version: 2,
+        schema_version: crate::schema::SCHEMA_VERSION,
         state: IndexerState::Idle,
         observed: None,
         preparing: None,

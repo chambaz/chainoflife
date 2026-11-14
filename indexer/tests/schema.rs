@@ -71,7 +71,7 @@ fn provenance_has_exact_fields_and_rejects_noncanonical_values() {
     );
 
     for (field, invalid) in [
-        ("schemaVersion", serde_json::json!(1)),
+        ("schemaVersion", serde_json::json!(2)),
         ("generation", serde_json::json!("01")),
         ("stateDigest", serde_json::json!(DIGEST.to_uppercase())),
         ("sourceBlockHash", serde_json::json!("0x01")),
@@ -130,7 +130,7 @@ fn latest_pointer_rejects_noncanonical_decimal_unknown_fields_and_invalid_dates(
 fn latest(manifest_url: String) -> LatestPointer {
     LatestPointer {
         epoch: "0".into(),
-        schema_version: 2,
+        schema_version: 1,
         generation: "7".into(),
         state_digest: DIGEST.into(),
         manifest_url,
@@ -142,7 +142,7 @@ fn latest(manifest_url: String) -> LatestPointer {
 
 fn provenance() -> LifeProvenance {
     LifeProvenance {
-        schema_version: 2,
+        schema_version: 1,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         epoch: "0".into(),

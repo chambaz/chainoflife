@@ -36,7 +36,7 @@ export type FundingClient = Pick<
   Pick<Partial<AppClient>, "requestFunding">;
 
 export function visitorWalletKey(networkId: string): string {
-  return `chain-of-life:wallet:v2:${networkId}`;
+  return `chain-of-life:wallet:v1:${networkId}`;
 }
 
 export function walletFromSeed(seed: string): VisitorWallet {

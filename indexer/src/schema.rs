@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result, TILE_SIZE};
 
+/// Version of the published JSON documents.
+pub const SCHEMA_VERSION: u8 = 1;
 const TILE_TEMPLATE: &str = "tiles/{z}/{x}/{y}.bin";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +38,7 @@ impl LifeManifest {
     pub fn new(identity: &SnapshotIdentity) -> Self {
         Self {
             epoch: identity.epoch.to_string(),
-            schema_version: 2,
+            schema_version: SCHEMA_VERSION,
             network_id: identity.network_id.clone(),
             contract_address: identity.contract_address.clone(),
             generation: identity.generation.to_string(),
@@ -59,7 +61,11 @@ impl LifeManifest {
 
     pub fn validate(&self) -> Result<()> {
         parse_u64("epoch", &self.epoch)?;
-        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
+        require(
+            self.schema_version == SCHEMA_VERSION,
+            "schemaVersion",
+            "must be 1",
+        )?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
         parse_u64("generation", &self.generation)?;
@@ -152,7 +158,11 @@ pub struct LifeProvenance {
 
 impl LifeProvenance {
     pub fn validate(&self) -> Result<()> {
-        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
+        require(
+            self.schema_version == SCHEMA_VERSION,
+            "schemaVersion",
+            "must be 1",
+        )?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
         parse_u64("epoch", &self.epoch)?;
@@ -196,7 +206,11 @@ pub struct LatestPointer {
 impl LatestPointer {
     pub fn validate_for(&self, network_id: &str, contract_address: &str) -> Result<()> {
         parse_u64("epoch", &self.epoch)?;
-        require(self.schema_version == 2, "schemaVersion", "must be 2")?;
+        require(
+            self.schema_version == SCHEMA_VERSION,
+            "schemaVersion",
+            "must be 1",
+        )?;
         parse_u64("generation", &self.generation)?;
         validate_hex32("stateDigest", &self.state_digest)?;
         parse_u64("sourceBlockHeight", &self.source_block_height)?;

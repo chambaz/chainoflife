@@ -33,7 +33,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
     const digest = digests[published]!;
     if (pathname === `${base}/latest.json`)
       return {
-        schemaVersion: 2,
+        schemaVersion: 1,
         epoch: "0",
         generation: String(published),
         stateDigest: digest,
@@ -47,7 +47,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
       const root = `${base}/${value.stateDigest}`;
       if (pathname === `${root}/manifest.json`)
         return {
-          schemaVersion: 2,
+          schemaVersion: 1,
           ...value,
           width: 10000,
           height: 10000,
@@ -63,7 +63,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
         };
       if (pathname === `${root}/provenance.json`)
         return {
-          schemaVersion: 2,
+          schemaVersion: 1,
           ...value,
           sourceBlockHeight: String(9 + generation),
           sourceBlockHash: block,

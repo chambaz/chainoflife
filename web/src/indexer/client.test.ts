@@ -12,7 +12,7 @@ const config = {
 };
 const latest = {
   epoch: "0",
-  schemaVersion: 2,
+  schemaVersion: 1,
   generation: "0",
   stateDigest: digest,
   manifestUrl: `/v1/worlds/${network}/${contract}/${digest}/manifest.json`,
@@ -30,7 +30,7 @@ const identity = {
   stateDigest: digest,
 };
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   ...identity,
   width: 10000,
   height: 10000,
@@ -45,7 +45,7 @@ const manifest = {
   },
 };
 const provenance = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,

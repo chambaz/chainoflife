@@ -97,7 +97,7 @@ test("keeps the visitor wallet and its latest write across reloads", async ({
   const address = await page.getByLabel("Your wallet").getAttribute("title");
   const { parseAddress, toHex0x } = await import("@thruputchain/client");
   const key = [
-    "chain-of-life:write:v3",
+    "chain-of-life:write:v1",
     "aa".repeat(32),
     toHex0x(parseAddress(address!)),
     `0x${"22".repeat(32)}`,
@@ -184,7 +184,7 @@ test("malformed initial artifacts never mount or receive ownership", async ({
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ schemaVersion: 2 }),
+      body: JSON.stringify({ schemaVersion: 1 }),
     }),
   );
   await page.goto("/");

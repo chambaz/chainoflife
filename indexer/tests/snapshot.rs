@@ -449,7 +449,7 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
 fn provenance(metadata: &SnapshotMetadata) -> LifeProvenance {
     LifeProvenance {
         epoch: metadata.epoch.to_string(),
-        schema_version: 2,
+        schema_version: 1,
         network_id: NETWORK_ID.into(),
         contract_address: CONTRACT.into(),
         generation: metadata.generation.to_string(),

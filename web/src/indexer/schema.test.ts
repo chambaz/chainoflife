@@ -20,7 +20,7 @@ const identity = {
   stateDigest: digest,
 };
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   ...identity,
   width: 10000,
   height: 10000,
@@ -36,7 +36,7 @@ const manifest = {
 };
 const latest = {
   epoch: "0",
-  schemaVersion: 2,
+  schemaVersion: 1,
   generation: "0",
   stateDigest: digest,
   manifestUrl: `/v1/worlds/${network}/${contract}/${digest}/manifest.json`,
@@ -45,7 +45,7 @@ const latest = {
   publishedAt: "2026-08-28T01:02:03Z",
 };
 const provenance = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,

@@ -68,7 +68,7 @@ export function writeScope(
 
 export function writeStorageKey(scope: WriteScope): string {
   return [
-    "chain-of-life:write:v3",
+    "chain-of-life:write:v1",
     scope.networkId,
     scope.wallet,
     scope.contractAddress,

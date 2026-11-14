@@ -3,6 +3,8 @@ import { DECIMAL, HEX32 } from "@/lib/validation";
 /** The largest supported world width and height. */
 export const MAX_WORLD_SIZE = 10_000;
 export const TILE_SIZE = 256;
+/** Version of the indexer JSON documents. */
+export const SCHEMA_VERSION = 1;
 export const MAX_ZOOM = 6;
 export const DENSITY_CONTENT_TYPE =
   "application/vnd.chain-of-life.density-u16le";
@@ -21,7 +23,7 @@ export interface SnapshotIdentity {
 }
 
 export interface LifeManifest extends SnapshotIdentity {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly width: number;
   readonly height: number;
   readonly tileSize: 256;
@@ -37,7 +39,7 @@ export interface LifeManifest extends SnapshotIdentity {
 
 export interface LatestPointer {
   readonly epoch: string;
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly generation: string;
   readonly stateDigest: string;
   readonly manifestUrl: string;
@@ -47,7 +49,7 @@ export interface LatestPointer {
 }
 
 export interface LifeProvenance extends SnapshotIdentity {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly sourceBlockHeight: string;
   readonly sourceBlockHash: string;
   readonly verifiedAt: string;
@@ -113,7 +115,7 @@ export function parseManifest(input: unknown): LifeManifest {
     "canonicalDownloadVerified",
     "individualTileProofs",
   ]);
-  literal(value.schemaVersion, 2, "schemaVersion");
+  literal(value.schemaVersion, SCHEMA_VERSION, "schemaVersion");
   const width = worldSize(value.width);
   literal(value.height, width, "height");
   literal(value.tileSize, TILE_SIZE, "tileSize");
@@ -136,7 +138,7 @@ export function parseManifest(input: unknown): LifeManifest {
     throw new SchemaError("population exceeds world dimensions");
   return {
     ...identity,
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     width,
     height: width,
     tileSize: 256,
@@ -168,13 +170,13 @@ export function parseLatest(
     "sourceBlockHash",
     "publishedAt",
   ]);
-  literal(value.schemaVersion, 2, "schemaVersion");
+  literal(value.schemaVersion, SCHEMA_VERSION, "schemaVersion");
   const generation = decimal(value.generation, "generation");
   const stateDigest = canonicalHex32(value.stateDigest, "stateDigest");
   const expected = `/v1/worlds/${networkId}/${contractAddress}/${stateDigest}/manifest.json`;
   literal(value.manifestUrl, expected, "manifestUrl");
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     epoch: decimal(value.epoch, "epoch"),
     generation,
     stateDigest,
@@ -199,10 +201,10 @@ export function parseProvenance(input: unknown): LifeProvenance {
     "sourceBlockHash",
     "verifiedAt",
   ]);
-  literal(value.schemaVersion, 2, "schemaVersion");
+  literal(value.schemaVersion, SCHEMA_VERSION, "schemaVersion");
   return {
     ...parseIdentity(value),
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     sourceBlockHeight: decimal(value.sourceBlockHeight, "sourceBlockHeight"),
     sourceBlockHash: canonicalHex32(value.sourceBlockHash, "sourceBlockHash"),
     verifiedAt: date(value.verifiedAt, "verifiedAt"),

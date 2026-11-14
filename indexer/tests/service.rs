@@ -744,7 +744,7 @@ impl Fixture {
 fn pointer(generation: u64, digest: &str) -> LatestPointer {
     LatestPointer {
         epoch: "0".into(),
-        schema_version: 2,
+        schema_version: 1,
         generation: generation.to_string(),
         state_digest: digest.into(),
         manifest_url: format!("/v1/worlds/{NETWORK}/{CONTRACT}/{digest}/manifest.json"),
@@ -755,7 +755,7 @@ fn pointer(generation: u64, digest: &str) -> LatestPointer {
 }
 fn provenance(generation: u64, digest: &str) -> LifeProvenance {
     LifeProvenance {
-        schema_version: 2,
+        schema_version: 1,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         epoch: "0".into(),
@@ -814,7 +814,7 @@ fn service<S: ChainSource>(
 /// Installs a verified snapshot without promoting it, as a crash would leave it.
 fn install_without_promotion(root: &std::path::Path, metadata: &SnapshotMetadata, height: u64) {
     let provenance = LifeProvenance {
-        schema_version: 2,
+        schema_version: 1,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         epoch: metadata.epoch.to_string(),
