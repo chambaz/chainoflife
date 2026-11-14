@@ -11,26 +11,18 @@ permissions:
   contents: read
 
 jobs:
-  applications:
+  application:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        directory: [".", "tests/renderer"]
-    defaults:
-      run:
-        working-directory: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 22
       - run: npm ci
-      - if: matrix.directory == '.'
-        run: npm run format:check
+      - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      - run: npm run build -- --config tests/support/browser.env
       - name: Browser checks
         run: |
           npx playwright install --with-deps chromium

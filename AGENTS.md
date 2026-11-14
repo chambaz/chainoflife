@@ -12,7 +12,6 @@ infrastructure unless explicitly requested.
 - `web/`: React explorer and visitor wallets.
 - `scripts/`: setup, development, build, and benchmark commands.
 - `tests/browser/` and `tests/live/`: cross-component checks.
-- `tests/renderer/`: isolated renderer regression tests.
 
 ## Conventions
 
@@ -22,7 +21,6 @@ infrastructure unless explicitly requested.
   allocations. Persist funding intent before the RPC and reuse its nonce and
   amount only on explicit setup resume; observe known hashes without a new grant.
 - Use root npm commands, the pinned Rust toolchain, and public registries.
-  The isolated renderer fixture retains its own lockfile and commands.
   Preserve package versions unless an upgrade is requested.
 - Use official Thruput RPC and wallet APIs. Regenerate contract bindings with
   `npm run generate:contracts` from the root; never edit generated files.

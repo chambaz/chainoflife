@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  clippedBounds,
   immediateParentRefinement,
   parentIndex,
   ring,
@@ -17,6 +18,20 @@ describe("tile pyramid", () => {
     expect(Array.from({ length: 7 }, (_, z) => tileSpan(z))).toEqual([
       16384, 8192, 4096, 2048, 1024, 512, 256,
     ]);
+  });
+  test("clips the last tile to the real world edge", () => {
+    expect(
+      clippedBounds(
+        { left: 9984, top: 2900, right: 10240, bottom: 3156 },
+        10_000,
+      ),
+    ).toEqual({ left: 9984, top: 2900, right: 10_000, bottom: 3156 });
+    expect(
+      clippedBounds(
+        { left: 2816, top: 2816, right: 3072, bottom: 3072 },
+        2_900,
+      ),
+    ).toEqual({ left: 2816, top: 2816, right: 2900, bottom: 2900 });
   });
   test("maps edge cells", () => {
     expect(worldToTile(9999, 9999, 6, 10_000)).toMatchObject({

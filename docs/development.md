@@ -93,7 +93,7 @@ commitment. Resume does not replace it.
 npm run format:check
 npm run typecheck
 npm test
-npm run build
+npm run build -- --config tests/support/browser.env
 npm run test:chromium
 npm run check:contracts
 cargo fmt --all --check
@@ -139,8 +139,6 @@ Set `GAME_OF_LIFE_BROWSER_EVIDENCE` to an ignored JSON path to save the
 advance check's browser evidence.
 SwiftShader timings are software-renderer results.
 
-The isolated renderer has its own checks: run `npm ci`, `npm run typecheck`,
-`npm test`, `npm run build`, and `npm run test:chromium` in `tests/renderer`.
 See [benchmarks](benchmarks.md) for workload measurements and reproduction commands.
 
 UI components live in `web/src/components/ui`. To add components, use
