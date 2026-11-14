@@ -141,8 +141,7 @@ SwiftShader timings are software-renderer results.
 
 The isolated renderer has its own checks: run `npm ci`, `npm run typecheck`,
 `npm test`, `npm run build`, and `npm run test:chromium` in `tests/renderer`.
-CI also guest-builds the storage-admission fixture. See
-[benchmarks](benchmarks.md) for workload measurements and reproduction commands.
+See [benchmarks](benchmarks.md) for workload measurements and reproduction commands.
 
 UI components live in `web/src/components/ui`. To add components, use
 `npx shadcn@4.16.1` from the root and review its changes.

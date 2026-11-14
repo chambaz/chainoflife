@@ -51,10 +51,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo test --locked -p game-of-life-core -p game-of-life-indexer
       - run: cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
-      - name: Verify guest builds and generated bindings
+      - name: Verify the contract build and generated bindings
         run: |
           cargo install --version 0.45.0 --locked thruput
           export THRUPUT_CLI="$(command -v thruput)"
           npm ci
           npm run check:contracts
-          thruput build -p life-storage-admission -- --locked

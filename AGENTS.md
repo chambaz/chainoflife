@@ -13,7 +13,6 @@ infrastructure unless explicitly requested.
 - `scripts/`: setup, development, build, and benchmark commands.
 - `tests/browser/` and `tests/live/`: cross-component checks.
 - `tests/renderer/`: isolated renderer regression tests.
-- `tests/storage-admission/`: contract storage workload fixture.
 
 ## Conventions
 
