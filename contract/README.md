@@ -18,7 +18,7 @@ split into chunks of at most 1,000 bytes. Padding bits are zero.
 At full size, each bank has 20,000 chunks and 12,500,000 bytes.
 Even generations read bank A and write bank B; odd generations reverse
 those roles. Initialization and reset write bank A. Unused keys from larger
-boards remain stored, but ticks do not read or write them.
+boards remain stored, but advances do not read or write them.
 
 For cell `(x, y)`:
 
@@ -30,7 +30,7 @@ byte_in_part = byte_in_row - part * 1000
 chunk_key    = y * ceil(ceil(size / 8) / 1000) + part
 ```
 
-The digest starts with SHA-256 of the ASCII domain `chain-of-life/world/v2`,
+The digest starts with SHA-256 of the ASCII domain `chain-of-life/world/v1`,
 followed by big-endian width (`u32`), height (`u32`), epoch (`u64`), and
 generation (`u64`).
 In ascending key order, each step hashes the previous digest, chunk key (`u32`),

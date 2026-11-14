@@ -7,15 +7,15 @@ fn epoch_digest_matches_independent_sha256_vectors() {
     for (epoch, expected) in [
         (
             0,
-            "517d74c452c185937306cbcfccf9af0535fecc34a10ea60e8e85a92576e1c63e",
+            "2c8ffa494fdae87fb8ba3128db41d78ad254a48772ce5e590e8539bc230b36bc",
         ),
         (
             1,
-            "fad7aa53de3e6b509b7222b6b2065c128b859efea47788e49040949cb07d5bbc",
+            "d3dbac0da0fa58707d8b5d3c5e882869adb0e29115f758bf6f92232c8609acfd",
         ),
         (
             0x0102_0304_0506_0708,
-            "a0b7dccb1dae4be8d9c3d9de17e2ccd32f26ddd42517f4a06eebcd8d5b8114eb",
+            "ad8f292698a41cba63332ea47bb9ada908a2627dffc503ed789117726c86fe29",
         ),
     ] {
         let mut digest = WorldDigest::for_epoch(100, 100, epoch, 7);
@@ -107,7 +107,7 @@ fn digest_pins_field_widths_byte_order_and_actual_chunk_length() {
     digest.update(1, &[4, 5]);
     assert_eq!(
         hex(digest.finish()),
-        "6b27c40c3785e10e7e935562ae2973a5f7b44e7fcc6b627bd86d235384f8bc50"
+        "58b3f3c6ce142cb43cd6402fe6a1b011b0eec54ca6edf571af0a4b4a5f8f65ba"
     );
 }
 
@@ -119,14 +119,14 @@ fn full_scale_seed_vectors_are_reproducible() {
         initialized_world(0),
         (
             49_999_272,
-            "5bc29c418cd47f0d7b3d479a7b70d70ed66521c3881a2610f3d0c5652d7e1927".into()
+            "cda8bcd61fb27dc126813c60791b3f3bae470b5015906739108ac989a2b3f265".into()
         )
     );
     assert_eq!(
         initialized_world(1),
         (
             50_010_937,
-            "e3ef5ec0e63e6ca97179035ee09ffaa4c51e227aa267fa83f9a25887540a4138".into()
+            "9dfe7d51467e3c9e987f294877213638b4e0a778709c51c5c273897d030e78c1".into()
         )
     );
 }
@@ -159,7 +159,7 @@ fn full_scale_generation_one_vector() {
         (population, hex(digest.finish())),
         (
             27_336_807,
-            "e2d4fa05fcd2d12e661c7d4487748d3b31705b329026209b0cb9f1c7135b0613".into()
+            "fb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96".into()
         )
     );
 }

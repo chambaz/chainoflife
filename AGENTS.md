@@ -28,7 +28,7 @@ infrastructure unless explicitly requested.
   `npm run generate:contracts` from the root; never edit generated files.
 - Keep one full-world update atomic. Bank writes, metadata, and events must
   roll back together on failure.
-- The digest domain is `chain-of-life/world/v2`, including the reset epoch. Changes to it or the encoding
+- The digest domain is `chain-of-life/world/v1`, including the reset epoch. Changes to it or the encoding
   require new reference vectors and a new deployment.
 - Distinguish submission and committed execution. Save signed
   evidence before broadcast; observe uncertain transactions by their original hash.
@@ -50,6 +50,6 @@ match your change. Rust changes need the Rust checks. Initialization, simulation
 or digest changes also need the core's release-mode full-scale reference test.
 Contract or generator changes need `npm run check:contracts`.
 
-Full-world ticks exceed the default gas cap; use the supplied node configuration.
+Full-size advances exceed the default gas cap; use the supplied node configuration.
 Report blocked live checks explicitly. Fixtures and old measurements are not
 fresh live acceptance.

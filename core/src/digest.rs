@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-const DOMAIN: &[u8] = b"chain-of-life/world/v2";
+const DOMAIN: &[u8] = b"chain-of-life/world/v1";
 
 pub struct WorldDigest {
     accumulator: [u8; 32],

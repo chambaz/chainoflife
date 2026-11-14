@@ -345,7 +345,7 @@ fn full_seed_zero_fixture_matches_contract_and_is_deterministic() {
     assert_eq!(metadata.population, 49_999_272);
     assert_eq!(
         hex::encode(metadata.state_digest),
-        "5bc29c418cd47f0d7b3d479a7b70d70ed66521c3881a2610f3d0c5652d7e1927"
+        "cda8bcd61fb27dc126813c60791b3f3bae470b5015906739108ac989a2b3f265"
     );
     let first = build_snapshot(
         &metadata,

@@ -34,12 +34,12 @@ export const referenceWorld = {
   generationZero: {
     population: 49_999_272n,
     stateDigest:
-      "0x5bc29c418cd47f0d7b3d479a7b70d70ed66521c3881a2610f3d0c5652d7e1927",
+      "0xcda8bcd61fb27dc126813c60791b3f3bae470b5015906739108ac989a2b3f265",
   },
   generationOne: {
     population: 27_336_807n,
     stateDigest:
-      "0xe2d4fa05fcd2d12e661c7d4487748d3b31705b329026209b0cb9f1c7135b0613",
+      "0xfb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96",
   },
 } as const;
 
