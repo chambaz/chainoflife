@@ -14,7 +14,7 @@ cells). Each advance has a **950-million** root gas budget and a
 
 Local run on 2026-11-13 with Thruput CLI 0.45.0 and its managed runtime
 (hog-devnode 0.1.33), v6 artifact SHA-256
-`71fedf3cfc4efbbb3d5dac714eba92dce98591c03aaa0b3bc1d111804148d591`.
+`7620afc467ab93b51782ca9adc7e8f9c635acebf5ab59a1e6d67965ace5170ba`.
 Seeds 0, 1, and 42, five advances each, with the preset budgets:
 
 | Grid | Advances | Peak root gas | Below 1-billion cap | Deploy and initialize |
@@ -23,7 +23,7 @@ Seeds 0, 1, and 42, five advances each, with the preset budgets:
 | 3,000 × 3,000 | 15/15 succeeded | 934,038,961 | 6.6% | 159,783,416 |
 
 Size 2,900 is the largest tested size with at least 10% headroom below the cap.
-Operation-to-receipt time for one advance was 2.5–4.3 seconds on the local
+Operation-to-receipt time for one advance was 2.3–3.6 seconds on the local
 node at both sizes. These are local results; gas is deterministic for the same
 artifact and runtime, but network timing must be measured on Futurenet.
 
