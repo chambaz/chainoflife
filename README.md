@@ -71,8 +71,8 @@ npm run deploy -- --preset local
 npm run dev
 ```
 
-Setup creates and funds a deployment account through the local faucet, then
-deploys and verifies a full-size world at generation zero. `npm run dev` builds
+Deployment creates and funds an account through the local faucet, then deploys
+and verifies a full-size world at generation zero. `npm run dev` builds
 and starts the indexer and browser app. The first build can take several minutes.
 
 Open **http://127.0.0.1:5173** and wait for **Ready**. Click **Advance** to run one
@@ -91,9 +91,9 @@ repository root. The block flags produce blocks once per second.
 ### Restart or recover
 
 Stop each terminal with Ctrl-C. To resume the same world, repeat the `thruput node`
-command above and run `npm run dev`; setup is only needed for the first deployment.
+command above and run `npm run dev`; deployment is only needed once.
 
-For interrupted setup, keep the same node data and run from the repository root:
+If deployment is interrupted, keep the same node data and run:
 
 ```sh
 npm run deploy -- --preset local --resume
@@ -104,10 +104,8 @@ For custom ports, data directories, or a fresh world, see
 
 ## Run against Futurenet
 
-From the repository root, with a [compatible CLI](#requirements):
-
 ```sh
-THRUPUT_CLI=/path/to/compatible/thruput npm run deploy -- --preset futurenet
+npm run deploy -- --preset futurenet
 npm run dev -- --config .env.futurenet
 ```
 
@@ -126,7 +124,7 @@ For custom sizes, build configuration, and recovery, see the
 | [core](core) | Simulation, initialization, and digest |
 | [indexer](indexer) | Verified snapshots and tile HTTP service |
 | [scripts](scripts) | Deployment, development, build, and benchmarks |
-| [tests](tests) | Browser checks, live checks, and isolated fixtures |
+| [tests](tests) | Browser and live checks |
 
 See [architecture](docs/architecture.md), [development](docs/development.md),
 and [benchmarks](docs/benchmarks.md). Run npm commands from the repository root.
