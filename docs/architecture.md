@@ -30,7 +30,10 @@ See [contract storage and encoding](../contract/README.md).
 Submission and committed execution are distinct states.
 Deployment and browser code save signed evidence before broadcast. An uncertain
 result is observed by its original hash, never automatically submitted again.
-Browser write locks coordinate tabs; interrupted resets are recovered under that lock.
+The browser keeps a pending write's signed bytes in the wallet's one write
+record, so a finished write no longer keeps them. An unknown write is released
+as expired only when the RPC's history covers every block from signing to
+expiry and does not include it. Browser write locks coordinate tabs; interrupted resets are recovered under that lock.
 
 Visitor keys are generated in the browser and persist across reloads and tabs.
 Deployment keys stay on disk. Funding intent is saved before the RPC request;

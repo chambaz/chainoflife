@@ -14,6 +14,7 @@ import {
 import { worldSize } from "@/indexer/schema";
 import { isDecimal, isHex32 } from "@/lib/validation";
 import type { VisitorWallet } from "@/wallet/visitor-wallet";
+import type { SubmissionEvidence } from "./expired-submission";
 import type { WriteBoundary, WriteResult } from "./write-boundary";
 
 /** A world write: one advance or one resize transaction. */
@@ -23,12 +24,14 @@ export type WriteRequest =
 
 /**
  * The latest world write of one wallet. A "signing" write has no hash, so it
- * was never broadcast: the SDK awaits onSigned, which saves the hash, first.
+ * was never broadcast: the SDK awaits onSigned, which saves the evidence, first.
+ * An "indeterminate" write keeps its signed bytes to prove expiry. Each wallet
+ * stores one record, so a finished write no longer keeps them.
  */
 export type WorldWrite = WriteRequest &
   (
     | { readonly status: "signing" }
-    | { readonly status: "indeterminate"; readonly transactionHash: string }
+    | ({ readonly status: "indeterminate" } & SubmissionEvidence)
     | {
         readonly status: "committed";
         readonly transactionHash: string;
@@ -53,6 +56,7 @@ export interface WriteParameters {
 }
 
 const CHANGED = "chain-of-life:write";
+const SIGNED_BYTES = /^0x(?:[0-9a-f]{2})+$/;
 const INTERRUPTED = "Signing was interrupted. Try again.";
 
 export function writeScope(
@@ -141,8 +145,8 @@ export async function submitWrite(
       invocation,
       params.config.transactionPolicy,
       {
-        onSigned(transactionHash) {
-          save(scope, { ...request, status: "indeterminate", transactionHash });
+        onSigned(evidence) {
+          save(scope, { ...request, status: "indeterminate", ...evidence });
         },
       },
     );
@@ -169,11 +173,12 @@ export async function recoverWrite(
         status: "failed",
         message: INTERRUPTED,
       });
+    const { transactionHash, signedTransaction } = write;
     return save(
       scope,
       outcome(
         request,
-        await params.boundary.observe(write.transactionHash),
+        await params.boundary.observe({ transactionHash, signedTransaction }),
         params,
       ),
     );
@@ -215,11 +220,7 @@ function outcome(
 ): WorldWrite {
   switch (result.kind) {
     case "indeterminate":
-      return {
-        ...request,
-        status: "indeterminate",
-        transactionHash: result.hash,
-      };
+      return { ...request, status: "indeterminate", ...result.evidence };
     case "preSubmissionFailure":
     case "invalid":
       return { ...request, status: "failed", message: result.message };
@@ -303,7 +304,12 @@ function isWorldWrite(value: unknown): value is WorldWrite {
     case "signing":
       return request;
     case "indeterminate":
-      return request && isHex32(write.transactionHash);
+      return (
+        request &&
+        isHex32(write.transactionHash) &&
+        typeof write.signedTransaction === "string" &&
+        SIGNED_BYTES.test(write.signedTransaction)
+      );
     case "committed":
       return (
         request && isHex32(write.transactionHash) && isDecimal(write.epoch)

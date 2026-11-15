@@ -69,6 +69,7 @@ describe("advance control", () => {
           kind: "advance",
           status: "indeterminate",
           transactionHash: hash,
+          signedTransaction: "0x0102",
         })}
       />,
     );

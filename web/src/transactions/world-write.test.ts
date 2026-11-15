@@ -20,6 +20,8 @@ const config = {
 const wallet = walletFromSeed(`0x${"01".repeat(32)}`);
 const scope = writeScope(config, wallet);
 const hash = `0x${"44".repeat(32)}`;
+const evidence = { transactionHash: hash, signedTransaction: "0x0102" };
+const pending = { kind: "advance", status: "indeterminate", ...evidence };
 
 function boundary(overrides: Partial<WriteBoundary> = {}): WriteBoundary {
   return { execute: vi.fn(), observe: vi.fn(), ...overrides };
@@ -30,16 +32,12 @@ function store(value: unknown) {
 }
 
 describe("world writes", () => {
-  test("saves the hash as indeterminate before broadcast", async () => {
+  test("saves the signed evidence as indeterminate before broadcast", async () => {
     const execute = vi.fn<WriteBoundary["execute"]>(
       async (_target, _policy, observer) => {
-        observer.onSigned(hash);
-        expect(loadWrite(scope)).toEqual({
-          kind: "advance",
-          status: "indeterminate",
-          transactionHash: hash,
-        });
-        return { kind: "indeterminate", hash, message: "Disconnected" };
+        observer.onSigned(evidence);
+        expect(loadWrite(scope)).toEqual(pending);
+        return { kind: "indeterminate", evidence, message: "Disconnected" };
       },
     );
     await expect(
@@ -47,17 +45,13 @@ describe("world writes", () => {
         { config, wallet, boundary: boundary({ execute }) },
         { kind: "advance" },
       ),
-    ).resolves.toEqual({
-      kind: "advance",
-      status: "indeterminate",
-      transactionHash: hash,
-    });
+    ).resolves.toEqual(pending);
     expect(execute).toHaveBeenCalledOnce();
     expect(execute.mock.calls[0]![1]).toBe(config.transactionPolicy);
   });
 
   test("allows one pending write per wallet", async () => {
-    store({ kind: "advance", status: "indeterminate", transactionHash: hash });
+    store(pending);
     const writes = boundary();
     await expect(
       submitWrite(
@@ -100,11 +94,11 @@ describe("world writes", () => {
   });
 
   test("observes a signed write by its original hash and never signs", async () => {
-    store({ kind: "advance", status: "indeterminate", transactionHash: hash });
+    store(pending);
     const writes = boundary({
       observe: vi.fn(async (observed) => ({
         kind: "invalid" as const,
-        hash: observed,
+        hash: observed.transactionHash,
         message: "expired",
       })),
     });
@@ -115,12 +109,20 @@ describe("world writes", () => {
       status: "failed",
       message: "expired",
     });
-    expect(writes.observe).toHaveBeenCalledWith(hash);
+    expect(writes.observe).toHaveBeenCalledWith(evidence);
     expect(writes.execute).not.toHaveBeenCalled();
+    // The finished write replaces the record, so the signed bytes are gone.
+    expect(localStorage.getItem(writeStorageKey(scope))).not.toContain(
+      evidence.signedTransaction,
+    );
   });
 
-  test("rejects malformed stored evidence", () => {
-    store({ kind: "advance", status: "committed", transactionHash: "0x1" });
+  test.each([
+    { kind: "advance", status: "committed", transactionHash: "0x1" },
+    { kind: "advance", status: "indeterminate", transactionHash: hash },
+    { ...pending, signedTransaction: "0x1" },
+  ])("rejects malformed stored evidence: %#", (value) => {
+    store(value);
     expect(() => loadWrite(scope)).toThrow(/invalid/);
   });
 });
