@@ -5,14 +5,9 @@ import { join } from "node:path";
 import configuration from "./vite.config";
 import { configurationEnvironment } from "./scripts/configuration.mjs";
 import {
-  allowedIndexerRoute,
-  isIndexerArtifactNotFound,
   isAllowedRpcRequest,
   isSameOriginLoopback,
-  indexerProxyScope,
-  validateIndexerTarget,
-  validateRpcTarget,
-} from "./scripts/proxy";
+} from "./scripts/local-rpc-proxy";
 const network = "11".repeat(32);
 const contract = `0x${"22".repeat(32)}`;
 
@@ -114,63 +109,50 @@ describe("visitor RPC proxy policy", () => {
       }),
     ).toBe(true);
   });
-  test.each([
-    "https://rpc.example.test/#fragment",
-    "file:///rpc",
-    "http://user:pass@127.0.0.1",
-  ])("rejects unsafe target %s", (target) =>
-    expect(() => validateRpcTarget(target)).toThrow(/credential-free/),
-  );
 });
 
-describe("read-only indexer proxy policy", () => {
-  test("preserves only an upstream not-found status", () => {
-    expect(isIndexerArtifactNotFound(404)).toBe(true);
-    expect(isIndexerArtifactNotFound(400)).toBe(false);
-    expect(isIndexerArtifactNotFound(500)).toBe(false);
+describe("content security policy", () => {
+  async function policy(rpcUrl: string) {
+    await mkdir(".tmp", { recursive: true });
+    const directory = await mkdtemp(".tmp/life-csp-");
+    const selected = join(directory, "selected.env");
+    await writeFile(
+      selected,
+      `VITE_THRUPUT_RPC_URL=${rpcUrl}\nVITE_THRUPUT_NETWORK_ID=${network}\nVITE_GAME_OF_LIFE_CONTRACT_ADDRESS=${contract}\nVITE_GAME_OF_LIFE_INDEXER_URL=https://indexer.example.test\nVITE_GAME_OF_LIFE_GAS_LIMIT=950000000\nVITE_GAME_OF_LIFE_TARGET_GAS_LIMIT=945000000\n`,
+    );
+    vi.stubEnv("GAME_OF_LIFE_CONFIG", selected);
+    try {
+      if (typeof configuration !== "function")
+        throw new Error("Expected Vite configuration factory");
+      const config = await configuration({
+        command: "build",
+        mode: "production",
+      });
+      const plugins = (config.plugins ?? []).flat() as Array<{
+        name?: string;
+        transformIndexHtml?: () => Array<{ attrs: { content: string } }>;
+      }>;
+      return {
+        names: plugins.map((plugin) => plugin.name),
+        csp: plugins.find(
+          (plugin) => plugin.name === "content-security-policy",
+        )!.transformIndexHtml!()[0]!.attrs.content,
+      };
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true });
+    }
+  }
+  test("allows a remote RPC and the indexer, without a proxy", async () => {
+    const { names, csp } = await policy("https://rpc.thruput.network");
+    expect(csp).toContain(
+      "connect-src 'self' https://indexer.example.test https://rpc.thruput.network",
+    );
+    expect(names).not.toContain("thruput-local-rpc");
   });
-  test("normalizes optional-0x uppercase network env before routing", () => {
-    const scope = indexerProxyScope({
-      VITE_THRUPUT_NETWORK_ID: `0x${"AA".repeat(32)}`,
-      VITE_GAME_OF_LIFE_CONTRACT_ADDRESS: contract,
-    });
-    expect(scope.networkId).toBe("aa".repeat(32));
-    expect(
-      allowedIndexerRoute(
-        `/v1/worlds/${"aa".repeat(32)}/${contract}/latest.json`,
-        scope.networkId,
-        scope.contractAddress,
-      ),
-    ).not.toBeNull();
+  test("proxies a local RPC same-origin", async () => {
+    const { names, csp } = await policy("http://127.0.0.1:9545");
+    expect(csp).toContain("connect-src 'self' https://indexer.example.test;");
+    expect(names).toContain("thruput-local-rpc");
   });
-  test.each([
-    `/v1/worlds/${network}/${contract}/latest.json`,
-    `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/manifest.json`,
-    `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/provenance.json`,
-    `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/tiles/6/39/39.bin`,
-  ])("allows configured artifact %s", (path) =>
-    expect(allowedIndexerRoute(path, network, contract)).not.toBeNull(),
-  );
-
-  test.each([
-    `/v1/worlds/${network}/${contract}/latest.json?redirect=x`,
-    `/v1/worlds/${network}/${contract}/../status.json`,
-    `/v1/worlds/${network}/${contract}/status.json`,
-    `/v1/worlds/${network}/${contract}/0x${"aa".repeat(32)}/tiles/6/40/0.bin`,
-    `/v1/worlds/${"33".repeat(32)}/${contract}/latest.json`,
-  ])("rejects non-canonical artifact %s", (path) =>
-    expect(allowedIndexerRoute(path, network, contract)).toBeNull(),
-  );
-
-  test("rejects non-loopback upstreams", () =>
-    expect(() => validateIndexerTarget("https://indexer.example.test")).toThrow(
-      /loopback/,
-    ));
-  test.each([
-    "http://127.0.0.1:8787/root/",
-    "http://127.0.0.1:8787/?world=life",
-    "http://127.0.0.1:8787/#life",
-  ])("rejects non-root upstream %s", (target) =>
-    expect(() => validateIndexerTarget(target)).toThrow(/origin root/),
-  );
 });

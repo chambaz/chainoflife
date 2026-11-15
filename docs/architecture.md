@@ -52,18 +52,21 @@ The selected environment file supplies public browser settings; contract metadat
 supplies resize permission. `scripts/configuration.mjs` loads selected files for
 development, builds, and Vite. `scripts/paths.mjs` resolves repository paths.
 
-Vite connects the browser to the RPC and read-only indexer proxies in
-`scripts/proxy.ts`. Browser fixture serving lives in `tests/support/fixture.ts`.
-Hosting needs equivalent routing and remains a separate deployment task.
+The browser connects to the RPC and the indexer directly. A local node does not
+allow cross-origin requests, so for a loopback RPC the Vite dev server proxies
+it through `scripts/local-rpc-proxy.ts`. The build writes a Content-Security-Policy
+that allows connections to the RPC and indexer origins only. Browser fixture
+serving lives in `tests/support/fixture.ts`. [Hosting](development.md#hosting)
+describes the container images.
 
 ## Protocol identifiers
 
-| Identifier             | Value                              | Changes require                               |
-| ---------------------- | ---------------------------------- | --------------------------------------------- |
-| World digest domain    | `chain-of-life/world/v1`           | New reference vectors and a new deployment    |
-| Indexer JSON documents | `schemaVersion: 1`                 | Matching indexer and browser releases         |
-| Indexer HTTP paths     | `/v1/worlds/<network>/<contract>/` | Matching indexer, proxy, and browser releases |
-| Browser storage keys   | `chain-of-life:<kind>:v1:…`        | A new key; old records are ignored            |
+| Identifier             | Value                              | Changes require                            |
+| ---------------------- | ---------------------------------- | ------------------------------------------ |
+| World digest domain    | `chain-of-life/world/v1`           | New reference vectors and a new deployment |
+| Indexer JSON documents | `schemaVersion: 1`                 | Matching indexer and browser releases      |
+| Indexer HTTP paths     | `/v1/worlds/<network>/<contract>/` | Matching indexer and browser releases      |
+| Browser storage keys   | `chain-of-life:<kind>:v1:…`        | A new key; old records are ignored         |
 
 The digest binds the size, epoch, and generation, so each reset has a distinct
 digest and immutable artifact directory. Rust package names appear in contract

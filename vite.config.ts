@@ -4,17 +4,22 @@ import { defineConfig } from "vite";
 import { loadAppConfig } from "./web/src/config";
 import { repoRoot, repoPath } from "./scripts/paths.mjs";
 import { readConfiguration } from "./scripts/configuration.mjs";
-import {
-  indexerProxyScope,
-  validateRpcTarget,
-  validateIndexerTarget,
-  rpcProxy,
-  readOnlyIndexerProxy,
-} from "./scripts/proxy";
-const SECURITY_HEADERS = {
-  "Content-Security-Policy":
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; worker-src 'self'; frame-ancestors 'none'",
-};
+import { localRpcProxy } from "./scripts/local-rpc-proxy";
+
+/**
+ * The app reads chain state from the RPC and snapshots from the indexer. A
+ * local RPC is proxied by the dev server, so it stays same-origin.
+ */
+function contentSecurityPolicy(origins: readonly string[]): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+    `connect-src 'self' ${origins.join(" ")}`,
+    "img-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "worker-src 'self'",
+  ].join("; ");
+}
 // Vitest unit tests do not read app configuration.
 const UNIT_TEST_ENVIRONMENT = {
   VITE_THRUPUT_RPC_URL: "http://127.0.0.1:9545",
@@ -34,18 +39,17 @@ export default defineConfig(async ({ mode }) => {
   const environment: Record<string, string | undefined> = selected
     ? readConfiguration(selected)
     : UNIT_TEST_ENVIRONMENT;
-  loadAppConfig(environment);
-  const target = environment.VITE_THRUPUT_RPC_URL!;
-  const indexerTarget = environment.VITE_GAME_OF_LIFE_INDEXER_URL!;
-  const { networkId, contractAddress } = indexerProxyScope(environment);
-  validateRpcTarget(target);
-  validateIndexerTarget(indexerTarget);
+  const config = loadAppConfig(environment);
+  const origins = [
+    config.indexerUrl.origin,
+    ...(config.rpcProxied ? [] : [config.rpcUrl.origin]),
+  ];
   const e2ePlugins =
     mode === "e2e"
       ? [
           (await import("./tests/support/fixture")).fixtureArtifacts(
-            networkId,
-            contractAddress,
+            config.networkId,
+            config.contractAddress,
           ),
         ]
       : [];
@@ -68,16 +72,24 @@ export default defineConfig(async ({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
-      rpcProxy(target),
-      readOnlyIndexerProxy(indexerTarget, networkId, contractAddress),
+      ...(config.rpcProxied ? [localRpcProxy(config.rpcUrl.href)] : []),
+      {
+        name: "content-security-policy",
+        transformIndexHtml: () => [
+          {
+            tag: "meta",
+            attrs: {
+              "http-equiv": "Content-Security-Policy",
+              content: contentSecurityPolicy(origins),
+            },
+            injectTo: "head-prepend" as const,
+          },
+        ],
+      },
       ...e2ePlugins,
     ],
     resolve: { alias: { "@": repoPath("web/src") } },
-    server: {
-      host: "127.0.0.1",
-      cors: false,
-      headers: SECURITY_HEADERS,
-    },
+    server: { host: "127.0.0.1", cors: false },
     test: {
       root: repoRoot,
       execArgv: ["--no-experimental-webstorage"],

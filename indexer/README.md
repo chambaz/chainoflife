@@ -1,7 +1,7 @@
 # Chain of Life Indexer
 
 The indexer downloads an on-chain world, verifies its population and digest,
-builds immutable tiles, and serves one network and contract on loopback HTTP.
+builds immutable tiles, and serves them over HTTP for one network and contract.
 
 ## Publication
 
@@ -44,8 +44,10 @@ separately, set `THRUPUT_RPC_URL`, `THRUPUT_NETWORK_ID` (64 lowercase hex
 characters), and `THRUPUT_CONTRACT_ADDRESS` (a 0x-prefixed hex address).
 
 Optional settings include `GAME_OF_LIFE_ARTIFACT_ROOT`,
-`GAME_OF_LIFE_INDEXER_LISTEN`, `GAME_OF_LIFE_CORS_ORIGINS`, and
-`GAME_OF_LIFE_RETENTION_GRACE_SECONDS` (default 300).
+`GAME_OF_LIFE_INDEXER_LISTEN` (default `127.0.0.1:8787`),
+`GAME_OF_LIFE_CORS_ORIGINS` (comma-separated browser origins), and
+`GAME_OF_LIFE_RETENTION_GRACE_SECONDS` (default 300). Requests from other
+origins receive 403. [Hosting](../docs/development.md#hosting) describes the container image.
 
 Run from the repository root. The default artifact root is
 `.local/indexer/<network>/<contract>/artifacts`.

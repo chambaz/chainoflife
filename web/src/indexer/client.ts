@@ -17,24 +17,16 @@ export interface ImmutableSnapshot {
   readonly manifestUrl: URL;
 }
 
+/** Reads published snapshots directly from the indexer's origin. */
 export class IndexerClient {
-  private readonly requestBase: URL;
-  private readonly proxyRequests: boolean;
-
   constructor(
     private readonly config: Pick<
       AppConfig,
-      "indexerUrl" | "indexerProxyPath" | "networkId" | "contractAddress"
+      "indexerUrl" | "networkId" | "contractAddress"
     >,
     private readonly fetcher: typeof fetch = (...args) =>
       globalThis.fetch(...args),
-    // Tests request the indexer directly instead of through the app proxy.
-    requestBase?: URL,
-  ) {
-    this.proxyRequests = requestBase === undefined;
-    this.requestBase =
-      requestBase ?? new URL(config.indexerProxyPath, window.location.origin);
-  }
+  ) {}
 
   async latest(signal?: AbortSignal): Promise<LatestPointer> {
     return parseLatest(
@@ -78,8 +70,9 @@ export class IndexerClient {
   }
 
   private worldBase(): URL {
-    return this.requestUrl(
+    return new URL(
       `/v1/worlds/${this.config.networkId}/${this.config.contractAddress}/`,
+      this.config.indexerUrl,
     );
   }
 
@@ -93,13 +86,7 @@ export class IndexerClient {
     ) {
       throw new Error("indexer URL escaped its configured origin");
     }
-    return this.requestUrl(result.pathname);
-  }
-
-  private requestUrl(pathname: string): URL {
-    return this.proxyRequests
-      ? new URL(pathname.slice(1), this.requestBase)
-      : new URL(pathname, this.requestBase);
+    return result;
   }
 
   private async json(url: URL, signal?: AbortSignal): Promise<unknown> {

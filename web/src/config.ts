@@ -4,11 +4,11 @@ import { isHex32 } from "./lib/validation";
 export interface AppConfig {
   readonly rpcUrl: URL;
   readonly localFaucetAddress?: string | undefined;
-  readonly rpcProxyPath: "/thruput-rpc";
+  /** True when the dev server proxies a local node that does not allow CORS. */
+  readonly rpcProxied: boolean;
   readonly networkId: string;
   readonly contractAddress: string;
   readonly indexerUrl: URL;
-  readonly indexerProxyPath: "/thruput-indexer/";
   readonly transactionPolicy: TransactionPolicy;
 }
 
@@ -49,12 +49,13 @@ export function loadAppConfig(environment: Environment): Readonly<AppConfig> {
     );
   }
 
+  const rpcUrl = httpUrl(
+    required(environment, "VITE_THRUPUT_RPC_URL"),
+    "VITE_THRUPUT_RPC_URL",
+  );
   return Object.freeze({
-    rpcUrl: httpUrl(
-      required(environment, "VITE_THRUPUT_RPC_URL"),
-      "VITE_THRUPUT_RPC_URL",
-    ),
-    rpcProxyPath: "/thruput-rpc",
+    rpcUrl,
+    rpcProxied: isLoopback(rpcUrl),
     localFaucetAddress:
       typeof environment.VITE_THRUPUT_LOCAL_FAUCET_ADDRESS === "string"
         ? environment.VITE_THRUPUT_LOCAL_FAUCET_ADDRESS || undefined
@@ -65,7 +66,6 @@ export function loadAppConfig(environment: Environment): Readonly<AppConfig> {
       required(environment, "VITE_GAME_OF_LIFE_INDEXER_URL"),
       "VITE_GAME_OF_LIFE_INDEXER_URL",
     ),
-    indexerProxyPath: "/thruput-indexer/",
     transactionPolicy: transactionPolicy(environment),
   });
 }
@@ -127,4 +127,10 @@ function httpUrl(value: string, key: string): URL {
     );
   }
   return url;
+}
+
+export const RPC_PROXY_PATH = "/thruput-rpc";
+
+export function isLoopback(url: URL): boolean {
+  return ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
 }

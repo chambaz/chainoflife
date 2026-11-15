@@ -6,7 +6,6 @@ const network = "11".repeat(32),
   block = `0x${"bb".repeat(32)}`;
 const config = {
   indexerUrl: new URL("http://127.0.0.1:8787"),
-  indexerProxyPath: "/thruput-indexer/" as const,
   networkId: network,
   contractAddress: contract,
 };
@@ -64,11 +63,7 @@ describe("immutable indexer client", () => {
         headers: { "content-type": "application/json" },
       });
     });
-    const client = new IndexerClient(
-      config,
-      fetcher as typeof fetch,
-      config.indexerUrl,
-    );
+    const client = new IndexerClient(config, fetcher as typeof fetch);
     const snapshot = await client.snapshotFromPointer(await client.latest());
     expect(snapshot.manifest.stateDigest).toBe(digest);
     expect(fetcher).toHaveBeenCalledTimes(3);
@@ -80,11 +75,7 @@ describe("immutable indexer client", () => {
         new Response("{}", { headers: { "content-type": "text/plain" } }),
     );
     await expect(
-      new IndexerClient(
-        config,
-        fetcher as typeof fetch,
-        config.indexerUrl,
-      ).latest(),
+      new IndexerClient(config, fetcher as typeof fetch).latest(),
     ).rejects.toThrow(/content type/);
   });
   test("builds canonical immutable tile URLs", () => {

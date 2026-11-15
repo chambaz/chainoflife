@@ -15,8 +15,6 @@ use crate::{LifeStatus, MAX_WORLD_WIDTH, MAX_ZOOM};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebError {
-    #[error("HTTP listener must be loopback, got {0}")]
-    NonLoopback(SocketAddr),
     #[error("HTTP I/O failed: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -53,19 +51,13 @@ impl HttpService {
     }
 
     pub async fn serve(self: Arc<Self>, address: SocketAddr) -> Result<(), WebError> {
-        if !address.ip().is_loopback() {
-            return Err(WebError::NonLoopback(address));
-        }
         let listener = TcpListener::bind(address).await?;
         loop {
             let permit = Arc::clone(&self.connections)
                 .acquire_owned()
                 .await
                 .map_err(|_| std::io::Error::other("HTTP connection limiter closed"))?;
-            let (stream, peer) = listener.accept().await?;
-            if !peer.ip().is_loopback() {
-                continue;
-            }
+            let (stream, _) = listener.accept().await?;
             let service = Arc::clone(&self);
             tokio::spawn(async move {
                 let _permit = permit;

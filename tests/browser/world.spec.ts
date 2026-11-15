@@ -78,9 +78,10 @@ test("renders one immutable generation with accessible controls", async ({
   await expect(page.getByText("3,072 cells")).toHaveCount(0);
   expect(new URL(page.url()).search).toBe("");
   expect(indexerRequests.length).toBeGreaterThan(0);
+  // The fixture serves the indexer at the configured indexer origin.
   expect(
-    indexerRequests.every((url) =>
-      new URL(url).pathname.startsWith("/thruput-indexer/"),
+    indexerRequests.every(
+      (url) => new URL(url).origin === "http://127.0.0.1:4176",
     ),
   ).toBe(true);
   expect(writes).toEqual([]);

@@ -23,9 +23,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listen: SocketAddr = std::env::var("GAME_OF_LIFE_INDEXER_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:8787".into())
         .parse()?;
-    if !listen.ip().is_loopback() {
-        return Err(format!("indexer listener must be loopback: {listen}").into());
-    }
     let origins = std::env::var("GAME_OF_LIFE_CORS_ORIGINS")
         .unwrap_or_else(|_| "http://127.0.0.1:5173,http://localhost:5173".into())
         .split(',')

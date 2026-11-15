@@ -48,22 +48,22 @@ The app receives only the `VITE_` settings in the selected file; inherited
 values are ignored. `dev` starts the indexer and Vite. Run the local node
 separately. Remote RPC URLs can use HTTP or HTTPS.
 
-| State | Location |
-| --- | --- |
-| Local ledger | `data/` |
-| Deployment key, journal, signed evidence | `.local/deployments/<preset>/` |
-| Indexer tiles | `.local/indexer/<network>/<contract>/artifacts/` |
-| Reports and benchmarks | `.tmp/` |
-| Public app settings | `.env.local`, `.env.futurenet` |
+| State                                    | Location                                         |
+| ---------------------------------------- | ------------------------------------------------ |
+| Local ledger                             | `data/`                                          |
+| Deployment key, journal, signed evidence | `.local/deployments/<preset>/`                   |
+| Indexer tiles                            | `.local/indexer/<network>/<contract>/artifacts/` |
+| Reports and benchmarks                   | `.tmp/`                                          |
+| Public app settings                      | `.env.local`, `.env.futurenet`                   |
 
 All these paths are Git-ignored. Deployment journals use `deployment.json`.
 Move complete state directories only while their services are stopped.
 
-| Service | Default | Override |
-| --- | --- | --- |
+| Service  | Default          | Override                                         |
+| -------- | ---------------- | ------------------------------------------------ |
 | Node RPC | `127.0.0.1:9545` | `thruput node --port` and deployment `--rpc-url` |
-| Indexer | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during deployment |
-| App | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` during `dev` |
+| Indexer  | `127.0.0.1:8787` | `GAME_OF_LIFE_INDEXER_URL` during deployment     |
+| App      | `127.0.0.1:5173` | `GAME_OF_LIFE_APP_URL` during `dev`              |
 
 The indexer URL must be an origin root. Set `GAME_OF_LIFE_ARTIFACT_ROOT` to
 override indexer storage. See the
@@ -86,6 +86,32 @@ Stop previous services or select different ports. Local ledgers can share a
 network ID, so do not reuse old browser funding records with a fresh ledger.
 Keep old deployment state for inspection if a saved transaction expired without
 commitment. Resume does not replace it.
+
+## Hosting
+
+The hosted app has two services. Each image builds from the repository root.
+
+```sh
+docker build -f indexer/Dockerfile .
+docker build -f web/Dockerfile --build-arg VITE_THRUPUT_RPC_URL=... .
+```
+
+Browsers connect to the RPC and the indexer directly, so the RPC must allow
+cross-origin requests. A local node does not; use `npm run dev` for local nodes.
+
+**Indexer.** Set `THRUPUT_RPC_URL`, `THRUPUT_NETWORK_ID`,
+`THRUPUT_CONTRACT_ADDRESS`, and `GAME_OF_LIFE_CORS_ORIGINS` (the web origin).
+`PORT` sets the HTTP port. Mount a persistent volume at `/data`: the indexer
+keeps published snapshots there and serves the latest one at once after a
+restart. For a health check, use `/v1/worlds/<network>/<contract>/status.json`.
+
+**Web.** Pass each public setting from the deployment's environment file as a
+build argument, with `VITE_GAME_OF_LIFE_INDEXER_URL` set to the indexer's public
+HTTPS origin. The build validates every value. It writes a
+Content-Security-Policy that allows connections to the RPC and the indexer only.
+[Caddy](../web/Caddyfile) serves the files, adds the headers that a `<meta>`
+policy cannot set, and caches built assets as immutable. `PORT` sets the HTTP
+port.
 
 ## Verification
 

@@ -3,7 +3,7 @@ import { buildNamedCodecs, resolveCodec } from "@thruputchain/client/contract";
 import { serializeCxs } from "@thruputchain/xdr";
 import { spec as lifeSpec } from "../../web/src/contracts/generated/game-of-life";
 import { rpcDiscovery } from "../../web/src/test/rpc-discovery";
-import { readBody } from "../../scripts/proxy";
+import { readBody } from "../../scripts/local-rpc-proxy";
 
 export function fixtureArtifacts(network: string, contract: string): Plugin {
   const fundedAccounts = new Set<string>();

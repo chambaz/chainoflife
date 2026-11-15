@@ -7,14 +7,19 @@ import {
   type RpcClient,
 } from "@thruputchain/client";
 import { networkHash } from "@thruputchain/protocol";
-import type { AppConfig } from "@/config";
+import { RPC_PROXY_PATH, type AppConfig } from "@/config";
 
 export type AppClient = Awaited<ReturnType<typeof createAppClient>>;
 
 export async function createAppClient(
-  config: Pick<AppConfig, "rpcProxyPath" | "networkId" | "localFaucetAddress">,
+  config: Pick<
+    AppConfig,
+    "rpcUrl" | "rpcProxied" | "networkId" | "localFaucetAddress"
+  >,
 ) {
-  const url = new URL(config.rpcProxyPath, window.location.origin).href;
+  const url = config.rpcProxied
+    ? new URL(RPC_PROXY_PATH, window.location.origin).href
+    : config.rpcUrl.href;
   const transport = new HttpTransport(url, { timeoutMs: 10_000 });
   const client = await createThruputClient({
     cluster: {
