@@ -57,7 +57,6 @@ pub fn compute_next_row_width(
         columns,
         carry_low: (last.with_low >> (last_bits - 1)) & 1,
         carry_high: (last.with_high >> (last_bits - 1)) & 1,
-        population: 0,
     };
     let output_words = output.as_chunks_mut::<4>().0;
     if words > 1 {
@@ -81,7 +80,7 @@ pub fn compute_next_row_width(
     ) & last_mask;
     let tail = &mut output[last_at..];
     tail.copy_from_slice(&alive.to_le_bytes()[..tail.len()]);
-    state.population + alive.count_ones()
+    count_cells(output)
 }
 
 /// Progress along a row: the word to evaluate and the column left of it.
@@ -89,7 +88,6 @@ struct State {
     columns: Columns,
     carry_low: u32,
     carry_high: u32,
-    population: u32,
 }
 
 impl State {
@@ -99,7 +97,6 @@ impl State {
         let alive = self
             .columns
             .next_cells(self.carry_low, self.carry_high, right, 31);
-        self.population += alive.count_ones();
         self.carry_low = self.columns.with_low >> 31;
         self.carry_high = self.columns.with_high >> 31;
         self.columns = *right;
@@ -118,8 +115,26 @@ impl State {
         output: &mut [[u8; 4]],
     ) {
         let mut state = State { ..*self };
+        let (previous, previous_rest) = previous.as_chunks::<2>();
+        let (current, current_rest) = current.as_chunks::<2>();
+        let (next, next_rest) = next.as_chunks::<2>();
+        let (output, output_rest) = output.as_chunks_mut::<2>();
+
+        // Two words per pass share the loop's pointer updates and branch.
+        // Wider passes run out of registers and spill to the stack.
         for (((previous, current), next), output) in
             previous.iter().zip(current).zip(next).zip(output)
+        {
+            for index in 0..2 {
+                let right = Columns::load(&previous[index], &current[index], &next[index]);
+                output[index] = state.advance(&right).to_le_bytes();
+            }
+        }
+        for (((previous, current), next), output) in previous_rest
+            .iter()
+            .zip(current_rest)
+            .zip(next_rest)
+            .zip(output_rest)
         {
             *output = state
                 .advance(&Columns::load(previous, current, next))
@@ -127,6 +142,46 @@ impl State {
         }
         *self = state;
     }
+}
+
+/// Count the live cells in a row whose padding bits are zero.
+///
+/// Carry-save adders sum eight words at a time, so that only one word in
+/// eight needs a population count. Kept out of line for the same reason as
+/// [`State::advance_words`].
+#[inline(never)]
+pub fn count_cells(row: &[u8]) -> u32 {
+    let (words, tail) = row.as_chunks::<4>();
+    let (groups, rest) = words.as_chunks::<8>();
+
+    // cells = ones + 2 * twos + 4 * fours + 8 * eights, counting set bits.
+    let (mut ones, mut twos, mut fours, mut eights) = (0, 0, 0, 0);
+    for group in groups {
+        let word = |index: usize| u32::from_le_bytes(group[index]);
+        let (first, sum) = carry_save(ones, word(0), word(1));
+        let (second, sum) = carry_save(sum, word(2), word(3));
+        let (first_four, sum_twos) = carry_save(twos, first, second);
+        let (first, sum) = carry_save(sum, word(4), word(5));
+        let (second, sum) = carry_save(sum, word(6), word(7));
+        let (second_four, sum_twos) = carry_save(sum_twos, first, second);
+        let (eight, sum_fours) = carry_save(fours, first_four, second_four);
+        ones = sum;
+        twos = sum_twos;
+        fours = sum_fours;
+        eights += eight.count_ones();
+    }
+    let mut cells = ones.count_ones() + 2 * twos.count_ones() + 4 * fours.count_ones() + 8 * eights;
+    for word in rest {
+        cells += u32::from_le_bytes(*word).count_ones();
+    }
+    cells + partial_word(tail).count_ones()
+}
+
+/// Add three words bit by bit. Returns the carries and the sums.
+#[inline(always)]
+fn carry_save(a: u32, b: u32, c: u32) -> (u32, u32) {
+    let partial = a ^ b;
+    ((a & b) | (partial & c), partial ^ c)
 }
 
 /// Per-column sums of three vertically adjacent words, as two-bit numbers.
