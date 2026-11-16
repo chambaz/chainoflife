@@ -18,15 +18,15 @@ repository = "https://github.com/chambaz/chainoflife"
 
 [workspace.dependencies]
 # from sdk_rs repo:
-thruput-sdk = { version = "=0.61.0" }
-thruput-contract-util = { package = "thruput-contract-util", version = "=0.61.0" }
+thruput-sdk = { version = "=0.61.2" }
+thruput-contract-util = { package = "thruput-contract-util", version = "=0.61.2" }
 
 # from thruput-rpc repo:
-thruput-json-rpc-client = { package = "thruput-json-rpc-client", version = "=0.45.0" }
-thruput-json-rpc-types = { package = "thruput-json-rpc-types", version = "=0.45.0" }
+thruput-json-rpc-client = { package = "thruput-json-rpc-client", version = "=0.45.2" }
+thruput-json-rpc-types = { package = "thruput-json-rpc-types", version = "=0.45.2" }
 
 # Protocol types:
-thruput-xdr = { package = "thruput-xdr", version = "=0.66.0", features = ["serde", "xdrs"] }
+thruput-xdr = { package = "thruput-xdr", version = "=0.66.2", features = ["serde", "xdrs"] }
 xdrs = { package = "thruput-xdrs", version = "=0.18.0", features = ["alloc"] }
 
 # from crates.io:

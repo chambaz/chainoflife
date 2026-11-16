@@ -45,7 +45,7 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
       - name: Verify the contract build and generated bindings
         run: |
-          cargo install --version 0.45.0 --locked thruput
+          cargo install --version 0.45.2 --locked thruput
           export THRUPUT_CLI="$(command -v thruput)"
           npm ci
           npm run check:contracts
