@@ -13,8 +13,8 @@ const config = {
   networkId: "11".repeat(32),
   contractAddress: `0x${"22".repeat(32)}`,
   transactionPolicy: {
-    transactionGasLimit: 10_010_000_000n,
-    targetGasLimit: 10_000_000_000n,
+    transactionGasLimit: 1_000_000_000n,
+    targetGasLimit: 999_000_000n,
   },
 };
 const wallet = walletFromSeed(`0x${"01".repeat(32)}`);

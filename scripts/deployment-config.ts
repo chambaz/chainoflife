@@ -3,6 +3,11 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { repoPath } from "./paths.mjs";
 
+// Every supported world deploys, resizes, and advances within the
+// one-billion-gas transaction cap of Futurenet and a default local node.
+const GAS_LIMIT = 1_000_000_000n;
+const TARGET_GAS_LIMIT = 999_000_000n;
+
 export function deploymentConfig(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -32,7 +37,7 @@ export function deploymentConfig(
     mode === "configurable" || mode === "fixed",
     "Mode must be configurable or fixed",
   );
-  const size = Number(values.size ?? (preset === "local" ? "10000" : "2900"));
+  const size = Number(values.size ?? "10000");
   assert(
     Number.isInteger(size) && size >= 100 && size <= 10_000 && size % 100 === 0,
     "Size must be a multiple of 100 between 100 and 10000",
@@ -64,7 +69,6 @@ export function deploymentConfig(
       env.CHAIN_OF_LIFE_LOCAL_DIR ??
       repoPath(".local/deployments", preset),
   );
-  const fullBudget = mode === "configurable" || size > 3000;
   return {
     preset,
     mode,
@@ -78,10 +82,8 @@ export function deploymentConfig(
     ),
     manifest: manifest ? resolve(manifest) : null,
     journal: resolve(stateDir, "deployment.json"),
-    deploymentGas: fullBudget ? 60_000_000_000n : 950_000_000n,
-    deploymentTargetGas: fullBudget ? 59_000_000_000n : 945_000_000n,
-    advanceGas: fullBudget ? 10_010_000_000n : 950_000_000n,
-    advanceTargetGas: fullBudget ? 10_000_000_000n : 945_000_000n,
+    gasLimit: GAS_LIMIT,
+    targetGasLimit: TARGET_GAS_LIMIT,
     resume: values.resume,
     help: values.help,
   };

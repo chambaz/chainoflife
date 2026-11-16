@@ -13,9 +13,9 @@ npm run build -- --config .env.futurenet
 ```
 
 Local defaults to a resizable 10,000² world. Futurenet uses
-`https://rpc.thruput.network` and a fixed 2,900² world, with 950-million root gas
-and 945-million target gas for each advance. Configurable worlds and worlds
-larger than 3,000² use 10.01-billion root gas and 10-billion target gas.
+`https://rpc.thruput.network` and a fixed 10,000² world. Every deployment, reset,
+and advance uses 1-billion root gas and 999-million target gas, so every
+supported size fits the one-billion-gas transaction cap.
 The contract enforces the fixed size.
 Use the [required CLI](../README.md#requirements); set `THRUPUT_CLI` to select
 its executable.

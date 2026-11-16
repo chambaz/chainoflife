@@ -58,7 +58,6 @@ git clone https://github.com/chambaz/chainoflife.git
 cd chainoflife
 thruput node \
   --data-dir data \
-  --network-config max_tx_gas=60000000000 \
   --block-driver interval \
   --block-interval-ms 1000
 ```
@@ -80,10 +79,8 @@ generation, or drag and release the board-size slider to resize the world.
 
 ### Node settings
 
-`--network-config max_tx_gas=60000000000` raises the per-transaction cap to
-**60 billion gas**, enough for deployment and full-world updates. A full-world
-update uses about 9.6 billion gas, above the default 1-billion cap. Gas measures
-computation, not a token fee. Use the same setting when restarting the node.
+A full 10,000 × 10,000 update uses about 984 million gas, within the default
+1-billion transaction cap. Gas measures computation, not a token fee.
 
 `--data-dir data` preserves the ledger in the Git-ignored `data/` directory at the
 repository root. The block flags produce blocks once per second.
@@ -109,7 +106,7 @@ npm run deploy -- --preset futurenet
 npm run dev -- --config .env.futurenet
 ```
 
-This deploys a fixed **2,900 × 2,900** world. The contract rejects size changes,
+This deploys a fixed **10,000 × 10,000** world. The contract rejects size changes,
 and the app hides the size control. The indexer and app run on your machine.
 
 For custom sizes, build configuration, and recovery, see the

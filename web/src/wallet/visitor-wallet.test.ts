@@ -72,11 +72,11 @@ describe("visitor wallet", () => {
       };
     });
     const fundingClient = { ...client, requestFunding };
-    await prepareVisitorWallet(network, fundingClient, 10_010_000_000n);
-    await prepareVisitorWallet(network, fundingClient, 10_010_000_000n);
+    await prepareVisitorWallet(network, fundingClient, 1_000_000_000n);
+    await prepareVisitorWallet(network, fundingClient, 1_000_000_000n);
     expect(requestFunding).toHaveBeenCalledOnce();
     expect(airdrop).not.toHaveBeenCalled();
-    expect(rawBalance).toBe(100_101_000_000n);
+    expect(rawBalance).toBe(10_001_000_000n);
   });
   test("saves the key and funding nonce before an airdrop and reuses the funded wallet", async () => {
     const { client, airdrop } = fixture();

@@ -34,7 +34,6 @@ port="$(node -e 'const u = new URL(process.env.THRUPUT_RPC_URL); if (u.hostname 
 export THRUPUT_RUNTIME_MANIFEST="$CHAIN_OF_LIFE_LOCAL_DIR/data/runtime/runtime-manifest.json"
 "${THRUPUT_CLI:-thruput}" node --port "$port" \
   --data-dir "$CHAIN_OF_LIFE_LOCAL_DIR/data" \
-  --network-config max_tx_gas=60000000000 \
   --block-driver interval --block-interval-ms 1000 \
   --non-interactive --no-ui >"$CHAIN_OF_LIFE_LOCAL_DIR/node.log" 2>&1 &
 node_pid=$!

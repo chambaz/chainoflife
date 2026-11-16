@@ -33,7 +33,7 @@ import {
 const options = deploymentConfig(process.argv.slice(2));
 if (options.help) {
   console.log(
-    "Deploy Chain of Life: --preset local|futurenet --rpc-url URL --mode configurable|fixed --size 2900 --seed 0 --output FILE --state-dir DIR --runtime-manifest FILE --resume\nFlags override preset defaults. The node must already be running. Use a separate state directory for each deployment.",
+    "Deploy Chain of Life: --preset local|futurenet --rpc-url URL --mode configurable|fixed --size 10000 --seed 0 --output FILE --state-dir DIR --runtime-manifest FILE --resume\nFlags override preset defaults. The node must already be running. Use a separate state directory for each deployment.",
   );
   process.exit(0);
 }
@@ -48,8 +48,8 @@ const client = await createThruputClient({
 const config = await client.getChainConfig({});
 assert(
   config.stated.maxTxGas !== undefined &&
-    config.stated.maxTxGas >= options.deploymentGas,
-  `This deployment needs a ${options.deploymentGas} gas cap. For a local configurable world, start thruput node with --network-config max_tx_gas=60000000000. For Futurenet, use --preset futurenet.`,
+    config.stated.maxTxGas >= options.gasLimit,
+  `This deployment needs a ${options.gasLimit} gas cap.`,
 );
 const world = {
   seed: BigInt(options.seed),
@@ -179,14 +179,14 @@ if (state.deployHash) {
   );
 } else {
   const balance = await wallet.getBalance();
-  const needed = options.deploymentGas + deposit + 100_000n;
+  const needed = options.gasLimit + deposit + 100_000n;
   assert(
     balance.rawBalance >= needed,
     `Account ${toBase58(account.address)} needs ${needed} raw units; available ${balance.rawBalance}. Fund this account before explicit resume.`,
   );
   ({ receipt } = await deployAndInitialize(wallet, deployment, world, deposit, {
-    root: options.deploymentGas,
-    target: options.deploymentTargetGas,
+    root: options.gasLimit,
+    target: options.targetGasLimit,
   }));
 }
 assert(succeeded(receipt), "Deployment did not execute successfully");
@@ -203,8 +203,8 @@ const env = {
   VITE_GAME_OF_LIFE_CONTRACT_ADDRESS: toHex0x(address),
   VITE_GAME_OF_LIFE_INDEXER_URL:
     process.env.GAME_OF_LIFE_INDEXER_URL ?? "http://127.0.0.1:8787",
-  VITE_GAME_OF_LIFE_GAS_LIMIT: options.advanceGas.toString(),
-  VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT: options.advanceTargetGas.toString(),
+  VITE_GAME_OF_LIFE_GAS_LIMIT: options.gasLimit.toString(),
+  VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT: options.targetGasLimit.toString(),
 };
 await mkdir(dirname(options.output), { recursive: true });
 await writeFile(

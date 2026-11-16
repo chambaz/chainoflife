@@ -68,5 +68,4 @@ npm run check:contracts
 
 See the [root README](../README.md) for local deployment. From the repository root,
 `npm run test:clean-ledger` verifies deployment and the live transaction lifecycle
-on an isolated ledger. Full-world advances need a raised local gas cap; the
-supplied node command configures it.
+on an isolated ledger with the node's default gas cap.

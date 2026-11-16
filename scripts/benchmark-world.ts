@@ -37,7 +37,7 @@ import {
 const { values } = parseArgs({
   options: {
     "rpc-url": { type: "string", default: "http://127.0.0.1:9558" },
-    sizes: { type: "string", default: "2500,2800,3000,3100" },
+    sizes: { type: "string", default: "8000,10000" },
     seeds: { type: "string", default: "0,1,42" },
     generations: { type: "string", default: "5" },
     "gas-limit": { type: "string", default: "1000000000" },
@@ -49,7 +49,7 @@ const { values } = parseArgs({
 });
 if (values.help) {
   console.log(
-    "Benchmark deployed worlds. Options: --rpc-url URL --sizes 2500,2800 --seeds 0,1,42 --generations 5 --gas-limit 1000000000 --target-gas-limit 995000000 --runtime-manifest PATH --output DIR\nEach run saves private accounts, funding intent, signed evidence, and receipts. Runs never retry or resubmit uncertain transactions. Inspect saved hashes before starting another run. Timings include signing, submission, scheduling, and receipt polling; they are not executor duration.",
+    "Benchmark deployed worlds. Options: --rpc-url URL --sizes 8000,10000 --seeds 0,1,42 --generations 5 --gas-limit 1000000000 --target-gas-limit 999000000 --runtime-manifest PATH --output DIR\nEach run saves private accounts, funding intent, signed evidence, and receipts. Runs never retry or resubmit uncertain transactions. Inspect saved hashes before starting another run. Timings include signing, submission, scheduling, and receipt polling; they are not executor duration.",
   );
   process.exit(0);
 }
@@ -92,7 +92,7 @@ assert(
   "Target gas must be an unsigned decimal integer",
 );
 const childGas =
-  targetInput === undefined ? rootGas - 5_000_000n : BigInt(targetInput);
+  targetInput === undefined ? rootGas - 1_000_000n : BigInt(targetInput);
 assert(
   childGas > 0n && childGas < rootGas,
   "Target gas must be positive and below the root budget",

@@ -6,39 +6,31 @@ gas cap, such as Futurenet's one-billion-gas cap.
 
 ## Futurenet preset
 
-The Futurenet preset deploys a fixed **2,900 × 2,900** world (8.41 million
-cells). Each advance has a **950-million** root gas budget and a
-**945-million** target gas budget.
+The Futurenet preset deploys a fixed **10,000 × 10,000** world (100 million
+cells). Every deployment, reset, and advance has a **1-billion** root gas budget
+and a **999-million** target gas budget, the full per-transaction cap.
 
 ## Results
 
 Runs on 2026-11-16 with Thruput CLI 0.45.2, v6 artifact SHA-256
-`ca0528b08791027bd045322912c6962bfe38c38830a5c3a71cd7e55c6dc242dd`, and the
+`2de986bb47ad79390363ccdb059381a194edd91a2ee9909716e2fd81664313f5`, and the
 preset budgets. Each world ran five advances.
 
 ### Local
 
-Managed runtime hog-devnode 0.1.34, seeds 0, 1, and 42:
+Managed runtime hog-devnode 0.1.34 with its default one-billion-gas cap, seeds
+0, 1, and 42:
 
-| Grid          |        Advances | Peak root gas | Below 1-billion cap | Deploy and initialize |
-| ------------- | --------------: | ------------: | ------------------: | --------------------: |
-| 2,900 × 2,900 | 15/15 succeeded |   881,126,123 |               11.9% |           153,301,620 |
-| 3,000 × 3,000 | 15/15 succeeded |   934,038,953 |                6.6% |           159,783,415 |
+| Grid            |        Advances |    Root gas per advance | Below 1-billion cap | Deploy and initialize |
+| --------------- | --------------: | ----------------------: | ------------------: | --------------------: |
+| 8,000 × 8,000   | 15/15 succeeded | 443,305,227–443,313,221 |               55.7% |           278,720,466 |
+| 10,000 × 10,000 | 15/15 succeeded | 983,670,549–983,690,561 |                1.6% |           442,547,966 |
 
-Size 2,900 is the largest tested size with at least 10% headroom below the cap.
-Operation-to-receipt time for one advance was 2.3–3.7 seconds.
-
-### Futurenet
-
-Seed 0 at 2,900 × 2,900: 5/5 advances succeeded, with the same peak root gas
-as the local run (881,126,123). Operation-to-receipt time for one advance was
-2.2–2.9 seconds, and 1.8 seconds for deploy and initialize.
-
-The hosted explorer, checked with the live advance test in Chromium with
-SwiftShader, showed first content in 0.6 seconds and the first ready world in
-3.4 seconds. The advanced generation became visible 9.0 seconds after the
-click. That time includes the transaction, indexing, and loading the new
-tiles.
+Gas is deterministic for the same artifact, runtime, and world state; it
+varied by at most 20,012 gas across seeds and generations. Rows wider than
+8,000 cells need two storage chunks instead of one, so gas per cell rises from
+6.9 at 8,000² to 9.8 at 10,000². Operation-to-receipt time for one advance was
+0.8–1.3 seconds at 8,000² and 1.5–2.3 seconds at 10,000².
 
 ## Method
 
@@ -84,13 +76,11 @@ From the repository root:
 ```sh
 "${THRUPUT_CLI:-thruput}" build -p game-of-life
 npm run benchmark:world -- --rpc-url https://rpc.thruput.network \
-  --sizes 2900,3000 --seeds 0,1,42 --generations 5 --gas-limit 950000000
+  --sizes 8000,10000 --seeds 0,1,42 --generations 5
 ```
 
-For a local check, start a compatible node with its default one-billion-gas
-cap. Pass `--rpc-url` and `--runtime-manifest` to the benchmark. To find the
-size limit, add larger sizes and set a target budget close to the cap, for
-example `--sizes 3100 --seeds 0 --generations 2 --gas-limit 1000000000
---target-gas-limit 999000000`.
+The defaults are the preset budgets: 1-billion root gas and 999-million target
+gas. For a local check, start a compatible node with its default
+one-billion-gas cap, and pass `--rpc-url` and `--runtime-manifest`.
 
 Run `npm run benchmark:world -- --help` for all options.

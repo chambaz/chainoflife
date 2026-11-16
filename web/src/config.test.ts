@@ -6,8 +6,8 @@ const valid = {
   VITE_THRUPUT_NETWORK_ID: `0x${"AA".repeat(32)}`,
   VITE_GAME_OF_LIFE_CONTRACT_ADDRESS: `0x${"bb".repeat(32)}`,
   VITE_GAME_OF_LIFE_INDEXER_URL: "http://localhost:8787/",
-  VITE_GAME_OF_LIFE_GAS_LIMIT: "950000000",
-  VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT: "945000000",
+  VITE_GAME_OF_LIFE_GAS_LIMIT: "1000000000",
+  VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT: "999000000",
 };
 describe("startup configuration", () => {
   test("normalizes only the network ID and freezes the result", () => {
@@ -45,14 +45,14 @@ describe("startup configuration", () => {
     ).toThrow(/required/));
   test("loads the world-write gas budget", () =>
     expect(loadAppConfig(valid).transactionPolicy).toEqual({
-      transactionGasLimit: 950_000_000n,
-      targetGasLimit: 945_000_000n,
+      transactionGasLimit: 1_000_000_000n,
+      targetGasLimit: 999_000_000n,
     }));
   test("rejects a target budget above the transaction budget", () =>
     expect(() =>
       loadAppConfig({
         ...valid,
-        VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT: "950000001",
+        VITE_GAME_OF_LIFE_TARGET_GAS_LIMIT: "1000000001",
       }),
     ).toThrow(/must not exceed/));
 });

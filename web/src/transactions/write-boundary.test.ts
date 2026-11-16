@@ -49,21 +49,21 @@ describe("Life write boundary", () => {
     );
     const invocation = GameOfLife.v0_1.advance.invocation(
       wallet.account.address,
-      gasAmount(10_000_000_000n),
+      gasAmount(999_000_000n),
     );
     const result = await boundary.execute(
       invocation,
       {
-        transactionGasLimit: 10_010_000_000n,
-        targetGasLimit: 10_000_000_000n,
+        transactionGasLimit: 1_000_000_000n,
+        targetGasLimit: 999_000_000n,
       },
       { onSigned: vi.fn() },
     );
     expect(execute).toHaveBeenCalledWith(
-      { invocation, gasLimit: 10_010_000_000n, expiryBlocks: 32n },
+      { invocation, gasLimit: 1_000_000_000n, expiryBlocks: 32n },
       { timeoutMs: 20_000 },
     );
-    expect(invocation.gas_limit).toBe(10_000_000_000n);
+    expect(invocation.gas_limit).toBe(999_000_000n);
     expect(result.kind).toBe("preSubmissionFailure");
   });
   describe("saving signed evidence before broadcast", () => {

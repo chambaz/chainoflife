@@ -48,6 +48,6 @@ match your change. Rust changes need the Rust checks. Initialization, simulation
 or digest changes also need the core's release-mode full-scale reference test.
 Contract or generator changes need `npm run check:contracts`.
 
-Full-size advances exceed the default gas cap; use the supplied node configuration.
+Every supported world fits the default one-billion-gas transaction cap.
 Report blocked live checks explicitly. Fixtures and old measurements are not
 fresh live acceptance.

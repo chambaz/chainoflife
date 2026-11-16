@@ -9,16 +9,16 @@ describe("deployment presets", () => {
     expect(local).toMatchObject({
       mode: "configurable",
       size: 10000,
-      advanceGas: 10_010_000_000n,
-      advanceTargetGas: 10_000_000_000n,
+      gasLimit: 1_000_000_000n,
+      targetGasLimit: 999_000_000n,
     });
     expect(remote).toMatchObject({
       preset: "futurenet",
       mode: "fixed",
-      size: 2900,
+      size: 10000,
       manifest: null,
-      advanceGas: 950_000_000n,
-      advanceTargetGas: 945_000_000n,
+      gasLimit: 1_000_000_000n,
+      targetGasLimit: 999_000_000n,
     });
     expect(remote.output).not.toBe(local.output);
     expect(remote.stateDir).not.toBe(local.stateDir);
