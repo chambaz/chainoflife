@@ -32,6 +32,18 @@ varied by at most 20,012 gas across seeds and generations. Rows wider than
 6.9 at 8,000² to 9.8 at 10,000². Operation-to-receipt time for one advance was
 0.8–1.3 seconds at 8,000² and 1.5–2.3 seconds at 10,000².
 
+### Futurenet
+
+The 10,000 × 10,000 world deployed with 442,547,966 gas, and its first advance
+produced the reference generation-one digest
+`fb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96`.
+
+The hosted explorer, checked with the live advance test in Chromium with
+SwiftShader, showed first content in 0.5 seconds and the first ready world in
+3.4 seconds. The advanced generation became visible 46 seconds after the click.
+Most of that time is indexing: the hosted indexer took 17 seconds to download
+the world from the public RPC and 19 seconds to publish 84 MB of tiles.
+
 ## Method
 
 For each size and seed, the benchmark:
