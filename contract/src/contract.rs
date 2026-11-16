@@ -1,5 +1,5 @@
 use crate::types::*;
-use game_of_life_core::digest::WorldDigest;
+use game_of_life_core::digest::{Sha256, WorldDigest};
 use game_of_life_core::kernel::compute_next_row_width;
 use game_of_life_core::prng::SplitMix64;
 use thruput_sdk::storage::{Bytestring, Flaggable, Map, Value};
@@ -8,6 +8,18 @@ use thruput_sdk::*;
 const MAX_SIZE: u32 = 10_000;
 const ROW_BYTES: usize = 1_250;
 const CHUNK_BYTES: usize = 1_000;
+
+/// SHA-256 computed by the host, which costs far less gas than hashing in
+/// the guest.
+struct HostSha256;
+
+impl Sha256 for HostSha256 {
+    fn sha256(bytes: &[u8]) -> [u8; 32] {
+        crypto::sha256(bytes).into_inner()
+    }
+}
+
+type Digest = WorldDigest<HostSha256>;
 
 #[thruput_sdk::storage]
 pub struct GameOfLife {
@@ -57,7 +69,7 @@ impl GameOfLife {
         self.read_row(&state, 0, &mut current);
         self.read_row(&state, 1, &mut next);
         let mut population = 0u64;
-        let mut digest = WorldDigest::for_epoch(state.size, state.size, state.epoch, generation);
+        let mut digest = Digest::for_epoch_with(state.size, state.size, state.epoch, generation);
         for row in 0..state.size {
             population += u64::from(compute_next_row_width(
                 &previous,
@@ -124,7 +136,7 @@ impl GameOfLife {
             throw(GameOfLifeError::InvalidWorldSize);
         }
         let mut prng = SplitMix64::new(seed);
-        let mut digest = WorldDigest::for_epoch(size, size, epoch, 0);
+        let mut digest = Digest::for_epoch_with(size, size, epoch, 0);
         let mut population = 0u64;
         let mut bytes = [0u8; ROW_BYTES];
         let length = row_bytes(size);
@@ -191,7 +203,7 @@ impl GameOfLife {
         size: u32,
         row: u32,
         bytes: &[u8; ROW_BYTES],
-        digest: &mut WorldDigest,
+        digest: &mut Digest,
     ) {
         let target = match bank {
             0 => &mut self.bank_a,
