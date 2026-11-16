@@ -1,6 +1,6 @@
 use crate::types::*;
 use game_of_life_core::digest::{CHUNK_BYTES, Sha256, WorldDigest};
-use game_of_life_core::kernel::compute_next_row_width;
+use game_of_life_core::kernel::{compute_next_row_width, count_cells};
 use game_of_life_core::prng::SplitMix64;
 use thruput_sdk::storage::{Bytestring, Flaggable, Map, Value};
 use thruput_sdk::*;
@@ -165,10 +165,7 @@ impl GameOfLife {
             if !size.is_multiple_of(8) {
                 bytes[length - 1] &= (1 << (size % 8)) - 1;
             }
-            population += bytes
-                .iter()
-                .map(|byte| u64::from(byte.count_ones()))
-                .sum::<u64>();
+            population += u64::from(count_cells(bytes));
             writer.commit(length);
         }
         let state_digest = SHA256Hash::new(writer.finish());

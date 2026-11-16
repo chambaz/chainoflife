@@ -13,7 +13,7 @@ and a **999-million** target gas budget, the full per-transaction cap.
 ## Results
 
 Runs on 2026-11-16 with Thruput CLI 0.45.2, v6 artifact SHA-256
-`166bbea3e2a7930095804433803080eacb3cca26aed2ab630fdb2181698248a9`, and the
+`0e7f8387771fcbfe5314651cef8b4f339f58be511676d7b3bb4fdaa6b7c1c286`, and the
 preset budgets. Each world ran five advances.
 
 ### Local
@@ -23,13 +23,13 @@ Managed runtime hog-devnode 0.1.34 with its default one-billion-gas cap, seeds
 
 | Grid            |        Advances |    Root gas per advance | Below 1-billion cap | Deploy and initialize |
 | --------------- | --------------: | ----------------------: | ------------------: | --------------------: |
-| 8,000 × 8,000   | 15/15 succeeded | 198,351,908–198,351,912 |               80.2% |           274,868,195 |
-| 10,000 × 10,000 | 15/15 succeeded | 309,592,320–309,592,324 |               69.0% |           430,092,969 |
+| 8,000 × 8,000   | 15/15 succeeded | 198,375,908–198,375,912 |               80.2% |            70,356,196 |
+| 10,000 × 10,000 | 15/15 succeeded | 309,622,320–309,622,324 |               69.0% |           110,162,970 |
 
 Gas is deterministic for the same artifact, runtime, and world size; it
 varied by 4 gas between the two storage banks and not at all across seeds.
 Both sizes use 3.1 gas per cell. Operation-to-receipt time for one advance
-was 0.8–1.0 seconds at 8,000² and 0.8–1.3 seconds at 10,000².
+was 0.8–1.3 seconds at both sizes.
 
 ### Futurenet
 

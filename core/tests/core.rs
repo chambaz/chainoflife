@@ -102,6 +102,28 @@ fn byte_stream_continues_across_unaligned_chunks() {
 }
 
 #[test]
+fn byte_stream_is_the_same_however_it_is_split() {
+    let mut contiguous = SplitMix64::new(9);
+    let mut expected = [0u8; 256];
+    contiguous.fill_bytes(&mut expected);
+    assert_eq!(expected[..8], SplitMix64::new(9).next_u64().to_le_bytes());
+
+    // Every pair of lengths covers each buffered remainder and tail.
+    for first in 0..=24 {
+        for second in 0..=24 {
+            let mut split = SplitMix64::new(9);
+            let mut actual = [0u8; 256];
+            let (head, rest) = actual.split_at_mut(first);
+            let (middle, tail) = rest.split_at_mut(second);
+            split.fill_bytes(head);
+            split.fill_bytes(middle);
+            split.fill_bytes(tail);
+            assert_eq!(actual, expected, "{first}, {second}");
+        }
+    }
+}
+
+#[test]
 fn digest_pins_field_widths_byte_order_and_actual_chunk_length() {
     // Python hashlib + struct.pack('>IIQQ') reference.
     let mut digest = WorldDigest::for_epoch(10_000, 10_000, 0, 7);
