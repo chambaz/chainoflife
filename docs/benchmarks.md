@@ -12,20 +12,33 @@ cells). Each advance has a **950-million** root gas budget and a
 
 ## Results
 
-Local run on 2026-11-13 with Thruput CLI 0.45.0 and its managed runtime
-(hog-devnode 0.1.33), v6 artifact SHA-256
-`7620afc467ab93b51782ca9adc7e8f9c635acebf5ab59a1e6d67965ace5170ba`.
-Seeds 0, 1, and 42, five advances each, with the preset budgets:
+Runs on 2026-11-16 with Thruput CLI 0.45.2, v6 artifact SHA-256
+`ca0528b08791027bd045322912c6962bfe38c38830a5c3a71cd7e55c6dc242dd`, and the
+preset budgets. Each world ran five advances.
 
-| Grid | Advances | Peak root gas | Below 1-billion cap | Deploy and initialize |
-| --- | ---: | ---: | ---: | ---: |
-| 2,900 × 2,900 | 15/15 succeeded | 881,126,131 | 11.9% | 153,301,621 |
-| 3,000 × 3,000 | 15/15 succeeded | 934,038,961 | 6.6% | 159,783,416 |
+### Local
+
+Managed runtime hog-devnode 0.1.34, seeds 0, 1, and 42:
+
+| Grid          |        Advances | Peak root gas | Below 1-billion cap | Deploy and initialize |
+| ------------- | --------------: | ------------: | ------------------: | --------------------: |
+| 2,900 × 2,900 | 15/15 succeeded |   881,126,123 |               11.9% |           153,301,620 |
+| 3,000 × 3,000 | 15/15 succeeded |   934,038,953 |                6.6% |           159,783,415 |
 
 Size 2,900 is the largest tested size with at least 10% headroom below the cap.
-Operation-to-receipt time for one advance was 2.3–3.6 seconds on the local
-node at both sizes. These are local results; gas is deterministic for the same
-artifact and runtime, but network timing must be measured on Futurenet.
+Operation-to-receipt time for one advance was 2.3–3.7 seconds.
+
+### Futurenet
+
+Seed 0 at 2,900 × 2,900: 5/5 advances succeeded, with the same peak root gas
+as the local run (881,126,123). Operation-to-receipt time for one advance was
+2.2–2.9 seconds, and 1.8 seconds for deploy and initialize.
+
+The hosted explorer, checked with the live advance test in Chromium with
+SwiftShader, showed first content in 0.6 seconds and the first ready world in
+3.4 seconds. The advanced generation became visible 9.0 seconds after the
+click. That time includes the transaction, indexing, and loading the new
+tiles.
 
 ## Method
 
