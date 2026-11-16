@@ -9,13 +9,16 @@ The contract stores a bit-packed square toroidal Conway world. Each side is
 | `advance()` | Computes and stores the next generation of the complete world. |
 | `resize(size)` | Resets a resizable world at a new size and epoch, keeping its seed. Fixed worlds fail with `FixedWorld`. |
 | `get_metadata()` | Returns epoch, size, generation, seed, population, digest, and resize policy. |
-| `get_chunk(row, part)` | Returns one stored chunk of the active bank. |
+| `get_chunk(row, part)` | Returns up to 1,000 bytes of one row of the active bank, from byte `part * 1000`, padded with zeros. |
 
 ## Storage
 
-Cells use row-major, LSB-first bits. Each row has `ceil(size / 8)` bytes,
-split into chunks of at most 1,000 bytes. Padding bits are zero.
-At full size, each bank has 20,000 chunks and 12,500,000 bytes.
+Cells use row-major, LSB-first bits. Each row has `ceil(size / 8)` bytes;
+padding bits are zero. A bank stores the rows end to end as one byte string,
+split into chunks of 4,096 bytes under consecutive keys from zero. The last
+chunk holds the remainder. A row can span two chunks.
+
+At full size, each bank has 3,052 chunks and 12,500,000 bytes.
 Even generations read bank A and write bank B; odd generations reverse
 those roles. Initialization and reset write bank A. Unused keys from larger
 boards remain stored, but advances do not read or write them.
@@ -23,14 +26,16 @@ boards remain stored, but advances do not read or write them.
 For cell `(x, y)`:
 
 ```text
-byte_in_row  = floor(x / 8)
-bit          = x % 8
-part         = floor(byte_in_row / 1000)
-byte_in_part = byte_in_row - part * 1000
-chunk_key    = y * ceil(ceil(size / 8) / 1000) + part
+world_byte    = y * ceil(size / 8) + floor(x / 8)
+bit           = x % 8
+chunk_key     = floor(world_byte / 4096)
+byte_in_chunk = world_byte % 4096
 ```
 
-The digest starts with SHA-256 of the ASCII domain `chain-of-life/world/v1`,
+Chunks need a network whose `max_bytestring_len` is at least 4,096, as on
+Futurenet. `thruput.toml` sets it for local nodes.
+
+The digest starts with SHA-256 of the ASCII domain `chain-of-life/world/v2`,
 followed by big-endian width (`u32`), height (`u32`), epoch (`u64`), and
 generation (`u64`).
 In ascending key order, each step hashes the previous digest, chunk key (`u32`),
@@ -39,8 +44,9 @@ encoding and full-world vectors.
 
 ## Transactions
 
-`advance` streams a three-row window, evaluates each destination row, writes
-its chunks, and calculates population and digest. It then switches the active
+`advance` reads the chunks of the active bank in order, evaluates each
+destination row from a three-row window, stores each completed chunk, and
+calculates population and digest. It then switches the active
 bank, writes the world state, and emits `GenerationAdvanced` with the caller as
 the `advanced_by` topic. All effects commit together or roll back together.
 
@@ -51,10 +57,11 @@ receipt or effect; they expire, and their senders can submit again.
 `resize` and `initialize` emit `WorldInitialized`. Each reset increments the
 epoch, so resets to an earlier size still have a distinct digest.
 
-At full size, one advance performs 100,000,000 cell evaluations, 20,004
-bank-chunk reads (12,502,500 bytes), and 20,000 bank-chunk writes (12,500,000
-bytes). Reads include two repeated rows for toroidal boundaries. At smaller
-sizes, evaluations and chunk traffic scale with the selected grid.
+At full size, one advance performs 100,000,000 cell evaluations, reads the
+3,052 chunks of one bank, and writes the 3,052 chunks of the other
+(12,500,000 bytes each way). The first and last chunks are read again for the
+toroidal boundary rows. At smaller sizes, evaluations and chunk traffic scale
+with the selected grid.
 
 ## Build and verify
 

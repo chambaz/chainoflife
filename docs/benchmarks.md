@@ -13,7 +13,7 @@ and a **999-million** target gas budget, the full per-transaction cap.
 ## Results
 
 Runs on 2026-11-16 with Thruput CLI 0.45.2, v6 artifact SHA-256
-`2de986bb47ad79390363ccdb059381a194edd91a2ee9909716e2fd81664313f5`, and the
+`166bbea3e2a7930095804433803080eacb3cca26aed2ab630fdb2181698248a9`, and the
 preset budgets. Each world ran five advances.
 
 ### Local
@@ -23,19 +23,20 @@ Managed runtime hog-devnode 0.1.34 with its default one-billion-gas cap, seeds
 
 | Grid            |        Advances |    Root gas per advance | Below 1-billion cap | Deploy and initialize |
 | --------------- | --------------: | ----------------------: | ------------------: | --------------------: |
-| 8,000 × 8,000   | 15/15 succeeded | 443,305,227–443,313,221 |               55.7% |           278,720,466 |
-| 10,000 × 10,000 | 15/15 succeeded | 983,670,549–983,690,561 |                1.6% |           442,547,966 |
+| 8,000 × 8,000   | 15/15 succeeded | 198,351,908–198,351,912 |               80.2% |           274,868,195 |
+| 10,000 × 10,000 | 15/15 succeeded | 309,592,320–309,592,324 |               69.0% |           430,092,969 |
 
-Gas is deterministic for the same artifact, runtime, and world state; it
-varied by at most 20,012 gas across seeds and generations. Rows wider than
-8,000 cells need two storage chunks instead of one, so gas per cell rises from
-6.9 at 8,000² to 9.8 at 10,000². Operation-to-receipt time for one advance was
-0.8–1.3 seconds at 8,000² and 1.5–2.3 seconds at 10,000².
+Gas is deterministic for the same artifact, runtime, and world size; it
+varied by 4 gas between the two storage banks and not at all across seeds.
+Both sizes use 3.1 gas per cell. Operation-to-receipt time for one advance
+was 0.8–1.0 seconds at 8,000² and 0.8–1.3 seconds at 10,000².
 
 ### Futurenet
 
-The 10,000 × 10,000 world deployed with 442,547,966 gas, and its first advance
-produced the reference generation-one digest
+These results predate the 4,096-byte storage chunks and the `v2` digest, and
+need a new deployment to refresh. The 10,000 × 10,000 world deployed with
+442,547,966 gas, and its first advance produced the `v1` reference
+generation-one digest
 `fb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96`.
 
 The hosted explorer, checked with the live advance test in Chromium with

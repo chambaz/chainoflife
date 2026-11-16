@@ -3,3 +3,7 @@ default_profile = "local"
 [profile.local]
 network = "local"
 rpc_url = "http://127.0.0.1:9545"
+
+# The world is stored in 4,096-byte chunks, as on Futurenet.
+[profile.local.network_config]
+max_bytestring_len = 4096

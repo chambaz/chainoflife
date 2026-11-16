@@ -857,20 +857,14 @@ fn fixed_metadata(generation: u64, digest: &str) -> SnapshotMetadata {
 }
 
 fn dead_metadata(generation: u64) -> SnapshotMetadata {
-    let head = vec![0; CHUNK_BYTES];
-    let tail = vec![0; TAIL_BYTES];
-    let mut digest = WorldDigest::for_epoch(WORLD_SIZE, WORLD_SIZE, 0, generation);
-    for row in 0..WORLD_SIZE {
-        digest.update(row * CHUNKS_PER_ROW, &head);
-        digest.update(row * CHUNKS_PER_ROW + 1, &tail);
-    }
+    let world = vec![0; WORLD_SIZE as usize * (CHUNK_BYTES + TAIL_BYTES)];
     SnapshotMetadata {
         epoch: 0,
         size: WORLD_SIZE,
         generation,
         seed: 0,
         population: 0,
-        state_digest: digest.finish(),
+        state_digest: WorldDigest::of_world(WORLD_SIZE, WORLD_SIZE, 0, generation, &world),
     }
 }
 

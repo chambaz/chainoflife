@@ -16,11 +16,11 @@ const CHUNKS_PER_ROW: u32 = 2;
 #[test]
 fn small_padded_world_has_exact_tiles_and_distinct_reset_identity() {
     let mut chunks = Vec::new();
-    let mut digest = WorldDigest::for_epoch(100, 100, 2, 0);
+    let mut world = Vec::new();
     for row in 0..100 {
         let mut bytes = vec![255; 13];
         bytes[12] = 15;
-        digest.update(row, &bytes);
+        world.extend_from_slice(&bytes);
         chunks.push(ChunkResponse {
             row,
             part: 0,
@@ -33,7 +33,7 @@ fn small_padded_world_has_exact_tiles_and_distinct_reset_identity() {
         generation: 0,
         seed: 0,
         population: 10_000,
-        state_digest: digest.finish(),
+        state_digest: WorldDigest::of_world(100, 100, 2, 0, &world),
     };
     let snapshot = build_snapshot(
         &metadata,
@@ -345,7 +345,7 @@ fn full_seed_zero_fixture_matches_contract_and_is_deterministic() {
     assert_eq!(metadata.population, 49_999_272);
     assert_eq!(
         hex::encode(metadata.state_digest),
-        "cda8bcd61fb27dc126813c60791b3f3bae470b5015906739108ac989a2b3f265"
+        "64a81a157cfb3bd83276eaab7a15b0a44a9ec7d8eac04bc117b78a01212cf4e5"
     );
     let first = build_snapshot(
         &metadata,
@@ -386,7 +386,7 @@ fn seed_zero_fixture() -> (SnapshotMetadata, Vec<ChunkResponse>) {
 
 fn fixture_with_fill(mut fill: impl FnMut(&mut [u8])) -> (SnapshotMetadata, Vec<ChunkResponse>) {
     let mut chunks = Vec::with_capacity((WORLD_HEIGHT * CHUNKS_PER_ROW) as usize);
-    let mut digest = WorldDigest::for_epoch(WORLD_WIDTH, WORLD_HEIGHT, 0, 0);
+    let mut world = Vec::new();
     let mut population = 0u64;
     for row in 0..WORLD_HEIGHT {
         for part in 0..CHUNKS_PER_ROW {
@@ -397,7 +397,7 @@ fn fixture_with_fill(mut fill: impl FnMut(&mut [u8])) -> (SnapshotMetadata, Vec<
                 .iter()
                 .map(|byte| u64::from(byte.count_ones()))
                 .sum::<u64>();
-            digest.update(row * CHUNKS_PER_ROW + part, &bytes);
+            world.extend_from_slice(&bytes);
             chunks.push(ChunkResponse { row, part, bytes });
         }
     }
@@ -408,7 +408,7 @@ fn fixture_with_fill(mut fill: impl FnMut(&mut [u8])) -> (SnapshotMetadata, Vec<
             generation: 0,
             seed: 0,
             population,
-            state_digest: digest.finish(),
+            state_digest: WorldDigest::of_world(WORLD_WIDTH, WORLD_HEIGHT, 0, 0, &world),
         },
         chunks,
     )
@@ -423,15 +423,15 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
         chunk.bytes[byte_in_row % CHUNK_BYTES] |= 1 << (x % 8);
     }
 
-    let mut digest = WorldDigest::for_epoch(WORLD_WIDTH, WORLD_HEIGHT, 0, 0);
+    let mut world = Vec::new();
     let mut population = 0;
-    for (key, chunk) in chunks.iter().enumerate() {
+    for chunk in &chunks {
         population += chunk
             .bytes
             .iter()
             .map(|byte| u64::from(byte.count_ones()))
             .sum::<u64>();
-        digest.update(key as u32, &chunk.bytes);
+        world.extend_from_slice(&chunk.bytes);
     }
     (
         SnapshotMetadata {
@@ -440,7 +440,7 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
             generation: 0,
             seed: 0,
             population,
-            state_digest: digest.finish(),
+            state_digest: WorldDigest::of_world(WORLD_WIDTH, WORLD_HEIGHT, 0, 0, &world),
         },
         chunks,
     )

@@ -1,6 +1,10 @@
 use core::marker::PhantomData;
 
-const DOMAIN: &[u8] = b"chain-of-life/world/v1";
+const DOMAIN: &[u8] = b"chain-of-life/world/v2";
+
+/// Bytes of the world in each digest step and each stored chunk. The last
+/// chunk of a world may be shorter.
+pub const CHUNK_BYTES: usize = 4_096;
 const HEADER_BYTES: usize = DOMAIN.len() + 4 + 4 + 8 + 8;
 const STEP_BYTES: usize = 32 + 4 + 4 + 32;
 
@@ -28,6 +32,22 @@ impl WorldDigest<Software> {
     /// Bind reset identity as well as dimensions and generation to the digest.
     pub fn for_epoch(width: u32, height: u32, epoch: u64, generation: u64) -> Self {
         Self::for_epoch_with(width, height, epoch, generation)
+    }
+
+    /// Digest of a complete world: its rows end to end, in chunks of
+    /// `CHUNK_BYTES` numbered from zero.
+    pub fn of_world(
+        width: u32,
+        height: u32,
+        epoch: u64,
+        generation: u64,
+        world: &[u8],
+    ) -> [u8; 32] {
+        let mut digest = Self::for_epoch(width, height, epoch, generation);
+        for (key, chunk) in world.chunks(CHUNK_BYTES).enumerate() {
+            digest.update(key as u32, chunk);
+        }
+        digest.finish()
     }
 }
 
