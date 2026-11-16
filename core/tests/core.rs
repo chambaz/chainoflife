@@ -27,7 +27,8 @@ fn epoch_digest_matches_independent_sha256_vectors() {
 
 #[test]
 fn padded_rows_match_scalar_toroidal_reference() {
-    for width in [100usize, 200, 300, 1_000] {
+    // Every width up to four words covers each word boundary and tail length.
+    for width in (1usize..=130).chain([200, 300, 1_000, 2_900]) {
         let height = 7;
         let bytes = width.div_ceil(8);
         let mut rng = SplitMix64::new(42);
