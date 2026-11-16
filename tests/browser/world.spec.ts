@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 
 const browserErrors = new WeakMap<object, string[]>();
 test.beforeEach(async ({ page }) => {
@@ -438,22 +438,30 @@ test("supports tab focus and keyboard center inspection", async ({ page }) => {
 test("limits tile requests to four visible and one prefetch at a time", async ({
   page,
 }) => {
+  // Count the browser's own request lifecycle: a canceled request ends at
+  // once, even while its route handler is still running.
   let active = 0;
   let maximum = 0;
-  await page.route("**/tiles/**/*.bin", async (route) => {
+  const isTile = (request: Request) =>
+    /\/tiles\/.+\.bin$/.test(new URL(request.url()).pathname);
+  page.on("request", (request) => {
+    if (!isTile(request)) return;
     active += 1;
     maximum = Math.max(maximum, active);
-    let counted = true;
+  });
+  const end = (request: Request) => {
+    if (isTile(request)) active -= 1;
+  };
+  page.on("requestfinished", end);
+  page.on("requestfailed", end);
+  // Slow each tile so that requests overlap and reach the limit.
+  await page.route("**/tiles/**/*.bin", async (route) => {
     try {
       const response = await route.fetch();
       await new Promise((resolve) => setTimeout(resolve, 30));
-      active -= 1;
-      counted = false;
       await route.fulfill({ response });
     } catch {
       /* Superseded tile requests are expected to be canceled. */
-    } finally {
-      if (counted) active -= 1;
     }
   });
   await page.goto("/");
