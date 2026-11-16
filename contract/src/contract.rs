@@ -61,28 +61,27 @@ impl GameOfLife {
             .unwrap_or_else(|| throw(GameOfLifeError::GenerationOverflow));
         let target_bank = 1 - state.active_bank;
         let width = row_bytes(state.size);
-        let mut previous = [0u8; ROW_BYTES];
-        let mut current = [0u8; ROW_BYTES];
-        let mut next = [0u8; ROW_BYTES];
+        // A three-row window. Rotating the slots avoids copying the rows.
+        let mut rows = [[0u8; ROW_BYTES]; 3];
+        let (mut previous, mut current, mut next) = (0, 1, 2);
         let mut output = [0u8; ROW_BYTES];
-        self.read_row(&state, state.size - 1, &mut previous);
-        self.read_row(&state, 0, &mut current);
-        self.read_row(&state, 1, &mut next);
+        self.read_row(&state, state.size - 1, &mut rows[previous]);
+        self.read_row(&state, 0, &mut rows[current]);
+        self.read_row(&state, 1, &mut rows[next]);
         let mut population = 0u64;
         let mut digest = Digest::for_epoch_with(state.size, state.size, state.epoch, generation);
         for row in 0..state.size {
             population += u64::from(compute_next_row_width(
-                &previous,
-                &current,
-                &next,
+                &rows[previous],
+                &rows[current],
+                &rows[next],
                 &mut output[..width],
                 state.size as usize,
             ));
             self.write_row(target_bank, state.size, row, &output, &mut digest);
             if row + 1 < state.size {
-                core::mem::swap(&mut previous, &mut current);
-                core::mem::swap(&mut current, &mut next);
-                self.read_row(&state, (row + 2) % state.size, &mut next);
+                (previous, current, next) = (current, next, previous);
+                self.read_row(&state, (row + 2) % state.size, &mut rows[next]);
             }
         }
         let next_state = WorldState {
