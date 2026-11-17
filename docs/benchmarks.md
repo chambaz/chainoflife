@@ -12,7 +12,7 @@ and a **999-million** target gas budget, the full per-transaction cap.
 
 ## Results
 
-Runs on 2026-11-16 with Thruput CLI 0.45.2, v6 artifact SHA-256
+Local runs on 2026-11-16 and the Futurenet run on 2026-11-17, with Thruput CLI 0.45.2, v6 artifact SHA-256
 `0e7f8387771fcbfe5314651cef8b4f339f58be511676d7b3bb4fdaa6b7c1c286`, and the
 preset budgets. Each world ran five advances.
 
@@ -33,17 +33,15 @@ was 0.8–1.3 seconds at both sizes.
 
 ### Futurenet
 
-These results predate the 4,096-byte storage chunks and the `v2` digest, and
-need a new deployment to refresh. The 10,000 × 10,000 world deployed with
-442,547,966 gas, and its first advance produced the `v1` reference
-generation-one digest
-`fb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96`.
+The 10,000 × 10,000 world deployed with 110,162,970 gas, the same as the local
+run, and its first advance produced the reference generation-one digest
+`1ea48941caa8c1614bbb00c80ed6903855c174778d45725522439cc875ccde71`.
 
 The hosted explorer, checked with the live advance test in Chromium with
-SwiftShader, showed first content in 0.5 seconds and the first ready world in
-3.4 seconds. The advanced generation became visible 46 seconds after the click.
-Most of that time is indexing: the hosted indexer took 17 seconds to download
-the world from the public RPC and 19 seconds to publish 84 MB of tiles.
+SwiftShader, showed first content in 1.1 seconds and the first ready world in
+6.8 seconds. The advanced generation became visible 56 seconds after the click.
+Most of that time is indexing: the hosted indexer took 18 seconds to download
+the world from the public RPC and 23 seconds to publish 84 MB of tiles.
 
 ## Method
 
