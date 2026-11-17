@@ -1,5 +1,5 @@
 use game_of_life_core::digest::WorldDigest;
-use game_of_life_core::kernel::{compute_next_row, compute_next_row_width};
+use game_of_life_core::kernel::{compute_next_row, compute_next_row_width, count_cells};
 
 #[test]
 fn epoch_digest_matches_independent_sha256_vectors() {
@@ -27,8 +27,9 @@ fn epoch_digest_matches_independent_sha256_vectors() {
 
 #[test]
 fn padded_rows_match_scalar_toroidal_reference() {
-    // Every width up to four words covers each word boundary and tail length.
-    for width in (1usize..=130).chain([200, 300, 1_000, 2_900]) {
+    // Every width up to ten words covers each word boundary, tail length,
+    // and position in the unrolled loops.
+    for width in (1usize..=330).chain([1_000, 2_900]) {
         let height = 7;
         let bytes = width.div_ceil(8);
         let mut rng = SplitMix64::new(42);
@@ -163,6 +164,18 @@ fn full_scale_generation_one_vector() {
             "fb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96".into()
         )
     );
+}
+
+#[test]
+fn cell_count_matches_bytewise_count_at_every_length() {
+    let mut rng = SplitMix64::new(7);
+    let mut row = [0u8; 200];
+    rng.fill_bytes(&mut row);
+    for length in 0..=row.len() {
+        let expected: u32 = row[..length].iter().map(|byte| byte.count_ones()).sum();
+        assert_eq!(count_cells(&row[..length]), expected, "{length}");
+    }
+    assert_eq!(count_cells(&[0xFF; 1_250]), 10_000);
 }
 
 #[test]
