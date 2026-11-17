@@ -25,13 +25,21 @@ impl SplitMix64 {
 
     /// Fill a canonical byte stream without restarting at row or chunk boundaries.
     pub fn fill_bytes(&mut self, output: &mut [u8]) {
-        for byte in output {
-            if self.buffered_at == self.buffered.len() {
-                self.buffered = self.next_u64().to_le_bytes();
-                self.buffered_at = 0;
-            }
-            *byte = self.buffered[self.buffered_at];
-            self.buffered_at += 1;
+        // Bytes left over from the last value come first.
+        let buffered = (self.buffered.len() - self.buffered_at).min(output.len());
+        let (head, output) = output.split_at_mut(buffered);
+        head.copy_from_slice(&self.buffered[self.buffered_at..self.buffered_at + buffered]);
+        self.buffered_at += buffered;
+
+        // Whole values go straight to the output.
+        let (values, tail) = output.as_chunks_mut::<8>();
+        for value in values {
+            *value = self.next_u64().to_le_bytes();
+        }
+        if !tail.is_empty() {
+            self.buffered = self.next_u64().to_le_bytes();
+            tail.copy_from_slice(&self.buffered[..tail.len()]);
+            self.buffered_at = tail.len();
         }
     }
 }
