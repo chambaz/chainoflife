@@ -34,12 +34,12 @@ export const referenceWorld = {
   generationZero: {
     population: 49_999_272n,
     stateDigest:
-      "0xcda8bcd61fb27dc126813c60791b3f3bae470b5015906739108ac989a2b3f265",
+      "0x64a81a157cfb3bd83276eaab7a15b0a44a9ec7d8eac04bc117b78a01212cf4e5",
   },
   generationOne: {
     population: 27_336_807n,
     stateDigest:
-      "0xfb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96",
+      "0x1ea48941caa8c1614bbb00c80ed6903855c174778d45725522439cc875ccde71",
   },
 } as const;
 
@@ -100,10 +100,11 @@ export function storageDeposit(
   artifactBytes: number,
   storageSize: number,
 ): bigint {
-  const chunks = storageSize * Math.ceil(Math.ceil(storageSize / 8) / 1000) * 2;
+  const worldBytes = storageSize * Math.ceil(storageSize / 8);
+  const chunks = Math.ceil(worldBytes / 4096) * 2;
   return (
     BigInt(chunks + 4) * costs.baseDataItemCost +
-    (BigInt(chunks) * 1_024n + 1_024n) * costs.bytestringCostPerByte +
+    (BigInt(chunks) * 4_096n + 1_024n) * costs.bytestringCostPerByte +
     costs.baseContractDeploymentCost +
     BigInt(artifactBytes) * costs.contractDeploymentCostPerByte +
     costs.balanceCost

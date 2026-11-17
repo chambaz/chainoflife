@@ -139,12 +139,6 @@ pub fn reconstruct_canonical_world(
     }
 
     let mut canonical = Vec::with_capacity(metadata.canonical_bytes());
-    let mut digest = WorldDigest::for_epoch(
-        metadata.size,
-        metadata.size,
-        metadata.epoch,
-        metadata.generation,
-    );
     let mut population = 0u64;
     for (key, chunk) in ordered.into_iter().enumerate() {
         let chunk = chunk.ok_or(Error::ChunkCount {
@@ -167,7 +161,6 @@ pub fn reconstruct_canonical_world(
             .iter()
             .map(|byte| u64::from(byte.count_ones()))
             .sum::<u64>();
-        digest.update(key as u32, canonical_chunk);
         canonical.extend_from_slice(canonical_chunk);
     }
     if canonical.len() != metadata.canonical_bytes() {
@@ -182,7 +175,7 @@ pub fn reconstruct_canonical_world(
             actual: population,
         });
     }
-    let actual_digest = digest.finish();
+    let actual_digest = digest_canonical(metadata, &canonical);
     if actual_digest != metadata.state_digest {
         return Err(Error::Digest {
             expected: hex32(&metadata.state_digest),
@@ -550,18 +543,13 @@ fn validate_parent_sums(parent: &DensityLevel, child: &DensityLevel) -> Result<(
 }
 
 fn digest_canonical(metadata: &SnapshotMetadata, canonical: &[u8]) -> [u8; 32] {
-    let mut digest = WorldDigest::for_epoch(
+    WorldDigest::of_world(
         metadata.size,
         metadata.size,
         metadata.epoch,
         metadata.generation,
-    );
-    for (row, bytes) in canonical.chunks(metadata.row_bytes()).enumerate() {
-        for (part, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
-            digest.update(row as u32 * metadata.chunks_per_row() + part as u32, chunk);
-        }
-    }
-    digest.finish()
+        canonical,
+    )
 }
 
 /// Number of tiles along each axis at zoom `z` (at most `MAX_ZOOM`) for a world of `width` cells.

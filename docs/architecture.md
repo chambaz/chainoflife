@@ -66,7 +66,7 @@ describes the container images.
 
 | Identifier             | Value                              | Changes require                            |
 | ---------------------- | ---------------------------------- | ------------------------------------------ |
-| World digest domain    | `chain-of-life/world/v1`           | New reference vectors and a new deployment |
+| World digest domain    | `chain-of-life/world/v2`           | New reference vectors and a new deployment |
 | Indexer JSON documents | `schemaVersion: 1`                 | Matching indexer and browser releases      |
 | Indexer HTTP paths     | `/v1/worlds/<network>/<contract>/` | Matching indexer and browser releases      |
 | Browser storage keys   | `chain-of-life:<kind>:v1:…`        | A new key; old records are ignored         |

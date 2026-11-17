@@ -1,4 +1,4 @@
-use game_of_life_core::digest::WorldDigest;
+use game_of_life_core::digest::{CHUNK_BYTES, WorldDigest};
 use game_of_life_core::kernel::{compute_next_row, compute_next_row_width, count_cells};
 
 #[test]
@@ -7,15 +7,15 @@ fn epoch_digest_matches_independent_sha256_vectors() {
     for (epoch, expected) in [
         (
             0,
-            "2c8ffa494fdae87fb8ba3128db41d78ad254a48772ce5e590e8539bc230b36bc",
+            "517d74c452c185937306cbcfccf9af0535fecc34a10ea60e8e85a92576e1c63e",
         ),
         (
             1,
-            "d3dbac0da0fa58707d8b5d3c5e882869adb0e29115f758bf6f92232c8609acfd",
+            "fad7aa53de3e6b509b7222b6b2065c128b859efea47788e49040949cb07d5bbc",
         ),
         (
             0x0102_0304_0506_0708,
-            "ad8f292698a41cba63332ea47bb9ada908a2627dffc503ed789117726c86fe29",
+            "a0b7dccb1dae4be8d9c3d9de17e2ccd32f26ddd42517f4a06eebcd8d5b8114eb",
         ),
     ] {
         let mut digest = WorldDigest::for_epoch(100, 100, epoch, 7);
@@ -109,26 +109,40 @@ fn digest_pins_field_widths_byte_order_and_actual_chunk_length() {
     digest.update(1, &[4, 5]);
     assert_eq!(
         hex(digest.finish()),
-        "58b3f3c6ce142cb43cd6402fe6a1b011b0eec54ca6edf571af0a4b4a5f8f65ba"
+        "6b27c40c3785e10e7e935562ae2973a5f7b44e7fcc6b627bd86d235384f8bc50"
     );
+}
+
+#[test]
+fn world_digest_steps_through_fixed_chunks_and_a_shorter_last_chunk() {
+    let world: Vec<u8> = (0..CHUNK_BYTES * 2 + 5).map(|index| index as u8).collect();
+    let mut digest = WorldDigest::for_epoch(100, 100, 3, 9);
+    digest.update(0, &world[..CHUNK_BYTES]);
+    digest.update(1, &world[CHUNK_BYTES..CHUNK_BYTES * 2]);
+    digest.update(2, &world[CHUNK_BYTES * 2..]);
+    assert_eq!(
+        WorldDigest::of_world(100, 100, 3, 9, &world),
+        digest.finish()
+    );
+    assert_eq!(CHUNK_BYTES, 4_096);
 }
 
 #[test]
 fn full_scale_seed_vectors_are_reproducible() {
     // Independent Python SplitMix64/hashlib reference. Seed 0 also matches the
-    // generation-zero digest verified on-chain by deployment.
+    // generation-zero digest of a local deployment.
     assert_eq!(
         initialized_world(0),
         (
             49_999_272,
-            "cda8bcd61fb27dc126813c60791b3f3bae470b5015906739108ac989a2b3f265".into()
+            "64a81a157cfb3bd83276eaab7a15b0a44a9ec7d8eac04bc117b78a01212cf4e5".into()
         )
     );
     assert_eq!(
         initialized_world(1),
         (
             50_010_937,
-            "9dfe7d51467e3c9e987f294877213638b4e0a778709c51c5c273897d030e78c1".into()
+            "52fa9c5e93e59ece217ba89dd49b35c1024641e9ecd0e56e9eb5b0e6849372b0".into()
         )
     );
 }
@@ -142,7 +156,7 @@ fn full_scale_generation_one_vector() {
         rng.fill_bytes(row);
     }
 
-    let mut digest = WorldDigest::for_epoch(10_000, 10_000, 0, 1);
+    let mut next = Vec::with_capacity(10_000 * 1_250);
     let mut population = 0u64;
     let mut output = [0u8; 1_250];
     for y in 0..10_000 {
@@ -152,16 +166,18 @@ fn full_scale_generation_one_vector() {
             &world[(y + 1) % 10_000],
             &mut output,
         ));
-        let key = (y as u32) * 2;
-        digest.update(key, &output[..1_000]);
-        digest.update(key + 1, &output[1_000..]);
+        next.extend_from_slice(&output);
     }
-    // Matches the generation-one event verified on-chain by deployment.
+    // Independent Python numpy/hashlib reference. Also matches the
+    // generation-one event of a local deployment.
     assert_eq!(
-        (population, hex(digest.finish())),
+        (
+            population,
+            hex(WorldDigest::of_world(10_000, 10_000, 0, 1, &next))
+        ),
         (
             27_336_807,
-            "fb612ac3026ff7604b96f66c8ce76131f144482928e53198cb32b3c3cb642b96".into()
+            "1ea48941caa8c1614bbb00c80ed6903855c174778d45725522439cc875ccde71".into()
         )
     );
 }
@@ -280,26 +296,16 @@ fn cell<const H: usize, const N: usize>(world: &[[u8; N]; H], x: usize, y: usize
 
 fn initialized_world(seed: u64) -> (u64, String) {
     let mut rng = SplitMix64::new(seed);
-    let mut digest = WorldDigest::for_epoch(10_000, 10_000, 0, 0);
-    let mut population = 0u64;
-    let mut full = [0u8; 1_000];
-    let mut tail = [0u8; 250];
-    for row in 0..10_000u32 {
-        let key = row * 2;
-        rng.fill_bytes(&mut full);
-        population += full
-            .iter()
-            .map(|byte| u64::from(byte.count_ones()))
-            .sum::<u64>();
-        digest.update(key, &full);
-        rng.fill_bytes(&mut tail);
-        population += tail
-            .iter()
-            .map(|byte| u64::from(byte.count_ones()))
-            .sum::<u64>();
-        digest.update(key + 1, &tail);
-    }
-    (population, hex(digest.finish()))
+    let mut world = vec![0u8; 10_000 * 1_250];
+    rng.fill_bytes(&mut world);
+    let population = world
+        .iter()
+        .map(|byte| u64::from(byte.count_ones()))
+        .sum::<u64>();
+    (
+        population,
+        hex(WorldDigest::of_world(10_000, 10_000, 0, 0, &world)),
+    )
 }
 
 fn hex(bytes: [u8; 32]) -> String {

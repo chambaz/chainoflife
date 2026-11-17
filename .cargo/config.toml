@@ -6,6 +6,10 @@ rustflags = [
     # `jal` (smaller code and one fewer executed instruction per relaxed
     # call). Output stays pure RV32IM.
     "-C", "target-feature=+unaligned-scalar-mem,+relax",
+    # advance holds a window of the stored world and a chunk being written
+    # on its stack, more than the runtime's default 30K reserve. Must precede
+    # the linker script.
+    "-C", "link-arg=--defsym=__stack_size=0xA000",
     "-C", "link-arg=-Tthruput-rv32.ld",
     "-C", "link-arg=-static",
     "-C", "link-arg=--no-dynamic-linker",
