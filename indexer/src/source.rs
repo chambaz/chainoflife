@@ -9,11 +9,15 @@ use thruput_json_rpc_client::{
 };
 use thruput_json_rpc_types::base58::Base58;
 use thruput_json_rpc_types::hex::HexBytes;
-use thruput_json_rpc_types::requests::{BlockQuery, SimulateInvocationRequest as ViewRequest};
+use thruput_json_rpc_types::requests::{
+    BlockQuery, EmptyRequest, Invocation, SimulateInvocationRequest as ViewRequest,
+    SimulateInvocationsRequest,
+};
 use thruput_json_rpc_types::responses::{
     InvocationOutput as RootInvocationOutput, SimulationResult as ViewResponse,
 };
 use thruput_xdr::types::{ContractAddress, SHA256Hash};
+use tokio::sync::OnceCell;
 
 use crate::{CHUNK_BYTES, ChunkResponse, SnapshotMetadata};
 
@@ -22,7 +26,11 @@ const VERSION: &str = "0.1.0";
 
 #[derive(Clone, Debug)]
 pub struct SourceConfig {
+    /// Concurrent RPC requests during a download.
     pub concurrency: usize,
+    /// Most `get_chunk` views in one `simulateInvocations` request. The
+    /// endpoint's advertised batch limit lowers it; 1 disables batching.
+    pub batch_size: u32,
     pub call_timeout: Duration,
     pub max_attempts: u32,
     pub initial_backoff: Duration,
@@ -31,7 +39,8 @@ pub struct SourceConfig {
 impl Default for SourceConfig {
     fn default() -> Self {
         Self {
-            concurrency: 32,
+            concurrency: 64,
+            batch_size: 16,
             call_timeout: Duration::from_secs(10),
             max_attempts: 4,
             initial_backoff: Duration::from_millis(100),
@@ -76,6 +85,8 @@ pub struct ThruputSource {
     client: Arc<NativeClient<HttpClient>>,
     contract: ContractAddress,
     config: SourceConfig,
+    /// Views per download request, once the endpoint's limits are known.
+    batch_size: OnceCell<usize>,
 }
 
 impl ThruputSource {
@@ -91,7 +102,104 @@ impl ThruputSource {
             client: Arc::new(NativeClient::new(client)),
             contract,
             config,
+            batch_size: OnceCell::new(),
         })
+    }
+
+    fn entrypoint(method: &'static str) -> HexBytes {
+        HexBytes(
+            contract_entrypoint_id(
+                Some(INTERFACE),
+                VERSION,
+                &NormalizedMethodSignature::new(method),
+            )
+            .into_inner()
+            .to_vec(),
+        )
+    }
+
+    /// The configured batch size, capped by the endpoint's batch limits.
+    async fn batch_size(&self) -> Result<usize, SourceError> {
+        self.batch_size
+            .get_or_try_init(|| async {
+                if self.config.batch_size <= 1 {
+                    return Ok(1);
+                }
+                let limits = self
+                    .retry("getServerLimits", || {
+                        self.client.get_server_limits(EmptyRequest {})
+                    })
+                    .await?;
+                Ok(limits.simulation_batch.map_or(1, |batch| {
+                    batch.max_invocations.clamp(1, self.config.batch_size) as usize
+                }))
+            })
+            .await
+            .copied()
+    }
+
+    /// Reads `get_chunk` for each `(row, part)` key at a state height of at
+    /// least `height`. A batch executes every view against one snapshot.
+    async fn chunks(
+        &self,
+        keys: &[(u32, u32)],
+        height: i64,
+    ) -> Result<Vec<ChunkResponse>, SourceError> {
+        let (response_height, outputs) = if let [(row, part)] = keys {
+            let response = self.view("get_chunk", encode(&(*row, *part))?).await?;
+            (*response.state_block_height, vec![response.output])
+        } else {
+            let invocations = keys
+                .iter()
+                .map(|key| {
+                    Ok(Invocation {
+                        address: Base58((*self.contract).into()),
+                        entrypoint: Self::entrypoint("get_chunk"),
+                        calldata: HexBytes(encode(key)?),
+                        caller: None,
+                        assumed_auth: None,
+                        gas_limit: None,
+                    })
+                })
+                .collect::<Result<Vec<_>, SourceError>>()?;
+            let request = SimulateInvocationsRequest {
+                invocations,
+                min_state_block_height: Some(height.into()),
+            };
+            let response = self
+                .retry("get_chunk batch", || {
+                    self.client.simulate_invocations(request.clone())
+                })
+                .await?;
+            if response.results.len() != keys.len() {
+                return Err(SourceError::Decode(
+                    "get_chunk",
+                    format!(
+                        "batch returned {} results for {} calls",
+                        response.results.len(),
+                        keys.len()
+                    ),
+                ));
+            }
+            let outputs = response.results.into_iter().map(|result| result.output);
+            (*response.state_block_height, outputs.collect())
+        };
+        if response_height < height {
+            return Err(SourceError::Mixed(format!(
+                "chunks {keys:?} used height {response_height}, expected {height}"
+            )));
+        }
+        keys.iter()
+            .zip(outputs)
+            .map(|(&(row, part), output)| {
+                let bytes: [u8; CHUNK_BYTES] = decode("get_chunk", &output)?;
+                Ok(ChunkResponse {
+                    row,
+                    part,
+                    bytes: bytes.to_vec(),
+                })
+            })
+            .collect()
     }
 
     async fn view(
@@ -104,15 +212,7 @@ impl ThruputSource {
             assumed_auth: None,
             gas_limit: None,
             min_state_block_height: None,
-            entrypoint: HexBytes(
-                contract_entrypoint_id(
-                    Some(INTERFACE),
-                    VERSION,
-                    &NormalizedMethodSignature::new(method),
-                )
-                .into_inner()
-                .to_vec(),
-            ),
+            entrypoint: Self::entrypoint(method),
             calldata: HexBytes(calldata),
             caller: None,
         };
@@ -157,7 +257,8 @@ impl ThruputSource {
     async fn metadata_response(&self) -> Result<(SnapshotMetadata, i64), SourceError> {
         let response = self.view("get_metadata", encode(&())?).await?;
         let height = *response.state_block_height;
-        let metadata: SnapshotMetadata = decode::<WireMetadata>("get_metadata", &response)?.into();
+        let metadata: SnapshotMetadata =
+            decode::<WireMetadata>("get_metadata", &response.output)?.into();
         metadata
             .validate()
             .map_err(|error| SourceError::Decode("get_metadata", error.to_string()))?;
@@ -173,29 +274,20 @@ impl ChainSource for ThruputSource {
 
     async fn download(&self) -> Result<CoherentDownload, SourceError> {
         let (before, height) = self.metadata_response().await?;
-        let source = self;
+        let batch_size = self.batch_size().await?;
         let parts = before.chunks_per_row();
-        let download = stream::iter(0..before.chunk_count() as u32)
-            .map(|key| async move {
-                let row = key / parts;
-                let part = key % parts;
-                let response = source.view("get_chunk", encode(&(row, part))?).await?;
-                let response_height = *response.state_block_height;
-                let bytes: [u8; CHUNK_BYTES] = decode("get_chunk", &response)?;
-                if response_height < height {
-                    return Err(SourceError::Mixed(format!(
-                        "chunk {key} used height {response_height}, expected {height}"
-                    )));
-                }
-                Ok(ChunkResponse {
-                    row,
-                    part,
-                    bytes: bytes.to_vec(),
-                })
-            })
+        let keys = (0..before.chunk_count() as u32)
+            .map(|key| (key / parts, key % parts))
+            .collect::<Vec<_>>();
+        let batches = keys
+            .chunks(batch_size)
+            .map(<[_]>::to_vec)
+            .collect::<Vec<_>>();
+        let chunks = stream::iter(batches)
+            .map(|keys| async move { self.chunks(&keys, height).await })
             .buffer_unordered(self.config.concurrency)
-            .try_collect::<Vec<_>>();
-        let chunks = download.await?;
+            .try_concat()
+            .await?;
         let (after, after_height) = self.metadata_response().await?;
         if after_height < height || before != after {
             return Err(SourceError::Mixed(format!(
@@ -256,9 +348,9 @@ impl From<WireMetadata> for SnapshotMetadata {
 
 fn decode<T: for<'a> xdrs::ReadXDR<'a>>(
     name: &'static str,
-    response: &ViewResponse,
+    output: &RootInvocationOutput,
 ) -> Result<T, SourceError> {
-    let RootInvocationOutput::Return { return_data } = &response.output else {
+    let RootInvocationOutput::Return { return_data } = output else {
         return Err(SourceError::View(name));
     };
     xdrs::cxs::decode(&return_data.0).map_err(|error| SourceError::Decode(name, error.to_string()))
