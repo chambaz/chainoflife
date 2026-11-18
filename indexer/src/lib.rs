@@ -24,7 +24,26 @@ pub const CHUNK_BYTES: usize = 1_000;
 pub const TILE_SIZE: u32 = 256;
 pub const MAX_ZOOM: u8 = 6;
 pub const CELL_TILE_BYTES: usize = 8_192;
-pub const DENSITY_TILE_BYTES: usize = 131_072;
+/// Density levels at or above this zoom hold at most 4^(6-3) = 64 live cells
+/// per texel and store one byte per texel. Lower levels store two bytes,
+/// little-endian.
+pub const DENSITY_U8_MIN_ZOOM: u8 = 3;
+pub const DENSITY_ENCODING: &str = "live-count-u8-z3-u16le";
+const _: () = assert!(1 << (2 * (MAX_ZOOM - DENSITY_U8_MIN_ZOOM)) <= u8::MAX as u32);
+
+/// Bytes per density texel at zoom `z` (below `MAX_ZOOM`).
+pub const fn density_texel_bytes(z: u8) -> usize {
+    if z >= DENSITY_U8_MIN_ZOOM { 1 } else { 2 }
+}
+
+/// Length of every tile at zoom `z`.
+pub const fn tile_bytes(z: u8) -> usize {
+    if z == MAX_ZOOM {
+        CELL_TILE_BYTES
+    } else {
+        (TILE_SIZE * TILE_SIZE) as usize * density_texel_bytes(z)
+    }
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {

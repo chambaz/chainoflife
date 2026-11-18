@@ -42,7 +42,7 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
     drop(service);
 
     let scope = root
-        .join("v1/worlds")
+        .join("v2/worlds")
         .join(&network)
         .join(&canonical_contract);
     let latest_bytes = fs::read(scope.join("latest.json")).expect("read latest pointer");
@@ -71,20 +71,20 @@ async fn indexes_live_generation_and_restarts_byte_identically() {
         Vec::<String>::new(),
     );
     for path in [
-        format!("/v1/worlds/{network}/{canonical_contract}/latest.json"),
+        format!("/v2/worlds/{network}/{canonical_contract}/latest.json"),
         format!(
-            "/v1/worlds/{network}/{canonical_contract}/{}/manifest.json",
+            "/v2/worlds/{network}/{canonical_contract}/{}/manifest.json",
             latest.state_digest
         ),
         format!(
-            "/v1/worlds/{network}/{canonical_contract}/{}/provenance.json",
+            "/v2/worlds/{network}/{canonical_contract}/{}/provenance.json",
             latest.state_digest
         ),
         format!(
-            "/v1/worlds/{network}/{canonical_contract}/{}/tiles/0/0/0.bin",
+            "/v2/worlds/{network}/{canonical_contract}/{}/tiles/0/0/0.bin",
             latest.state_digest
         ),
-        format!("/v1/worlds/{network}/{canonical_contract}/status.json"),
+        format!("/v2/worlds/{network}/{canonical_contract}/status.json"),
     ] {
         let response = http
             .handle(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())

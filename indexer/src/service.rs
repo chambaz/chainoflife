@@ -186,7 +186,7 @@ impl<S: ChainSource> IndexerService<S> {
             generation: metadata.generation.to_string(),
             state_digest: digest.clone(),
             manifest_url: format!(
-                "/v1/worlds/{}/{}/{digest}/manifest.json",
+                "/v2/worlds/{}/{}/{digest}/manifest.json",
                 self.config.network_id, self.config.contract_address
             ),
             source_block_height: snapshot.provenance.source_block_height.clone(),

@@ -1,11 +1,6 @@
 import type { ImmutableSnapshot, IndexerClient } from "@/indexer/client";
-import {
-  CELLS_CONTENT_TYPE,
-  DENSITY_CONTENT_TYPE,
-  MAX_ZOOM,
-} from "@/indexer/schema";
 import { ByteBudget, CPU_TILE_CACHE_BYTES } from "./budget";
-import { CELL_BYTES, DENSITY_BYTES } from "./decode";
+import { tileFormat } from "./decode";
 import type { DecodedTile } from "./inspection";
 import { tileId, type TileIndex } from "./pyramid";
 import { TileWorkerPool } from "./worker-pool";
@@ -148,8 +143,9 @@ export class TileLoader {
     index: TileIndex,
     signal: AbortSignal,
   ): Promise<{ bytes: ArrayBuffer; contentType: string }> {
-    const exact = index.z === MAX_ZOOM;
-    const expected = exact ? CELLS_CONTENT_TYPE : DENSITY_CONTENT_TYPE;
+    const { contentType: expected, byteLength: expectedLength } = tileFormat(
+      index.z,
+    );
     const response = await globalThis.fetch(
       this.client.tileUrl(this.snapshot, index.z, index.x, index.y),
       { headers: { accept: expected }, redirect: "error", signal },
@@ -167,7 +163,6 @@ export class TileLoader {
       throw new Error(
         `Unexpected tile content type: ${contentType ?? "missing"}`,
       );
-    const expectedLength = exact ? CELL_BYTES : DENSITY_BYTES;
     const declaredLength = response.headers.get("content-length");
     if (
       declaredLength !== null &&

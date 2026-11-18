@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result, TILE_SIZE};
+use crate::{DENSITY_ENCODING, Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result, TILE_SIZE};
 
 /// Version of the published JSON documents.
-pub const SCHEMA_VERSION: u8 = 1;
+pub const SCHEMA_VERSION: u8 = 2;
 const TILE_TEMPLATE: &str = "tiles/{z}/{x}/{y}.bin";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,7 +49,7 @@ impl LifeManifest {
             state_digest: hex32(&identity.state_digest),
             tile_size: TILE_SIZE,
             max_zoom: MAX_ZOOM,
-            density_encoding: "u16le-live-count".into(),
+            density_encoding: DENSITY_ENCODING.into(),
             cell_encoding: "row-major-lsb-first".into(),
             tile_path_template: TILE_TEMPLATE.into(),
             verification: Verification {
@@ -64,7 +64,7 @@ impl LifeManifest {
         require(
             self.schema_version == SCHEMA_VERSION,
             "schemaVersion",
-            "must be 1",
+            "must be 2",
         )?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
@@ -94,7 +94,7 @@ impl LifeManifest {
             "unsupported maximum zoom",
         )?;
         require(
-            self.density_encoding == "u16le-live-count",
+            self.density_encoding == DENSITY_ENCODING,
             "densityEncoding",
             "unsupported encoding",
         )?;
@@ -161,7 +161,7 @@ impl LifeProvenance {
         require(
             self.schema_version == SCHEMA_VERSION,
             "schemaVersion",
-            "must be 1",
+            "must be 2",
         )?;
         validate_network_id(&self.network_id)?;
         validate_hex32("contractAddress", &self.contract_address)?;
@@ -209,7 +209,7 @@ impl LatestPointer {
         require(
             self.schema_version == SCHEMA_VERSION,
             "schemaVersion",
-            "must be 1",
+            "must be 2",
         )?;
         parse_u64("generation", &self.generation)?;
         validate_hex32("stateDigest", &self.state_digest)?;
@@ -219,7 +219,7 @@ impl LatestPointer {
         validate_network_id(network_id)?;
         validate_hex32("contractAddress", contract_address)?;
         let expected = format!(
-            "/v1/worlds/{network_id}/{contract_address}/{}/manifest.json",
+            "/v2/worlds/{network_id}/{contract_address}/{}/manifest.json",
             self.state_digest
         );
         require(

@@ -20,13 +20,13 @@ const identity = {
   stateDigest: digest,
 };
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ...identity,
   width: 10000,
   height: 10000,
   tileSize: 256,
   maxZoom: 6,
-  densityEncoding: "u16le-live-count",
+  densityEncoding: "live-count-u8-z3-u16le",
   cellEncoding: "row-major-lsb-first",
   tilePathTemplate: "tiles/{z}/{x}/{y}.bin",
   verification: {
@@ -36,16 +36,16 @@ const manifest = {
 };
 const latest = {
   epoch: "0",
-  schemaVersion: 1,
+  schemaVersion: 2,
   generation: "0",
   stateDigest: digest,
-  manifestUrl: `/v1/worlds/${network}/${contract}/${digest}/manifest.json`,
+  manifestUrl: `/v2/worlds/${network}/${contract}/${digest}/manifest.json`,
   sourceBlockHeight: "9",
   sourceBlockHash: block,
   publishedAt: "2026-08-28T01:02:03Z",
 };
 const provenance = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ...identity,
   sourceBlockHeight: "9",
   sourceBlockHash: block,

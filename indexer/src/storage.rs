@@ -7,10 +7,7 @@ use fs2::FileExt;
 
 use crate::schema::{is_hex32, is_network_id, parse_u64};
 use crate::snapshot::tiles_per_axis;
-use crate::{
-    Artifact, CELL_TILE_BYTES, DENSITY_TILE_BYTES, LatestPointer, LifeManifest, LifeProvenance,
-    MAX_ZOOM,
-};
+use crate::{Artifact, LatestPointer, LifeManifest, LifeProvenance, MAX_ZOOM, tile_bytes};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// Hidden directories holding a publication until it is renamed into place.
@@ -84,7 +81,7 @@ impl Publisher {
         validate_scope(network, contract)?;
         let path = self
             .root
-            .join("v1/worlds")
+            .join("v2/worlds")
             .join(network)
             .join(contract)
             .join("latest.json");
@@ -116,7 +113,7 @@ impl Publisher {
         }
         let path = self
             .root
-            .join("v1/worlds")
+            .join("v2/worlds")
             .join(network)
             .join(contract)
             .join(digest)
@@ -141,7 +138,7 @@ impl Publisher {
         }
         let base = self
             .root
-            .join("v1/worlds")
+            .join("v2/worlds")
             .join(network)
             .join(contract)
             .join(digest);
@@ -235,7 +232,7 @@ impl Publisher {
         pointer: &LatestPointer,
     ) -> Result<bool, StorageError> {
         pointer.validate_for(network, contract)?;
-        let scope = self.root.join("v1/worlds").join(network).join(contract);
+        let scope = self.root.join("v2/worlds").join(network).join(contract);
         self.verify_pointer_ready(network, contract, &scope, pointer)?;
         let latest = scope.join("latest.json");
         if let Ok(bytes) = fs::read(&latest) {
@@ -266,7 +263,7 @@ impl Publisher {
         contract: &str,
     ) -> Result<Vec<ReadyIdentity>, StorageError> {
         validate_scope(network, contract)?;
-        let scope = self.root.join("v1/worlds").join(network).join(contract);
+        let scope = self.root.join("v2/worlds").join(network).join(contract);
         let entries = match fs::read_dir(&scope) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -323,7 +320,7 @@ impl Publisher {
         retained: &[String],
     ) -> Result<Vec<String>, StorageError> {
         validate_scope(network, contract)?;
-        let scope = self.root.join("v1/worlds").join(network).join(contract);
+        let scope = self.root.join("v2/worlds").join(network).join(contract);
         let mut removed = Vec::new();
         let entries = match fs::read_dir(&scope) {
             Ok(value) => value,
@@ -404,11 +401,7 @@ impl Publisher {
         }
         for z in 0..=MAX_ZOOM {
             let count = tiles_per_axis(z, manifest.width);
-            let expected = if z == MAX_ZOOM {
-                CELL_TILE_BYTES as u64
-            } else {
-                DENSITY_TILE_BYTES as u64
-            };
+            let expected = tile_bytes(z) as u64;
             for x in 0..count {
                 for y in 0..count {
                     let path = base.join(format!("tiles/{z}/{x}/{y}.bin"));

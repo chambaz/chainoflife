@@ -19,6 +19,8 @@ Chain of Life has four parts:
 4. The indexer reads the committed metadata, downloads the world, and verifies
    population and digest against that metadata.
 5. The browser displays the next generation when viewport coverage is complete.
+   It checks the indexer every 5 seconds, or every second while the chain is
+   known to be ahead of its newest snapshot, as after its own advance.
 
 Edges wrap around. Configurable worlds support 100–10,000 cells per side in
 steps of 100. Resizing keeps the seed, increments the epoch, and resets generation
@@ -67,8 +69,9 @@ describes the container images.
 | Identifier             | Value                              | Changes require                            |
 | ---------------------- | ---------------------------------- | ------------------------------------------ |
 | World digest domain    | `chain-of-life/world/v2`           | New reference vectors and a new deployment |
-| Indexer JSON documents | `schemaVersion: 1`                 | Matching indexer and browser releases      |
-| Indexer HTTP paths     | `/v1/worlds/<network>/<contract>/` | Matching indexer and browser releases      |
+| Indexer JSON documents | `schemaVersion: 2`                 | Matching indexer and browser releases      |
+| Indexer HTTP paths     | `/v2/worlds/<network>/<contract>/` | Matching indexer and browser releases      |
+| Density tile encoding  | `live-count-u8-z3-u16le`           | Matching indexer and browser releases      |
 | Browser storage keys   | `chain-of-life:<kind>:v1:…`        | A new key; old records are ignored         |
 
 The digest binds the size, epoch, and generation, so each reset has a distinct

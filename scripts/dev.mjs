@@ -86,7 +86,7 @@ async function main() {
   );
 
   const latestUrl = new URL(
-    `/v1/worlds/${networkId.replace(/^0x/, "")}/${contractAddress}/latest.json`,
+    `/v2/worlds/${networkId.replace(/^0x/, "")}/${contractAddress}/latest.json`,
     indexerUrl,
   );
   await Promise.race([

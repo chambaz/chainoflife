@@ -530,7 +530,7 @@ async fn http_enforces_paths_headers_etags_cors_and_live_status() {
         CONTRACT.into(),
         ["http://localhost:5173".into()],
     );
-    let ok = service.handle(format!("GET /v1/worlds/{NETWORK}/{CONTRACT}/latest.json HTTP/1.1\r\nOrigin: http://localhost:5173\r\n\r\n").as_bytes()).await;
+    let ok = service.handle(format!("GET /v2/worlds/{NETWORK}/{CONTRACT}/latest.json HTTP/1.1\r\nOrigin: http://localhost:5173\r\n\r\n").as_bytes()).await;
     let text = String::from_utf8(ok).expect("response");
     assert!(
         text.contains("HTTP/1.1 200 OK")
@@ -545,7 +545,7 @@ async fn http_enforces_paths_headers_etags_cors_and_live_status() {
         b"immutable",
     )
     .expect("immutable file");
-    let immutable_path = format!("/v1/worlds/{NETWORK}/{CONTRACT}/{DIGEST0}/manifest.json");
+    let immutable_path = format!("/v2/worlds/{NETWORK}/{CONTRACT}/{DIGEST0}/manifest.json");
     let immutable = service
         .handle(format!("GET {immutable_path} HTTP/1.1\r\n\r\n").as_bytes())
         .await;
@@ -573,15 +573,15 @@ async fn http_enforces_paths_headers_etags_cors_and_live_status() {
         .await;
     assert!(wildcard.starts_with(b"HTTP/1.1 304"));
     let traversal = service
-        .handle(b"GET /v1/worlds/../../etc/passwd HTTP/1.1\r\n\r\n")
+        .handle(b"GET /v2/worlds/../../etc/passwd HTTP/1.1\r\n\r\n")
         .await;
     assert!(traversal.starts_with(b"HTTP/1.1 404"));
-    let denied = service.handle(format!("GET /v1/worlds/{NETWORK}/{CONTRACT}/status.json HTTP/1.1\r\nOrigin: https://evil.example\r\n\r\n").as_bytes()).await;
+    let denied = service.handle(format!("GET /v2/worlds/{NETWORK}/{CONTRACT}/status.json HTTP/1.1\r\nOrigin: https://evil.example\r\n\r\n").as_bytes()).await;
     assert!(denied.starts_with(b"HTTP/1.1 403"));
     let other_scope = service
         .handle(
             format!(
-                "GET /v1/worlds/{}/{CONTRACT}/status.json HTTP/1.1\r\n\r\n",
+                "GET /v2/worlds/{}/{CONTRACT}/status.json HTTP/1.1\r\n\r\n",
                 "f".repeat(64)
             )
             .as_bytes(),
@@ -594,7 +594,7 @@ async fn http_enforces_paths_headers_etags_cors_and_live_status() {
     assert!(truncated.starts_with(b"HTTP/1.1 400"));
     let status_response = service
         .handle(
-            format!("GET /v1/worlds/{NETWORK}/{CONTRACT}/status.json HTTP/1.1\r\n\r\n").as_bytes(),
+            format!("GET /v2/worlds/{NETWORK}/{CONTRACT}/status.json HTTP/1.1\r\n\r\n").as_bytes(),
         )
         .await;
     let status_body = std::str::from_utf8(&status_response)
@@ -619,7 +619,7 @@ async fn socket_http_parser_handles_fragmentation_overflow_truncation_and_timeou
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path().join("artifacts");
     let latest = root
-        .join("v1/worlds")
+        .join("v2/worlds")
         .join(NETWORK)
         .join(CONTRACT)
         .join("latest.json");
@@ -635,7 +635,7 @@ async fn socket_http_parser_handles_fragmentation_overflow_truncation_and_timeou
         )
         .with_read_timeout_for_test(Duration::from_millis(30)),
     );
-    let path = format!("/v1/worlds/{NETWORK}/{CONTRACT}/latest.json");
+    let path = format!("/v2/worlds/{NETWORK}/{CONTRACT}/latest.json");
 
     let fragmented = socket_response(
         Arc::clone(&service),
@@ -726,7 +726,7 @@ impl Fixture {
     fn scope(&self) -> std::path::PathBuf {
         self.publisher
             .root()
-            .join("v1/worlds")
+            .join("v2/worlds")
             .join(NETWORK)
             .join(CONTRACT)
     }
@@ -762,7 +762,7 @@ impl Fixture {
         .expect("provenance");
         for z in 0..=MAX_ZOOM {
             let count = 10_000u32.div_ceil(256 * (1u32 << (MAX_ZOOM - z)));
-            let length = if z == MAX_ZOOM { 8_192 } else { 131_072 };
+            let length = game_of_life_indexer::tile_bytes(z) as u64;
             for x in 0..count {
                 fs::create_dir_all(base.join(format!("tiles/{z}/{x}"))).expect("tile parent");
                 for y in 0..count {
@@ -778,10 +778,10 @@ impl Fixture {
 fn pointer(generation: u64, digest: &str) -> LatestPointer {
     LatestPointer {
         epoch: "0".into(),
-        schema_version: 1,
+        schema_version: 2,
         generation: generation.to_string(),
         state_digest: digest.into(),
-        manifest_url: format!("/v1/worlds/{NETWORK}/{CONTRACT}/{digest}/manifest.json"),
+        manifest_url: format!("/v2/worlds/{NETWORK}/{CONTRACT}/{digest}/manifest.json"),
         source_block_height: "9".into(),
         source_block_hash: format!("0x{}", "f".repeat(64)),
         published_at: "2026-08-28T12:00:00.000Z".into(),
@@ -789,7 +789,7 @@ fn pointer(generation: u64, digest: &str) -> LatestPointer {
 }
 fn provenance(generation: u64, digest: &str) -> LifeProvenance {
     LifeProvenance {
-        schema_version: 1,
+        schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         epoch: "0".into(),
@@ -812,7 +812,7 @@ fn hex_digest(metadata: &SnapshotMetadata) -> String {
     format!("0x{}", hex::encode(metadata.state_digest))
 }
 fn scope(root: &std::path::Path) -> PathBuf {
-    root.join("v1/worlds").join(NETWORK).join(CONTRACT)
+    root.join("v2/worlds").join(NETWORK).join(CONTRACT)
 }
 fn read_latest(root: &std::path::Path) -> LatestPointer {
     LatestPointer::from_json_for(
@@ -848,7 +848,7 @@ fn service<S: ChainSource>(
 /// Installs a verified snapshot without promoting it, as a crash would leave it.
 fn install_without_promotion(root: &std::path::Path, metadata: &SnapshotMetadata, height: u64) {
     let provenance = LifeProvenance {
-        schema_version: 1,
+        schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         epoch: metadata.epoch.to_string(),

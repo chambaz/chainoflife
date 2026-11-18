@@ -2,8 +2,8 @@ use game_of_life_core::digest::WorldDigest;
 
 use crate::schema::{LifeManifest, LifeProvenance, SnapshotIdentity, compact_json, hex32};
 use crate::{
-    CELL_TILE_BYTES, CHUNK_BYTES, DENSITY_TILE_BYTES, Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result,
-    TILE_SIZE,
+    CELL_TILE_BYTES, CHUNK_BYTES, Error, MAX_WORLD_WIDTH, MAX_ZOOM, Result, TILE_SIZE,
+    density_texel_bytes, tile_bytes,
 };
 
 /// Committed world metadata, as returned by the contract's `get_metadata`.
@@ -316,10 +316,11 @@ fn aggregate_level(z: u8, child: &DensityLevel) -> DensityLevel {
 
 fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) {
     let count = level.width.div_ceil(TILE_SIZE);
+    let texel_bytes = density_texel_bytes(level.z);
     for x in 0..count {
         for y in 0..count {
             let coordinate = TileCoordinate { z: level.z, x, y };
-            let mut bytes = vec![0; DENSITY_TILE_BYTES];
+            let mut bytes = vec![0; tile_bytes(level.z)];
             for local_y in 0..TILE_SIZE {
                 let source_y = y * TILE_SIZE + local_y;
                 if source_y >= level.height {
@@ -331,8 +332,10 @@ fn emit_density_tiles(level: &DensityLevel, output: &mut Vec<Tile>) {
                         break;
                     }
                     let value = level.values[(source_y * level.width + source_x) as usize];
-                    let offset = ((local_y * TILE_SIZE + local_x) * 2) as usize;
-                    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+                    let offset = (local_y * TILE_SIZE + local_x) as usize * texel_bytes;
+                    // Values fit: see `DENSITY_U8_MIN_ZOOM`.
+                    bytes[offset..offset + texel_bytes]
+                        .copy_from_slice(&value.to_le_bytes()[..texel_bytes]);
                 }
             }
             output.push(Tile { coordinate, bytes });
@@ -392,11 +395,7 @@ fn validate_tiles(
                 actual: coordinate_string(tile.coordinate),
             });
         }
-        let expected = if tile.coordinate.z == MAX_ZOOM {
-            CELL_TILE_BYTES
-        } else {
-            DENSITY_TILE_BYTES
-        };
+        let expected = tile_bytes(tile.coordinate.z);
         if tile.bytes.len() != expected {
             return Err(Error::TileLength {
                 z: tile.coordinate.z,
@@ -510,8 +509,11 @@ fn validate_edge_padding(metadata: &SnapshotMetadata, tile: &Tile) -> Result<()>
                 let byte = tile.bytes[local_y as usize * 32 + local_x as usize / 8];
                 byte & (1 << (local_x % 8)) != 0
             } else {
-                let offset = ((local_y * TILE_SIZE + local_x) * 2) as usize;
-                tile.bytes[offset] != 0 || tile.bytes[offset + 1] != 0
+                let texel_bytes = density_texel_bytes(tile.coordinate.z);
+                let offset = (local_y * TILE_SIZE + local_x) as usize * texel_bytes;
+                tile.bytes[offset..offset + texel_bytes]
+                    .iter()
+                    .any(|byte| *byte != 0)
             };
             if nonzero {
                 return Err(Error::EdgePadding {
