@@ -39,6 +39,7 @@ import {
 import { createVisiblePoller, type Poller } from "@/polling";
 import { useWorldWrite } from "@/transactions/use-world-write";
 import {
+  awaitingNewerSnapshot,
   INITIAL_SYNCHRONIZATION_STATE,
   synchronizationReducer,
   type RendererAvailability,
@@ -47,6 +48,9 @@ import {
 } from "@/synchronization";
 
 const REQUEST_TIMEOUT = 8_000;
+/** Indexer pointer checks while it is known to be behind the chain, and otherwise. */
+const CATCH_UP_POLL = 1_000;
+const INDEXER_POLL = 5_000;
 
 export function App({ config }: { readonly config: Readonly<AppConfig> }) {
   const [state, dispatch] = useReducer(
@@ -117,51 +121,58 @@ export function App({ config }: { readonly config: Readonly<AppConfig> }) {
     chainRefresh.current = () => chainPoller.refresh();
     pollers.push(
       chainPoller,
-      createVisiblePoller(5_000, REQUEST_TIMEOUT, async (signal, commit) => {
-        try {
-          const pointer = await indexer.latest(signal);
-          const known = [
-            stateRef.current.visualized,
-            stateRef.current.candidate,
-            stateRef.current.pendingSnapshot,
-          ].filter((value): value is ImmutableSnapshot => value !== null);
-          const newest = known.sort((left, right) =>
-            Number(compareWorldVersion(right.manifest, left.manifest)),
-          )[0];
-          if (newest) {
-            const order = compareWorldVersion(pointer, newest.manifest);
-            if (order < 0) {
-              commit(() => send({ type: "artifact-unchanged" }));
-              return;
-            }
-            if (order === 0) {
-              if (pointer.stateDigest === newest.manifest.stateDigest)
+      createVisiblePoller(
+        () =>
+          awaitingNewerSnapshot(stateRef.current)
+            ? CATCH_UP_POLL
+            : INDEXER_POLL,
+        REQUEST_TIMEOUT,
+        async (signal, commit) => {
+          try {
+            const pointer = await indexer.latest(signal);
+            const known = [
+              stateRef.current.visualized,
+              stateRef.current.candidate,
+              stateRef.current.pendingSnapshot,
+            ].filter((value): value is ImmutableSnapshot => value !== null);
+            const newest = known.sort((left, right) =>
+              Number(compareWorldVersion(right.manifest, left.manifest)),
+            )[0];
+            if (newest) {
+              const order = compareWorldVersion(pointer, newest.manifest);
+              if (order < 0) {
                 commit(() => send({ type: "artifact-unchanged" }));
-              else
-                commit(() =>
-                  send({
-                    type: "candidate-invalid",
-                    error:
-                      "Indexer returned conflicting digests for one generation",
-                  }),
-                );
-              return;
+                return;
+              }
+              if (order === 0) {
+                if (pointer.stateDigest === newest.manifest.stateDigest)
+                  commit(() => send({ type: "artifact-unchanged" }));
+                else
+                  commit(() =>
+                    send({
+                      type: "candidate-invalid",
+                      error:
+                        "Indexer returned conflicting digests for one generation",
+                    }),
+                  );
+                return;
+              }
             }
+            commit(() => send({ type: "artifact-loading" }));
+            const snapshot = await indexer.snapshotFromPointer(pointer, signal);
+            commit(() => send({ type: "artifact-parsed", snapshot }));
+          } catch (cause) {
+            commit(() =>
+              send({
+                type: "artifact-failed",
+                condition: artifactFailure(cause),
+                error: message(cause),
+              }),
+            );
+            throw cause;
           }
-          commit(() => send({ type: "artifact-loading" }));
-          const snapshot = await indexer.snapshotFromPointer(pointer, signal);
-          commit(() => send({ type: "artifact-parsed", snapshot }));
-        } catch (cause) {
-          commit(() =>
-            send({
-              type: "artifact-failed",
-              condition: artifactFailure(cause),
-              error: message(cause),
-            }),
-          );
-          throw cause;
-        }
-      }),
+        },
+      ),
     );
 
     const refresh = () => {

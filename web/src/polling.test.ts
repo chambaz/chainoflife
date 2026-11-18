@@ -102,4 +102,29 @@ describe("visible poller", () => {
     await vi.waitFor(() => expect(runs).toBe(1));
     poller.dispose();
   });
+
+  test("reads a function interval after each successful run", async () => {
+    vi.useFakeTimers();
+    let interval = 5_000;
+    let runs = 0;
+    const poller = createVisiblePoller(
+      () => interval,
+      8_000,
+      async () => {
+        runs += 1;
+      },
+      () => true,
+    );
+    poller.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runs).toBe(1);
+    interval = 1_000;
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(runs).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runs).toBe(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(runs).toBe(3);
+    poller.dispose();
+  });
 });
