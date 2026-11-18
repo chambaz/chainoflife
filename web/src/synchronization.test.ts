@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import type { ImmutableSnapshot } from "./indexer/client";
+import type { ChainMetadata } from "./chain/game-of-life";
 import {
+  awaitingNewerSnapshot,
   INITIAL_SYNCHRONIZATION_STATE,
   synchronizationReducer,
 } from "./synchronization";
@@ -147,5 +149,39 @@ describe("generation synchronization", () => {
         epoch,
       }).visualized,
     ).toBe(first);
+  });
+});
+
+describe("awaiting a newer snapshot", () => {
+  const chain = (epoch: string, generation: string) =>
+    ({ epoch, generation }) as ChainMetadata;
+
+  test("is false before the chain is read", () => {
+    expect(awaitingNewerSnapshot(INITIAL_SYNCHRONIZATION_STATE)).toBe(false);
+  });
+
+  test("is true while every held snapshot is older than the chain", () => {
+    const state = commit(
+      stage(INITIAL_SYNCHRONIZATION_STATE, snapshot("4", "a")),
+    );
+    expect(awaitingNewerSnapshot({ ...state, chain: chain("0", "5") })).toBe(
+      true,
+    );
+    expect(awaitingNewerSnapshot({ ...state, chain: chain("1", "0") })).toBe(
+      true,
+    );
+  });
+
+  test("is false once any held snapshot reaches the chain", () => {
+    const visualized = commit(
+      stage(INITIAL_SYNCHRONIZATION_STATE, snapshot("4", "a")),
+    );
+    expect(
+      awaitingNewerSnapshot({ ...visualized, chain: chain("0", "4") }),
+    ).toBe(false);
+    const staged = stage(visualized, snapshot("5", "b"));
+    expect(awaitingNewerSnapshot({ ...staged, chain: chain("0", "5") })).toBe(
+      false,
+    );
   });
 });

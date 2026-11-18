@@ -103,7 +103,7 @@ cross-origin requests. A local node does not; use `npm run dev` for local nodes.
 `THRUPUT_CONTRACT_ADDRESS`, and `GAME_OF_LIFE_CORS_ORIGINS` (the web origin).
 `PORT` sets the HTTP port. Mount a persistent volume at `/data`: the indexer
 keeps published snapshots there and serves the latest one at once after a
-restart. For a health check, use `/v1/worlds/<network>/<contract>/status.json`.
+restart. For a health check, use `/v2/worlds/<network>/<contract>/status.json`.
 
 **Web.** Pass each public setting from the deployment's environment file as a
 build argument, with `VITE_GAME_OF_LIFE_INDEXER_URL` set to the indexer's public

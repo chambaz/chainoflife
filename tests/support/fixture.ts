@@ -9,7 +9,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
   const fundedAccounts = new Set<string>();
   const digests = [`0x${"aa".repeat(32)}`, `0x${"dd".repeat(32)}`] as const;
   const block = `0x${"bb".repeat(32)}`;
-  const base = `/v1/worlds/${network}/${contract}`;
+  const base = `/v2/worlds/${network}/${contract}`;
   const fixture = {
     resizable: true,
     chainGeneration: 0,
@@ -33,7 +33,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
     const digest = digests[published]!;
     if (pathname === `${base}/latest.json`)
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         epoch: "0",
         generation: String(published),
         stateDigest: digest,
@@ -47,13 +47,13 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
       const root = `${base}/${value.stateDigest}`;
       if (pathname === `${root}/manifest.json`)
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ...value,
           width: 10000,
           height: 10000,
           tileSize: 256,
           maxZoom: 6,
-          densityEncoding: "u16le-live-count",
+          densityEncoding: "live-count-u8-z3-u16le",
           cellEncoding: "row-major-lsb-first",
           tilePathTemplate: "tiles/{z}/{x}/{y}.bin",
           verification: {
@@ -63,7 +63,7 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
         };
       if (pathname === `${root}/provenance.json`)
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           ...value,
           sourceBlockHeight: String(9 + generation),
           sourceBlockHash: block,
@@ -230,7 +230,9 @@ export function fixtureArtifacts(network: string, contract: string): Plugin {
           "content-type",
           z === 6
             ? "application/vnd.chain-of-life.cells-v1"
-            : "application/vnd.chain-of-life.density-u16le",
+            : z >= 3
+              ? "application/vnd.chain-of-life.density-u8"
+              : "application/vnd.chain-of-life.density-u16le",
         );
         response.setHeader("content-length", bytes.length);
         response.end(bytes);
@@ -242,12 +244,16 @@ function hex(bytes: Uint8Array): string {
   return `0x${Buffer.from(bytes).toString("hex")}`;
 }
 function fixtureDensity(z: number, generation = 0): Buffer {
-  const bytes = Buffer.alloc(131072);
+  // Zoom 3 and above store one byte per texel; lower levels, two.
+  const width = z >= 3 ? 1 : 2;
+  const bytes = Buffer.alloc(65536 * width);
   const scale = 2 ** (6 - z);
   const maximum = scale * scale;
   for (let index = 0; index < 65536; index += 1) {
     const density = index % (maximum + 1);
-    bytes.writeUInt16LE(generation ? maximum - density : density, index * 2);
+    const value = generation ? maximum - density : density;
+    if (width === 1) bytes.writeUInt8(value, index);
+    else bytes.writeUInt16LE(value, index * 2);
   }
   return bytes;
 }

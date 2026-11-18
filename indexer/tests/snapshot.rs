@@ -265,9 +265,13 @@ fn full_dead_fixture_builds_exact_edge_tiles_and_deterministic_artifacts() {
     assert_eq!(actual_paths[2], "tiles/1/0/1.bin");
     assert_eq!(actual_paths[3], "tiles/1/1/0.bin");
 
-    let density_edge = artifact(&second, "tiles/0/0/0.bin");
-    assert_eq!(density_edge.len(), 131_072);
-    assert!(density_edge.iter().all(|byte| *byte == 0));
+    for (z, length) in [(0, 131_072), (2, 131_072), (3, 65_536), (5, 65_536)] {
+        let density_edge = artifact(&second, &format!("tiles/{z}/0/0.bin"));
+        assert_eq!(density_edge.len(), length, "zoom {z}");
+        assert!(density_edge.iter().all(|byte| *byte == 0));
+    }
+    let total: usize = second.artifacts.iter().map(|a| a.bytes.len()).sum();
+    assert!(total < 50_000_000, "{total} bytes");
     let cell_edge = artifact(&second, "tiles/6/39/39.bin");
     assert_eq!(cell_edge.len(), 8_192);
     assert!(cell_edge.iter().all(|byte| *byte == 0));
@@ -304,6 +308,10 @@ fn sparse_world_density_tiles_encode_exact_counts_across_boundaries() {
     assert_eq!(density_count(&snapshot, 5, 9_999, 9_999), 2);
     assert_eq!(density_count(&snapshot, 0, 1_000, 1_000), 300);
     assert_eq!(density_bytes(&snapshot, 0, 1_000, 1_000), [44, 1]);
+    // A full 8x8 block is the largest one-byte count.
+    assert_eq!(density_bytes(&snapshot, 3, 1_000, 1_000), [64]);
+    assert_eq!(density_count(&snapshot, 4, 1_000, 1_000), 16);
+    assert_eq!(density_bytes(&snapshot, 2, 1_000, 1_000), [64, 0]);
 
     let right_bottom = artifact(&snapshot, "tiles/5/19/19.bin");
     assert_eq!(density_tile_value(right_bottom, 135, 135), 2);
@@ -449,7 +457,7 @@ fn fixture_from_cells(cells: &[(u32, u32)]) -> (SnapshotMetadata, Vec<ChunkRespo
 fn provenance(metadata: &SnapshotMetadata) -> LifeProvenance {
     LifeProvenance {
         epoch: metadata.epoch.to_string(),
-        schema_version: 1,
+        schema_version: 2,
         network_id: NETWORK_ID.into(),
         contract_address: CONTRACT.into(),
         generation: metadata.generation.to_string(),
@@ -485,21 +493,24 @@ fn artifact_hashes(snapshot: &game_of_life_indexer::Snapshot) -> Vec<(String, [u
 }
 
 fn density_count(snapshot: &game_of_life_indexer::Snapshot, z: u8, x: u32, y: u32) -> u16 {
-    u16::from_le_bytes(density_bytes(snapshot, z, x, y))
+    let bytes = density_bytes(snapshot, z, x, y);
+    u16::from_le_bytes([bytes[0], bytes.get(1).copied().unwrap_or(0)])
 }
 
-fn density_bytes(snapshot: &game_of_life_indexer::Snapshot, z: u8, x: u32, y: u32) -> [u8; 2] {
+/// The bytes of the texel covering cell `(x, y)`: one at zoom 3 and above, two below.
+fn density_bytes(snapshot: &game_of_life_indexer::Snapshot, z: u8, x: u32, y: u32) -> Vec<u8> {
     let cells_per_texel = 1u32 << (6 - z);
     let texel_x = x / cells_per_texel;
     let texel_y = y / cells_per_texel;
     let tile_x = texel_x / 256;
     let tile_y = texel_y / 256;
     let bytes = artifact(snapshot, &format!("tiles/{z}/{tile_x}/{tile_y}.bin"));
-    let offset = (((texel_y % 256) * 256 + texel_x % 256) * 2) as usize;
-    [bytes[offset], bytes[offset + 1]]
+    let width = if z >= 3 { 1 } else { 2 };
+    let offset = ((texel_y % 256) * 256 + texel_x % 256) as usize * width;
+    bytes[offset..offset + width].to_vec()
 }
 
-fn density_tile_value(bytes: &[u8], x: u32, y: u32) -> u16 {
-    let offset = ((y * 256 + x) * 2) as usize;
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+/// A texel of a one-byte (zoom 3 to 5) density tile.
+fn density_tile_value(bytes: &[u8], x: u32, y: u32) -> u8 {
+    bytes[(y * 256 + x) as usize]
 }

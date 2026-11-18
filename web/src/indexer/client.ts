@@ -71,7 +71,7 @@ export class IndexerClient {
 
   private worldBase(): URL {
     return new URL(
-      `/v1/worlds/${this.config.networkId}/${this.config.contractAddress}/`,
+      `/v2/worlds/${this.config.networkId}/${this.config.contractAddress}/`,
       this.config.indexerUrl,
     );
   }

@@ -11,7 +11,7 @@ use tokio::sync::{RwLock, Semaphore};
 use crate::schema::{is_hex32, is_network_id, now};
 use crate::snapshot::tiles_per_axis;
 use crate::storage::resolve_request;
-use crate::{LifeStatus, MAX_WORLD_WIDTH, MAX_ZOOM};
+use crate::{LifeStatus, MAX_WORLD_WIDTH, MAX_ZOOM, density_texel_bytes};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebError {
@@ -238,10 +238,8 @@ impl HttpService {
             let immutable = path.contains("/0x") && !path.ends_with("/latest.json");
             let content_type = if path.ends_with(".json") {
                 "application/json"
-            } else if path.contains("/tiles/6/") {
-                "application/vnd.chain-of-life.cells-v1"
             } else {
-                "application/vnd.chain-of-life.density-u16le"
+                tile_content_type(path)
             };
             (
                 bytes,
@@ -309,13 +307,13 @@ fn valid_route(path: &str, network_id: &str, contract_address: &str) -> bool {
     if path.contains('%')
         || path.contains("..")
         || path.contains('\\')
-        || !path.starts_with("/v1/worlds/")
+        || !path.starts_with("/v2/worlds/")
     {
         return false;
     }
     let parts: Vec<_> = path.split('/').skip(1).collect();
     if parts.len() < 5
-        || parts[0] != "v1"
+        || parts[0] != "v2"
         || parts[1] != "worlds"
         || !is_network_id(parts[2])
         || !is_hex32(parts[3])
@@ -325,16 +323,16 @@ fn valid_route(path: &str, network_id: &str, contract_address: &str) -> bool {
         return false;
     }
     match parts.as_slice() {
-        ["v1", "worlds", _, _, "latest.json" | "status.json"] => true,
+        ["v2", "worlds", _, _, "latest.json" | "status.json"] => true,
         [
-            "v1",
+            "v2",
             "worlds",
             _,
             _,
             digest,
             "manifest.json" | "provenance.json",
         ] => is_hex32(digest),
-        ["v1", "worlds", _, _, digest, "tiles", z, x, file] if is_hex32(digest) => {
+        ["v2", "worlds", _, _, digest, "tiles", z, x, file] if is_hex32(digest) => {
             let Ok(z) = z.parse::<u8>() else {
                 return false;
             };
@@ -410,4 +408,50 @@ fn etag_matches(header: &str, current: &str) -> bool {
             let candidate = candidate.trim();
             candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == current
         })
+}
+
+/// Content type of a tile at an accepted request path.
+fn tile_content_type(path: &str) -> &'static str {
+    let z = path
+        .split_once("/tiles/")
+        .and_then(|(_, rest)| rest.split('/').next())
+        .and_then(|z| z.parse::<u8>().ok())
+        .unwrap_or(0);
+    if z == MAX_ZOOM {
+        "application/vnd.chain-of-life.cells-v1"
+    } else if density_texel_bytes(z) == 1 {
+        "application/vnd.chain-of-life.density-u8"
+    } else {
+        "application/vnd.chain-of-life.density-u16le"
+    }
+}
+
+#[cfg(test)]
+mod tile_type_tests {
+    use super::tile_content_type;
+
+    #[test]
+    fn tile_content_type_follows_the_zoom_encoding() {
+        let tile = |z: u8| format!("/v2/worlds/n/c/0x00/tiles/{z}/0/0.bin");
+        assert_eq!(
+            tile_content_type(&tile(0)),
+            "application/vnd.chain-of-life.density-u16le"
+        );
+        assert_eq!(
+            tile_content_type(&tile(2)),
+            "application/vnd.chain-of-life.density-u16le"
+        );
+        assert_eq!(
+            tile_content_type(&tile(3)),
+            "application/vnd.chain-of-life.density-u8"
+        );
+        assert_eq!(
+            tile_content_type(&tile(5)),
+            "application/vnd.chain-of-life.density-u8"
+        );
+        assert_eq!(
+            tile_content_type(&tile(6)),
+            "application/vnd.chain-of-life.cells-v1"
+        );
+    }
 }

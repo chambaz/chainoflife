@@ -59,7 +59,7 @@ test("renders one immutable generation with accessible controls", async ({
   const indexerRequests: string[] = [];
   const writes: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/v1/worlds/"))
+    if (request.url().includes("/v2/worlds/"))
       indexerRequests.push(request.url());
     if (!["GET", "HEAD", "OPTIONS", "POST"].includes(request.method()))
       writes.push(`${request.method()} ${request.url()}`);
@@ -185,7 +185,7 @@ test("malformed initial artifacts never mount or receive ownership", async ({
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ schemaVersion: 1 }),
+      body: JSON.stringify({ schemaVersion: 2 }),
     }),
   );
   await page.goto("/");

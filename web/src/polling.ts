@@ -8,8 +8,12 @@ export interface Poller {
   dispose(): void;
 }
 
+/**
+ * Runs `task` while the page is visible. `intervalMs` is read after each
+ * successful run, so a function can change the pace; failures back off from it.
+ */
 export function createVisiblePoller(
-  intervalMs: number,
+  intervalMs: number | (() => number),
   timeoutMs: number,
   task: (signal: AbortSignal, commit: PollCommit) => Promise<void>,
   isVisible: () => boolean = () => document.visibilityState === "visible",
@@ -50,7 +54,9 @@ export function createVisiblePoller(
         rerun = false;
         queueMicrotask(run);
       } else {
-        timer = setTimeout(run, Math.min(60_000, intervalMs * 2 ** failures));
+        const interval =
+          typeof intervalMs === "function" ? intervalMs() : intervalMs;
+        timer = setTimeout(run, Math.min(60_000, interval * 2 ** failures));
       }
     }
   };

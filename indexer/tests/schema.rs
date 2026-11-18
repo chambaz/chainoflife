@@ -7,7 +7,7 @@ const BLOCK: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 #[test]
 fn latest_pointer_context_validation_requires_exact_canonical_scope() {
-    let canonical = format!("/v1/worlds/{NETWORK}/{CONTRACT}/{DIGEST}/manifest.json");
+    let canonical = format!("/v2/worlds/{NETWORK}/{CONTRACT}/{DIGEST}/manifest.json");
     let valid = latest(canonical.clone());
     assert!(valid.validate_for(NETWORK, CONTRACT).is_ok());
     let bytes = serde_json::to_vec(&valid).unwrap();
@@ -22,7 +22,7 @@ fn latest_pointer_context_validation_requires_exact_canonical_scope() {
     assert!(valid.validate_for(NETWORK, other_contract).is_err());
 
     for path in [
-        canonical.replace("/v1/", "/v2/"),
+        canonical.replace("/v2/", "/v3/"),
         canonical.replace(NETWORK, &format!("{NETWORK}%2f..")),
         canonical.replace(CONTRACT, &format!("{CONTRACT}\\..")),
         canonical.replace("/worlds/", "//worlds/"),
@@ -71,7 +71,7 @@ fn provenance_has_exact_fields_and_rejects_noncanonical_values() {
     );
 
     for (field, invalid) in [
-        ("schemaVersion", serde_json::json!(2)),
+        ("schemaVersion", serde_json::json!(1)),
         ("generation", serde_json::json!("01")),
         ("stateDigest", serde_json::json!(DIGEST.to_uppercase())),
         ("sourceBlockHash", serde_json::json!("0x01")),
@@ -105,7 +105,7 @@ fn manifest_rejects_population_above_world_capacity() {
 
 #[test]
 fn latest_pointer_rejects_noncanonical_decimal_unknown_fields_and_invalid_dates() {
-    let canonical = format!("/v1/worlds/{NETWORK}/{CONTRACT}/{DIGEST}/manifest.json");
+    let canonical = format!("/v2/worlds/{NETWORK}/{CONTRACT}/{DIGEST}/manifest.json");
     let valid = serde_json::to_value(latest(canonical)).unwrap();
     let parse = |value: &serde_json::Value| {
         LatestPointer::from_json_for(&serde_json::to_vec(value).unwrap(), NETWORK, CONTRACT)
@@ -130,7 +130,7 @@ fn latest_pointer_rejects_noncanonical_decimal_unknown_fields_and_invalid_dates(
 fn latest(manifest_url: String) -> LatestPointer {
     LatestPointer {
         epoch: "0".into(),
-        schema_version: 1,
+        schema_version: 2,
         generation: "7".into(),
         state_digest: DIGEST.into(),
         manifest_url,
@@ -142,7 +142,7 @@ fn latest(manifest_url: String) -> LatestPointer {
 
 fn provenance() -> LifeProvenance {
     LifeProvenance {
-        schema_version: 1,
+        schema_version: 2,
         network_id: NETWORK.into(),
         contract_address: CONTRACT.into(),
         epoch: "0".into(),

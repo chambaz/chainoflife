@@ -27,6 +27,18 @@ immutable artifact paths.
 `provenance.json` records the network, contract, world identity, source block,
 and verification time. It does not reference events or transactions.
 
+## Tiles
+
+Each digest directory holds `tiles/{z}/{x}/{y}.bin` for zoom 0 to 6, 256 × 256
+texels per tile. Zoom 6 tiles hold exact cells, one bit each (8,192 bytes).
+Lower zooms hold the live-cell count of each texel. Zooms 3 to 5 count at most
+64 cells per texel and use one byte (65,536 bytes per tile); zooms 0 to 2 use two
+bytes, little-endian (131,072 bytes). A full-size world publishes 49 MB per
+generation.
+
+Artifacts from schema version 1 (`v1/` under the artifact root) are not read
+or served. Delete that directory after upgrading.
+
 ## State
 
 All state is on the filesystem: the digest directories and `latest.json`.

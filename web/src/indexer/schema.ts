@@ -4,10 +4,15 @@ import { DECIMAL, HEX32 } from "@/lib/validation";
 export const MAX_WORLD_SIZE = 10_000;
 export const TILE_SIZE = 256;
 /** Version of the indexer JSON documents. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const MAX_ZOOM = 6;
+/** Density levels at and above this zoom store one byte per texel; lower levels, two. */
+export const DENSITY_U8_MIN_ZOOM = 3;
+export const DENSITY_ENCODING = "live-count-u8-z3-u16le";
 export const DENSITY_CONTENT_TYPE =
   "application/vnd.chain-of-life.density-u16le";
+export const DENSITY_U8_CONTENT_TYPE =
+  "application/vnd.chain-of-life.density-u8";
 export const CELLS_CONTENT_TYPE = "application/vnd.chain-of-life.cells-v1";
 
 const NETWORK = /^[0-9a-f]{64}$/;
@@ -28,7 +33,7 @@ export interface LifeManifest extends SnapshotIdentity {
   readonly height: number;
   readonly tileSize: 256;
   readonly maxZoom: 6;
-  readonly densityEncoding: "u16le-live-count";
+  readonly densityEncoding: typeof DENSITY_ENCODING;
   readonly cellEncoding: "row-major-lsb-first";
   readonly tilePathTemplate: "tiles/{z}/{x}/{y}.bin";
   readonly verification: {
@@ -120,7 +125,7 @@ export function parseManifest(input: unknown): LifeManifest {
   literal(value.height, width, "height");
   literal(value.tileSize, TILE_SIZE, "tileSize");
   literal(value.maxZoom, MAX_ZOOM, "maxZoom");
-  literal(value.densityEncoding, "u16le-live-count", "densityEncoding");
+  literal(value.densityEncoding, DENSITY_ENCODING, "densityEncoding");
   literal(value.cellEncoding, "row-major-lsb-first", "cellEncoding");
   literal(value.tilePathTemplate, "tiles/{z}/{x}/{y}.bin", "tilePathTemplate");
   literal(
@@ -143,7 +148,7 @@ export function parseManifest(input: unknown): LifeManifest {
     height: width,
     tileSize: 256,
     maxZoom: 6,
-    densityEncoding: "u16le-live-count",
+    densityEncoding: DENSITY_ENCODING,
     cellEncoding: "row-major-lsb-first",
     tilePathTemplate: "tiles/{z}/{x}/{y}.bin",
     verification: {
@@ -173,7 +178,7 @@ export function parseLatest(
   literal(value.schemaVersion, SCHEMA_VERSION, "schemaVersion");
   const generation = decimal(value.generation, "generation");
   const stateDigest = canonicalHex32(value.stateDigest, "stateDigest");
-  const expected = `/v1/worlds/${networkId}/${contractAddress}/${stateDigest}/manifest.json`;
+  const expected = `/v2/worlds/${networkId}/${contractAddress}/${stateDigest}/manifest.json`;
   literal(value.manifestUrl, expected, "manifestUrl");
   return {
     schemaVersion: SCHEMA_VERSION,

@@ -43,6 +43,18 @@ export const INITIAL_SYNCHRONIZATION_STATE: SynchronizationState = {
   artifactError: null,
 };
 
+/**
+ * True when the chain has a newer world than any snapshot this browser holds,
+ * so the indexer is expected to publish one soon.
+ */
+export function awaitingNewerSnapshot(state: SynchronizationState): boolean {
+  if (!state.chain) return false;
+  return [state.visualized, state.candidate, state.pendingSnapshot].every(
+    (snapshot) =>
+      !snapshot || compareWorldVersion(snapshot.manifest, state.chain!) < 0,
+  );
+}
+
 export type SynchronizationAction =
   | { readonly type: "chain-read"; readonly value: ChainMetadata }
   | { readonly type: "chain-failed"; readonly error: string }
