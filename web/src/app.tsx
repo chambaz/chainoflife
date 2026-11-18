@@ -11,7 +11,7 @@ import { hashFromHex, toBase58 } from "@thruputchain/client";
 import { BoardSizeControl } from "@/components/board-size-control";
 import { WorldActivity } from "@/components/world-activity";
 import { abbreviate } from "@/lib/format-identifier";
-import { Activity, CircleAlert, CircleCheck, Dna, Info } from "lucide-react";
+import { Activity, CircleAlert, CircleCheck, Info } from "lucide-react";
 import type { AppConfig } from "@/config";
 import { createAppClient } from "@/chain/client";
 import {
@@ -329,7 +329,7 @@ function TopBar({
           aria-label="Homepage"
           className="grid size-12 shrink-0 place-items-center rounded-md border border-primary/35 bg-primary/10 text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring sm:size-9 [@media(pointer:coarse)]:size-12"
         >
-          <Dna />
+          <GliderLogo />
         </a>
         <div className="min-w-0">
           <h1 className="truncate text-base font-semibold">Chain of Life</h1>
@@ -634,4 +634,40 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     );
   });
+}
+
+const GLIDER_CELLS = [
+  [0, 0, false],
+  [1, 0, true],
+  [2, 0, false],
+  [0, 1, false],
+  [1, 1, false],
+  [2, 1, true],
+  [0, 2, true],
+  [1, 2, true],
+  [2, 2, true],
+] as const;
+
+/** The favicon's glider, drawn in the current text color. */
+function GliderLogo() {
+  return (
+    <svg
+      viewBox="3 3 26 26"
+      aria-hidden="true"
+      className="size-6 sm:size-5 [@media(pointer:coarse)]:size-6"
+    >
+      {GLIDER_CELLS.map(([column, row, alive]) => (
+        <rect
+          key={`${column}-${row}`}
+          x={3.5 + column * 9}
+          y={3.5 + row * 9}
+          width="7"
+          height="7"
+          rx="1.5"
+          fill="currentColor"
+          opacity={alive ? 1 : 0.16}
+        />
+      ))}
+    </svg>
+  );
 }
