@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ServiceConfig {
             network_id: network.clone(),
             contract_address: contract_address.clone(),
-            poll_interval: Duration::from_secs(10),
+            poll_interval: Duration::from_secs(2),
             retention_grace,
         },
         source,

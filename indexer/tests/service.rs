@@ -264,6 +264,40 @@ async fn publishes_verified_world_with_chain_provenance() {
     );
 }
 
+/// A crash before the staged directory is renamed leaves only a hidden
+/// staging directory, which cleanup removes. Publication leaves none behind.
+#[tokio::test]
+async fn abandoned_staging_is_removed_and_publication_leaves_none() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("artifacts");
+    let abandoned = scope(&root).join(".staging.abandoned");
+    fs::create_dir_all(abandoned.join("tiles/0/0")).expect("abandoned staging");
+    fs::write(abandoned.join("tiles/0/0/0.bin"), b"partial").expect("partial tile");
+    let metadata = dead_metadata(0);
+    let digest = hex_digest(&metadata);
+    let mut service = service(
+        DeadSource::new(metadata),
+        Publisher::open(root.clone()).expect("publisher"),
+        Duration::from_secs(60),
+    );
+    service.cycle().await.expect("publish");
+
+    assert_eq!(read_latest(&root).state_digest, digest);
+    assert!(scope(&root).join(&digest).join("tiles/6/0/0.bin").exists());
+    let leftovers = fs::read_dir(scope(&root))
+        .expect("scope")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with('.'))
+        .collect::<Vec<_>>();
+    assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+}
+
 #[tokio::test]
 async fn failed_verification_writes_no_artifacts() {
     let temp = tempfile::tempdir().expect("tempdir");

@@ -13,6 +13,11 @@ use crate::{
 };
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+/// Hidden directories holding a publication until it is renamed into place.
+/// The writer lock makes any left at cleanup abandoned.
+const STAGING_PREFIX: &str = ".staging.";
+/// Concurrent fsyncs. Network volumes complete many at once far faster than in turn.
+const SYNC_THREADS: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -140,19 +145,87 @@ impl Publisher {
             .join(network)
             .join(contract)
             .join(digest);
-        self.ensure_dir(&base)?;
         let manifest_index = artifacts
             .iter()
             .position(|item| item.path.as_str() == "manifest.json")
             .ok_or_else(|| StorageError::InvalidPath("manifest.json is missing".into()))?;
-        for (index, artifact) in artifacts.iter().enumerate() {
-            if index != manifest_index {
+        let files = artifacts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != manifest_index)
+            .map(|(_, artifact)| artifact);
+        if base.exists() {
+            // An interrupted install: complete it file by file, keeping the
+            // bytes already there.
+            for artifact in files {
                 self.install_immutable(&base, artifact.path.as_str(), &artifact.bytes)?;
             }
+        } else {
+            self.stage_and_install(&base, files)?;
         }
+        // The manifest marks the directory complete, so it is installed last.
         self.install_immutable(&base, "manifest.json", &artifacts[manifest_index].bytes)?;
         self.verify_ready(network, contract, &base, digest)?;
         Ok(())
+    }
+
+    /// Writes every file of a new digest directory into a hidden staging
+    /// directory, makes them durable together, and renames the directory into
+    /// place. This costs one rename instead of a rename and three fsyncs per file.
+    fn stage_and_install<'a>(
+        &self,
+        base: &Path,
+        artifacts: impl Iterator<Item = &'a Artifact>,
+    ) -> Result<(), StorageError> {
+        let scope = base
+            .parent()
+            .ok_or_else(|| StorageError::InvalidPath(base.display().to_string()))?;
+        self.ensure_dir(scope)?;
+        let staging = scope.join(format!(
+            "{STAGING_PREFIX}{}.{}.{}",
+            base.file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or_default(),
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        let mut files = Vec::new();
+        let mut directories = std::collections::BTreeSet::from([staging.clone()]);
+        let result = (|| {
+            fs::create_dir(&staging).map_err(|source| io(&staging, source))?;
+            for artifact in artifacts {
+                let path = staging.join(confined(artifact.path.as_str())?);
+                let parent = path
+                    .parent()
+                    .ok_or_else(|| StorageError::InvalidPath(path.display().to_string()))?;
+                if directories.insert(parent.to_path_buf()) {
+                    fs::create_dir_all(parent).map_err(|source| io(parent, source))?;
+                    for ancestor in parent.ancestors().take_while(|a| *a != staging) {
+                        directories.insert(ancestor.to_path_buf());
+                    }
+                }
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .map_err(|source| io(&path, source))?;
+                file.write_all(&artifact.bytes)
+                    .map_err(|source| io(&path, source))?;
+                files.push((path, file));
+            }
+            sync_all_parallel(files.iter().map(|(path, file)| (path.as_path(), file)))?;
+            let directories = directories
+                .iter()
+                .map(|path| Ok((path.as_path(), File::open(path).map_err(|e| io(path, e))?)))
+                .collect::<Result<Vec<_>, StorageError>>()?;
+            sync_all_parallel(directories.iter().map(|(path, file)| (*path, file)))?;
+            fs::rename(&staging, base).map_err(|source| io(base, source))?;
+            self.sync_dir(scope)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+        result
     }
 
     pub fn promote(
@@ -264,8 +337,8 @@ impl Publisher {
                 .file_type()
                 .map_err(|source| io(entry.path(), source))?
                 .is_dir()
-                && is_hex32(&name)
-                && !retained.contains(&name)
+                && ((is_hex32(&name) && !retained.contains(&name))
+                    || name.starts_with(STAGING_PREFIX))
             {
                 fs::remove_dir_all(entry.path()).map_err(|source| io(entry.path(), source))?;
                 removed.push(name);
@@ -403,6 +476,29 @@ impl Publisher {
         }
         self.sync_dir(path)
     }
+}
+
+/// Fsyncs every file, `SYNC_THREADS` at a time.
+fn sync_all_parallel<'a>(
+    files: impl Iterator<Item = (&'a Path, &'a File)>,
+) -> Result<(), StorageError> {
+    let files = files.collect::<Vec<_>>();
+    let per_thread = files.len().div_ceil(SYNC_THREADS).max(1);
+    std::thread::scope(|scope| {
+        let workers = files
+            .chunks(per_thread)
+            .map(|group| {
+                scope.spawn(move || {
+                    group
+                        .iter()
+                        .try_for_each(|(path, file)| file.sync_all().map_err(|e| io(*path, e)))
+                })
+            })
+            .collect::<Vec<_>>();
+        workers
+            .into_iter()
+            .try_for_each(|worker| worker.join().expect("fsync worker panicked"))
+    })
 }
 
 pub fn resolve_request(root: &Path, request_path: &str) -> Result<PathBuf, StorageError> {

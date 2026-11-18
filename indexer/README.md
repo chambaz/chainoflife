@@ -5,13 +5,19 @@ builds immutable tiles, and serves them over HTTP for one network and contract.
 
 ## Publication
 
-1. Poll `get_metadata`. If the world matches `latest.json`, do nothing.
+1. Poll `get_metadata` every 2 seconds. If the world matches `latest.json`,
+   do nothing.
 2. Download every chunk. Metadata before and after the download must be equal,
-   and no chunk can come from a block before the source block.
+   and no chunk can come from a block before the source block. Chunks are read
+   with `simulateInvocations`, up to 16 views per request (fewer if the endpoint's
+   `getServerLimits` batch limit is lower) and 64 requests at a time. Each batch
+   runs against one committed snapshot. Endpoints without batch support are read
+   one view at a time.
 3. Verify population and digest against the metadata, then build and check
    the tiles. Nothing is written before these checks pass.
-4. Install the digest directory: tiles, then `provenance.json`, then
-   `manifest.json`. Files in a digest directory are never changed.
+4. Install the digest directory: write the tiles and `provenance.json` into a
+   hidden staging directory, fsync them together, and rename it into place.
+   Then install `manifest.json`. Files in a digest directory are never changed.
 5. Replace `latest.json` atomically.
 
 Publication order is `(epoch, generation)`. `latest.json` never moves back.
@@ -28,7 +34,8 @@ There is no database. A lock file allows one writer for each artifact root.
 
 If the indexer stops after an install but before step 5, the next run finds
 the existing digest directory. It reuses that directory's `provenance.json`,
-so the retried install writes identical bytes.
+so the retried install writes identical bytes. A staging directory left by an
+interrupted install is never served and is removed at the next cleanup.
 
 Retention keeps the directory that `latest.json` points to and the previous
 publication. Other publications stay for a grace period after they are
