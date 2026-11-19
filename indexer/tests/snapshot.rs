@@ -201,7 +201,7 @@ fn reconstruction_rejects_wrong_digest() {
 fn metadata_rejects_unsupported_sizes_and_derives_layout() {
     let (metadata, _) = dead_fixture();
     assert_eq!(metadata.chunks_per_row(), CHUNKS_PER_ROW);
-    for size in [0, 99, 150, 10_100] {
+    for size in [0, 99, 150, 17_400] {
         let mut candidate = metadata.clone();
         candidate.size = size;
         assert!(matches!(
@@ -209,10 +209,17 @@ fn metadata_rejects_unsupported_sizes_and_derives_layout() {
             Err(Error::Schema { field: "size", .. })
         ));
     }
-    let mut small = metadata;
+    let mut small = metadata.clone();
     small.size = 100;
     assert_eq!(small.chunks_per_row(), 1);
     assert_eq!(small.chunk_count(), 100);
+    // The largest world: 2,163-byte rows, read in three parts.
+    let mut largest = metadata;
+    largest.size = 17_300;
+    assert!(largest.validate().is_ok());
+    assert_eq!(largest.row_bytes(), 2_163);
+    assert_eq!(largest.chunks_per_row(), 3);
+    assert_eq!(largest.chunk_count(), 51_900);
 }
 
 #[test]

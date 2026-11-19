@@ -1,6 +1,6 @@
 # Chain of Life
 
-Conway's Game of Life on [Thruput](https://thruput.network/): up to **100 million
+Conway's Game of Life on [Thruput](https://thruput.network/): up to **299 million
 cells advanced atomically in one transaction**.
 
 This developer experiment explores large on-chain workloads, with a browser
@@ -20,7 +20,7 @@ A Rust indexer reads the world from the contract, verifies its population and
 digest (a hash of the world state), and serves tiles for the browser to display.
 The browser keeps the previous world visible until the new tiles are ready.
 
-The board ranges from 100 × 100 to 10,000 × 10,000 cells. Edges wrap around.
+The board ranges from 100 × 100 to 17,300 × 17,300 cells. Edges wrap around.
 Resizing starts a new world at generation zero using the same seed.
 Each browser creates a locally funded wallet, shared across reloads and tabs.
 
@@ -106,8 +106,13 @@ npm run deploy -- --preset futurenet
 npm run dev -- --config .env.futurenet
 ```
 
-This deploys a fixed **10,000 × 10,000** world. The contract rejects size changes,
+This deploys a fixed **17,300 × 17,300** world. The contract rejects size changes,
 and the app hides the size control. The indexer and app run on your machine.
+
+Each advance of this world writes 37.4 MB of state in one transaction. The
+network must allow that much transaction output: its
+`max_subtransaction_output_bytes` setting must be at least 40 MB, above the
+16 MiB default.
 
 For custom sizes, build configuration, and recovery, see the
 [deployment guide](docs/development.md#deployment).

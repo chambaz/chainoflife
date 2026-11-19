@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { MAX_WORLD_SIZE } from "@/indexer/schema";
 import type { WorldWriteState } from "@/transactions/use-world-write";
 
 export function BoardSizeControl({
@@ -48,7 +49,7 @@ export function BoardSizeControl({
         name="board-size"
         type="range"
         min={100}
-        max={10_000}
+        max={MAX_WORLD_SIZE}
         step={100}
         value={selected}
         disabled={disabled}
