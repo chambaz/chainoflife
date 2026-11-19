@@ -205,17 +205,19 @@ fn full_scale_generation_one_vector() {
 }
 
 #[test]
-#[ignore = "full 299-million-cell reference pass; run in release mode"]
+#[ignore = "full 302-million-cell reference pass; run in release mode"]
 fn largest_world_generation_vectors() {
-    // The largest world: 17,300 cells per side, four padding bits per row.
-    const SIZE: usize = 17_300;
+    // The largest world: 17,400 cells per side.
+    const SIZE: usize = 17_400;
     const ROW: usize = SIZE.div_ceil(8);
     let mut rng = SplitMix64::new(0);
     let mut world = vec![0u8; SIZE * ROW];
     let mut population = 0u64;
     for row in world.chunks_mut(ROW) {
         rng.fill_bytes(row);
-        row[ROW - 1] &= (1 << (SIZE % 8)) - 1;
+        if !SIZE.is_multiple_of(8) {
+            row[ROW - 1] &= (1 << (SIZE % 8)) - 1;
+        }
         population += u64::from(count_cells(row));
     }
     let zero = (
@@ -250,12 +252,12 @@ fn largest_world_generation_vectors() {
         (zero, one),
         (
             (
-                149_645_925,
-                "3c021bf8230fe8b68c4ff46662febefd3222fee746349315d4df87650a48506c".into()
+                151_381_558,
+                "9e18a000a0a983d20f54ac56b4771b0e0ac0b1e88ead517d1427c12b057404aa".into()
             ),
             (
-                81_833_988,
-                "02cfca5be4459c36901bd5400f0652cf451759504761f8ede7f6bfd7e7e5ad67".into()
+                82_801_343,
+                "a7c460022b26798021f3260fb96d8ff0104fb545187ec2c377834e3b9dd64266".into()
             ),
         )
     );

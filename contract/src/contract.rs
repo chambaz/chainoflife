@@ -6,9 +6,9 @@ use thruput_sdk::storage::{Bytestring, Flaggable, Map, Value};
 use thruput_sdk::*;
 
 /// The largest side whose advance fits the one-billion-gas transaction cap.
-/// Each advance writes the whole world, `MAX_SIZE * ROW_BYTES` = 37.4 MB at
+/// Each advance writes the whole world, `MAX_SIZE * ROW_BYTES` = 37.8 MB at
 /// this size, so the network must allow that much output per transaction.
-const MAX_SIZE: u32 = 17_300;
+const MAX_SIZE: u32 = 17_400;
 const ROW_BYTES: usize = (MAX_SIZE as usize).div_ceil(8);
 /// Most bytes of a row that `get_chunk` returns: a view's return value is
 /// limited to 1,024 bytes.

@@ -22,7 +22,7 @@ Chain of Life has four parts:
    It checks the indexer every 5 seconds, or every second while the chain is
    known to be ahead of its newest snapshot, as after its own advance.
 
-Edges wrap around. Configurable worlds support 100–17,300 cells per side in
+Edges wrap around. Configurable worlds support 100–17,400 cells per side in
 steps of 100. Resizing keeps the seed, increments the epoch, and resets generation
 to zero. Fixed worlds reject resizing.
 See [contract storage and encoding](../contract/README.md).
