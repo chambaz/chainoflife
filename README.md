@@ -79,8 +79,13 @@ generation, or drag and release the board-size slider to resize the world.
 
 ### Node settings
 
-A full 10,000 × 10,000 update uses about 984 million gas, within the default
-1-billion transaction cap. Gas measures computation, not a token fee.
+A 10,000 × 10,000 update uses about 310 million gas, and a full 17,300 × 17,300
+update about 932 million, within the default 1-billion transaction cap. Gas
+measures computation, not a token fee.
+
+A local node allows 16 MiB of state output per transaction, enough for worlds
+up to 11,400 × 11,400. Larger worlds need a node built with a higher
+`max_subtransaction_output_bytes`; see [benchmarks](docs/benchmarks.md).
 
 `--data-dir data` preserves the ledger in the Git-ignored `data/` directory at the
 repository root. The block flags produce blocks once per second.
@@ -111,8 +116,8 @@ and the app hides the size control. The indexer and app run on your machine.
 
 Each advance of this world writes 37.4 MB of state in one transaction. The
 network must allow that much transaction output: its
-`max_subtransaction_output_bytes` setting must be at least 40 MB, above the
-16 MiB default.
+`max_subtransaction_output_bytes` setting must be above the 16 MiB default;
+64 MiB leaves room.
 
 For custom sizes, build configuration, and recovery, see the
 [deployment guide](docs/development.md#deployment).

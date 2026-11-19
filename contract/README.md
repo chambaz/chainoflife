@@ -37,7 +37,8 @@ Futurenet. `thruput.toml` sets it for local nodes.
 
 An advance writes a whole bank, so the network's `max_subtransaction_output_bytes`
 must exceed the world's bytes plus per-chunk overhead. The 16 MiB default allows
-worlds up to about 11,300 cells per side; a full 17,300 world needs about 40 MB.
+worlds up to 11,400 cells per side; a full 17,300 world writes 37.4 MB, so 64 MiB
+leaves room.
 
 The digest starts with SHA-256 of the ASCII domain `chain-of-life/world/v2`,
 followed by big-endian width (`u32`), height (`u32`), epoch (`u64`), and

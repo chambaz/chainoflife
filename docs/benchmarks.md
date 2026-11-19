@@ -31,6 +31,33 @@ varied by 4 gas between the two storage banks and not at all across seeds.
 Both sizes use 3.1 gas per cell. Operation-to-receipt time for one advance
 was 0.8–1.3 seconds at both sizes.
 
+### Larger worlds
+
+Local runs on 2026-11-19 with Thruput CLI 0.45.2, v6 artifact SHA-256
+`f32ac135fb776564a5c24aecda19849049f813cf13b909137f446be097bf6d76`, the preset budgets, and seed 0.
+Each world ran two or four advances.
+
+| Grid            | Node output limit |    Root gas per advance | Of 1-billion cap | Deploy and initialize | Advance to receipt |
+| --------------- | ----------------- | ----------------------: | ---------------: | --------------------: | -----------------: |
+| 11,300 × 11,300 | 16 MiB (default)  | 395,020,329–395,020,331 |            39.5% |           141,308,620 |          1.5–1.8 s |
+| 11,400 × 11,400 | 16 MiB (default)  | 402,530,313–402,530,318 |            40.3% |           143,984,280 |          1.5–1.8 s |
+| 11,500 × 11,500 | 16 MiB (default)  |                       — |                — |   dropped, no receipt |                  — |
+| 17,300 × 17,300 | 64 MiB            | 932,418,634–932,418,636 |            93.2% |           336,220,450 |          2.6–3.1 s |
+
+The default rows used the managed hog-devnode 0.1.34. Its executor limits one
+transaction's storage output to 16 MiB, so 11,400 cells per side (16.2 MB per
+bank) is the largest world it accepts. A larger transaction is dropped like a
+conflict: it gets no receipt and expires. The 17,300 row used hog-devnode
+0.1.34 built with that limit raised to 64 MiB, standing in for a network whose
+`max_subtransaction_output_bytes` allows a 37.4 MB write. Its generation-zero
+and generation-one digests matched the core reference vectors.
+
+On the same machine, the indexer verified and published each 17,300²
+generation in 5.4–5.9 seconds: 3.0–3.4 s to download from the local RPC,
+1.7 s to build 6,190 tiles (143 MB), and 0.7–0.8 s to publish them. The live
+advance test in Chromium with SwiftShader showed the new generation 9.5 seconds
+after the click. These are four-core sandbox timings with one-second blocks.
+
 ### Futurenet
 
 The 10,000 × 10,000 world deployed with 110,162,970 gas, the same as the local
