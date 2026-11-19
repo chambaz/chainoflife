@@ -33,6 +33,7 @@ import {
   storageDeposit,
   succeeded,
 } from "./world";
+import { MAX_WORLD_SIZE } from "./deployment-config";
 
 const { values } = parseArgs({
   options: {
@@ -60,10 +61,10 @@ assert(
       (size) =>
         Number.isInteger(size) &&
         size >= 100 &&
-        size <= 10_000 &&
+        size <= MAX_WORLD_SIZE &&
         size % 100 === 0,
     ),
-  "Sizes must be multiples of 100 between 100 and 10000",
+  `Sizes must be multiples of 100 between 100 and ${MAX_WORLD_SIZE}`,
 );
 const seeds = values.seeds.split(",").map((value) => {
   assert(/^\d+$/.test(value), "Seeds must be unsigned decimal integers");

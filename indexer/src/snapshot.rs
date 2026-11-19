@@ -34,7 +34,7 @@ impl SnapshotMetadata {
         if !(100..=MAX_WORLD_WIDTH).contains(&self.size) || !self.size.is_multiple_of(100) {
             return Err(Error::Schema {
                 field: "size",
-                reason: "expected 100 to 10000 in steps of 100",
+                reason: "expected 100 to 17400 in steps of 100",
             });
         }
         Ok(())

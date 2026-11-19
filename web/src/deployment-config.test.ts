@@ -15,7 +15,7 @@ describe("deployment presets", () => {
     expect(remote).toMatchObject({
       preset: "futurenet",
       mode: "fixed",
-      size: 10000,
+      size: 17_400,
       manifest: null,
       gasLimit: 1_000_000_000n,
       targetGasLimit: 999_000_000n,
@@ -47,9 +47,13 @@ describe("deployment presets", () => {
       rpcUrl: "http://127.0.0.1:9546",
     });
   });
+  test("accepts the largest world", () => {
+    expect(deploymentConfig(["--size", "17400"], {}).size).toBe(17_400);
+  });
   test.each([
     ["--preset", "devnet"],
     ["--size", "101"],
+    ["--size", "17500"],
     ["--seed", "-1"],
     ["--mode", "unknown"],
     ["--rpc-url", "file:///rpc"],

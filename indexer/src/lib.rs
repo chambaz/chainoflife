@@ -17,7 +17,7 @@ pub use snapshot::{
 };
 
 /// Largest supported square world side, in cells.
-pub const MAX_WORLD_WIDTH: u32 = 10_000;
+pub const MAX_WORLD_WIDTH: u32 = 17_400;
 /// Most bytes of a row in one `get_chunk` response. The contract stores and
 /// digests the world in larger chunks; see `game_of_life_core::digest`.
 pub const CHUNK_BYTES: usize = 1_000;

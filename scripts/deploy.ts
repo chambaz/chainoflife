@@ -18,7 +18,7 @@ import {
   type TransactionReceipt,
 } from "@thruputchain/client";
 import { loadAccounts } from "./local-accounts";
-import { deploymentConfig } from "./deployment-config";
+import { deploymentConfig, MAX_WORLD_SIZE } from "./deployment-config";
 import type { FundingRecord } from "./setup-funding";
 import {
   contractArtifact,
@@ -33,7 +33,7 @@ import {
 const options = deploymentConfig(process.argv.slice(2));
 if (options.help) {
   console.log(
-    "Deploy Chain of Life: --preset local|futurenet --rpc-url URL --mode configurable|fixed --size 10000 --seed 0 --output FILE --state-dir DIR --runtime-manifest FILE --resume\nFlags override preset defaults. The node must already be running. Use a separate state directory for each deployment.",
+    "Deploy Chain of Life: --preset local|futurenet --rpc-url URL --mode configurable|fixed --size 10000 (local) or 17400 (futurenet) --seed 0 --output FILE --state-dir DIR --runtime-manifest FILE --resume\nFlags override preset defaults. The node must already be running. Use a separate state directory for each deployment.",
   );
   process.exit(0);
 }
@@ -168,7 +168,7 @@ if (!costs) throw new Error("The node did not publish its storage cost model");
 const deposit = storageDeposit(
   costs,
   artifact.length,
-  world.resizable ? 10_000 : world.size,
+  world.resizable ? MAX_WORLD_SIZE : world.size,
 );
 let receipt: TransactionReceipt;
 if (state.deployHash) {

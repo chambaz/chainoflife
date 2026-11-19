@@ -15,7 +15,7 @@ import {
   advance,
   contractArtifact,
   deployAndInitialize,
-  referenceWorld,
+  referenceWorlds,
   type GasBudget,
 } from "../../../scripts/world";
 import { deployedEnvironment, fundedTestAccounts } from "./test-accounts";
@@ -198,13 +198,16 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       const { account, wallet } = harness.accounts[0]!;
       const before = await metadata(deployed);
       const reference =
-        before.epoch === 0n &&
-        before.generation === 0n &&
-        before.size === BigInt(referenceWorld.size) &&
-        before.seed === BigInt(referenceWorld.seed);
+        before.epoch === 0n && before.generation === 0n
+          ? referenceWorlds.find(
+              (world) =>
+                before.size === BigInt(world.size) &&
+                before.seed === BigInt(world.seed),
+            )
+          : undefined;
       // The clean-ledger harness deploys a fresh reference world.
       if (process.env.GAME_OF_LIFE_EXPECT_REFERENCE_WORLD === "1")
-        expect(reference).toBe(true);
+        expect(reference).toBeDefined();
 
       const { receipt } = await advance(wallet, deployed, deployedGas);
       const event = advancedEvent(receipt, deployed);
@@ -213,10 +216,10 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       expect(event.fields.generation).toBe(before.generation + 1n);
       if (reference) {
         expect(event.fields.population).toBe(
-          referenceWorld.generationOne.population,
+          reference.generationOne.population,
         );
         expect(toHex0x(event.fields.state_digest)).toBe(
-          referenceWorld.generationOne.stateDigest,
+          reference.generationOne.stateDigest,
         );
       }
       await pollMetadata(deployed).toMatchObject({

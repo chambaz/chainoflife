@@ -27,21 +27,37 @@ import {
 export const contractArtifact = () =>
   readFile(repoPath("target/thruput/game_of_life.rv32a"));
 
-/** Core reference vectors for the seed-0, 10,000² world at epoch zero. */
-export const referenceWorld = {
-  size: 10_000,
-  seed: "0",
-  generationZero: {
-    population: 49_999_272n,
-    stateDigest:
-      "0x64a81a157cfb3bd83276eaab7a15b0a44a9ec7d8eac04bc117b78a01212cf4e5",
+/** Core reference vectors for seed-0 worlds at epoch zero. */
+export const referenceWorlds = [
+  {
+    size: 10_000,
+    seed: "0",
+    generationZero: {
+      population: 49_999_272n,
+      stateDigest:
+        "0x64a81a157cfb3bd83276eaab7a15b0a44a9ec7d8eac04bc117b78a01212cf4e5",
+    },
+    generationOne: {
+      population: 27_336_807n,
+      stateDigest:
+        "0x1ea48941caa8c1614bbb00c80ed6903855c174778d45725522439cc875ccde71",
+    },
   },
-  generationOne: {
-    population: 27_336_807n,
-    stateDigest:
-      "0x1ea48941caa8c1614bbb00c80ed6903855c174778d45725522439cc875ccde71",
+  {
+    size: 17_400,
+    seed: "0",
+    generationZero: {
+      population: 151_381_558n,
+      stateDigest:
+        "0x9e18a000a0a983d20f54ac56b4771b0e0ac0b1e88ead517d1427c12b057404aa",
+    },
+    generationOne: {
+      population: 82_801_343n,
+      stateDigest:
+        "0xa7c460022b26798021f3260fb96d8ff0104fb545187ec2c377834e3b9dd64266",
+    },
   },
-} as const;
+] as const;
 
 export interface GasBudget {
   root: bigint;
@@ -214,14 +230,15 @@ export async function verifyInitialized(
   assert.equal(value.epoch, 0n);
   assert.equal(value.generation, 0n);
   assert.equal(value.resizable, world.resizable);
-  if (
-    world.size === referenceWorld.size &&
-    world.seed === BigInt(referenceWorld.seed)
-  ) {
-    assert.equal(value.population, referenceWorld.generationZero.population);
+  const reference = referenceWorlds.find(
+    (candidate) =>
+      candidate.size === world.size && BigInt(candidate.seed) === world.seed,
+  );
+  if (reference) {
+    assert.equal(value.population, reference.generationZero.population);
     assert.equal(
       toHex0x(value.state_digest),
-      referenceWorld.generationZero.stateDigest,
+      reference.generationZero.stateDigest,
     );
   }
   return value;

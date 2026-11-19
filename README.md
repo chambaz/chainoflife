@@ -1,6 +1,6 @@
 # Chain of Life
 
-Conway's Game of Life on [Thruput](https://thruput.network/): up to **100 million
+Conway's Game of Life on [Thruput](https://thruput.network/): over **300 million
 cells advanced atomically in one transaction**.
 
 This developer experiment explores large on-chain workloads, with a browser
@@ -20,7 +20,7 @@ A Rust indexer reads the world from the contract, verifies its population and
 digest (a hash of the world state), and serves tiles for the browser to display.
 The browser keeps the previous world visible until the new tiles are ready.
 
-The board ranges from 100 × 100 to 10,000 × 10,000 cells. Edges wrap around.
+The board ranges from 100 × 100 to 17,400 × 17,400 cells. Edges wrap around.
 Resizing starts a new world at generation zero using the same seed.
 Each browser creates a locally funded wallet, shared across reloads and tabs.
 
@@ -79,8 +79,13 @@ generation, or drag and release the board-size slider to resize the world.
 
 ### Node settings
 
-A full 10,000 × 10,000 update uses about 984 million gas, within the default
-1-billion transaction cap. Gas measures computation, not a token fee.
+A 10,000 × 10,000 update uses about 310 million gas, and a full 17,400 × 17,400
+update about 943 million, within the default 1-billion transaction cap. Gas
+measures computation, not a token fee.
+
+A local node allows 16 MiB of state output per transaction, enough for worlds
+up to 11,400 × 11,400. Larger worlds need a node built with a higher
+`max_subtransaction_output_bytes`; see [benchmarks](docs/benchmarks.md).
 
 `--data-dir data` preserves the ledger in the Git-ignored `data/` directory at the
 repository root. The block flags produce blocks once per second.
@@ -106,8 +111,13 @@ npm run deploy -- --preset futurenet
 npm run dev -- --config .env.futurenet
 ```
 
-This deploys a fixed **10,000 × 10,000** world. The contract rejects size changes,
+This deploys a fixed **17,400 × 17,400** world (302,760,000 cells). The contract rejects size changes,
 and the app hides the size control. The indexer and app run on your machine.
+
+Each advance of this world writes 37.8 MB of state in one transaction. The
+network must allow that much transaction output: its
+`max_subtransaction_output_bytes` setting must be above the 16 MiB default;
+64 MiB leaves room.
 
 For custom sizes, build configuration, and recovery, see the
 [deployment guide](docs/development.md#deployment).

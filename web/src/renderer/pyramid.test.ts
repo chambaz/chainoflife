@@ -15,6 +15,10 @@ describe("tile pyramid", () => {
     expect(Array.from({ length: 7 }, (_, z) => tileCount(z, 10_000))).toEqual([
       1, 2, 3, 5, 10, 20, 40,
     ]);
+    // The largest world needs two tiles per axis even at zoom 0.
+    expect(Array.from({ length: 7 }, (_, z) => tileCount(z, 17_400))).toEqual([
+      2, 3, 5, 9, 17, 34, 68,
+    ]);
     expect(Array.from({ length: 7 }, (_, z) => tileSpan(z))).toEqual([
       16384, 8192, 4096, 2048, 1024, 512, 256,
     ]);
