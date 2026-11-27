@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   gasAmount,
+  isThruputError,
   parseAddress,
   toHex0x,
   UnsupportedRpcValue,
@@ -206,8 +207,8 @@ export async function metadataAfter(
       ).value;
     } catch (error) {
       const unavailable =
-        (error as { decoded?: { data?: { kind?: string } } }).decoded?.data
-          ?.kind === "stateHeightUnavailable";
+        isThruputError(error, "nativeRpcError") &&
+        error.context.kind === "stateHeightUnavailable";
       if (!unavailable || Date.now() > deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }

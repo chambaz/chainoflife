@@ -2,9 +2,8 @@ import {
   createWalletClient,
   fromHex0x,
   hashFromHex,
+  isThruputError,
   toHex0x,
-  TransactionExecutionError,
-  TransactionObservationError,
   UnsupportedRpcValue,
   type CoreThruputClient,
   type TransactionReceipt,
@@ -120,17 +119,22 @@ export function createWriteBoundary(
         // A receipt exists only for a broadcast transaction, which was signed.
         return committed(result.receipt, evidence!);
       } catch (error) {
-        if (error instanceof TransactionExecutionError && evidence !== null)
-          return committed(error.receipt, evidence);
+        // Nothing was broadcast before the evidence was saved.
         if (evidence === null)
           return {
             kind: "preSubmissionFailure",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Transaction preparation failed",
+            message: describe(error, "Transaction preparation failed"),
           };
-        return { kind: "indeterminate", evidence, message: describe(error) };
+        // A receipt means the transaction committed, whatever its result.
+        const receipt = isThruputError(error)
+          ? error.transaction?.receipt
+          : undefined;
+        if (receipt) return committed(receipt, evidence);
+        return {
+          kind: "indeterminate",
+          evidence,
+          message: describe(error, "Submission failed after signing"),
+        };
       }
     },
     async observe(evidence) {
@@ -190,21 +194,11 @@ export function createWriteBoundary(
   };
 }
 
-function describe(error: unknown): string {
-  const parts =
-    error instanceof TransactionObservationError
-      ? [error.message, error.submissionCause, error.cause]
-      : [error];
-  return (
-    parts
-      .map((part) =>
-        part instanceof Error
-          ? part.message
-          : typeof part === "string"
-            ? part
-            : null,
-      )
-      .filter(Boolean)
-      .join(" · ") || "Submission failed after signing"
-  );
+/** The error's message, and its cause's when that adds detail. */
+function describe(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const cause = error.cause instanceof Error ? error.cause.message : null;
+  return cause && cause !== error.message
+    ? `${error.message} · ${cause}`
+    : error.message;
 }

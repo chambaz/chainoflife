@@ -11,11 +11,11 @@ import {
   defineCluster,
   Ed25519Signer,
   HttpTransport,
+  isThruputError,
   prepareContractDeployment,
   toBase58,
   toHex0x,
   UnsupportedRpcValue,
-  TransactionExecutionError,
   type ContractAddress,
   type SubmissionEvidence,
   type TransactionReceipt,
@@ -212,8 +212,12 @@ for (const size of sizes) {
       try {
         receipt = (await operation()).receipt;
       } catch (error) {
-        if (!(error instanceof TransactionExecutionError)) throw error;
-        receipt = error.receipt;
+        // A committed failure still has a receipt to measure.
+        const failed = isThruputError(error, "transactionFailed")
+          ? error.transaction?.receipt
+          : undefined;
+        if (!failed) throw error;
+        receipt = failed;
       }
       const operationToReceiptMs = performance.now() - started;
       await save(`${name}-${step}-receipt.json`, receipt);
