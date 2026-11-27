@@ -205,6 +205,65 @@ fn full_scale_generation_one_vector() {
 }
 
 #[test]
+#[ignore = "full 130-million-cell reference pass; run in release mode"]
+fn largest_world_generation_vectors() {
+    // The largest world: 11,400 cells per side.
+    const SIZE: usize = 11_400;
+    const ROW: usize = SIZE.div_ceil(8);
+    let mut rng = SplitMix64::new(0);
+    let mut world = vec![0u8; SIZE * ROW];
+    let mut population = 0u64;
+    for row in world.chunks_mut(ROW) {
+        rng.fill_bytes(row);
+        if !SIZE.is_multiple_of(8) {
+            row[ROW - 1] &= (1 << (SIZE % 8)) - 1;
+        }
+        population += u64::from(count_cells(row));
+    }
+    let zero = (
+        population,
+        hex(WorldDigest::of_world(
+            SIZE as u32,
+            SIZE as u32,
+            0,
+            0,
+            &world,
+        )),
+    );
+
+    let mut next = vec![0u8; SIZE * ROW];
+    let mut population = 0u64;
+    for y in 0..SIZE {
+        let row = |y: usize| &world[y * ROW..(y + 1) * ROW];
+        population += u64::from(compute_next_row_width(
+            row((y + SIZE - 1) % SIZE),
+            row(y),
+            row((y + 1) % SIZE),
+            &mut next[y * ROW..(y + 1) * ROW],
+            SIZE,
+        ));
+    }
+    let one = (
+        population,
+        hex(WorldDigest::of_world(SIZE as u32, SIZE as u32, 0, 1, &next)),
+    );
+    // Independent Python numpy/hashlib reference.
+    assert_eq!(
+        (zero, one),
+        (
+            (
+                64_978_875,
+                "cda58b9c1b8771d924c3596ba1c2afcf9d2d5ae891dfc7c32fd0db6314f8330b".into()
+            ),
+            (
+                35_536_795,
+                "63b766df3207116dd88b0c31322db00ff1d0baecabd797535badbe2a07a03098".into()
+            ),
+        )
+    );
+}
+
+#[test]
 fn cell_count_matches_bytewise_count_at_every_length() {
     let mut rng = SplitMix64::new(7);
     let mut row = [0u8; 200];

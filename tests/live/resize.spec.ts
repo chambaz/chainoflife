@@ -14,6 +14,8 @@ test("resizes the live world, advances each workload, and shares state across ta
     timeout: 120_000,
   });
   const address = await page.getByLabel("Your wallet").getAttribute("title");
+  // The largest world still fits a stock node's 16 MiB storage output.
+  await expect(slider).toHaveAttribute("max", "11400");
   const originalSize = Number(await slider.inputValue());
   async function setSize(size: number) {
     // A key release commits once; intermediate range inputs only preview.
@@ -43,7 +45,7 @@ test("resizes the live world, advances each workload, and shares state across ta
     await expect(slider).toBeEnabled();
   }
   if ((await slider.inputValue()) === "100") await setSize(200);
-  for (const size of [100, 1_000, 10_000, 100]) {
+  for (const size of [100, 1_000, 11_400, 100]) {
     await setSize(size);
     await page
       .getByRole("button", {

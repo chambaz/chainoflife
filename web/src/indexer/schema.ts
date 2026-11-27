@@ -1,7 +1,7 @@
 import { DECIMAL, HEX32 } from "@/lib/validation";
 
 /** The largest supported world width and height. */
-export const MAX_WORLD_SIZE = 10_000;
+export const MAX_WORLD_SIZE = 11_400;
 export const TILE_SIZE = 256;
 /** Version of the indexer JSON documents. */
 export const SCHEMA_VERSION = 2;

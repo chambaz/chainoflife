@@ -11,11 +11,11 @@ import {
   defineCluster,
   Ed25519Signer,
   HttpTransport,
+  isThruputError,
   prepareContractDeployment,
   toBase58,
   toHex0x,
   UnsupportedRpcValue,
-  TransactionExecutionError,
   type ContractAddress,
   type SubmissionEvidence,
   type TransactionReceipt,
@@ -33,6 +33,7 @@ import {
   storageDeposit,
   succeeded,
 } from "./world";
+import { MAX_WORLD_SIZE } from "./deployment-config";
 
 const { values } = parseArgs({
   options: {
@@ -60,10 +61,10 @@ assert(
       (size) =>
         Number.isInteger(size) &&
         size >= 100 &&
-        size <= 10_000 &&
+        size <= MAX_WORLD_SIZE &&
         size % 100 === 0,
     ),
-  "Sizes must be multiples of 100 between 100 and 10000",
+  `Sizes must be multiples of 100 between 100 and ${MAX_WORLD_SIZE}`,
 );
 const seeds = values.seeds.split(",").map((value) => {
   assert(/^\d+$/.test(value), "Seeds must be unsigned decimal integers");
@@ -211,8 +212,12 @@ for (const size of sizes) {
       try {
         receipt = (await operation()).receipt;
       } catch (error) {
-        if (!(error instanceof TransactionExecutionError)) throw error;
-        receipt = error.receipt;
+        // A committed failure still has a receipt to measure.
+        const failed = isThruputError(error, "transactionFailed")
+          ? error.transaction?.receipt
+          : undefined;
+        if (!failed) throw error;
+        receipt = failed;
       }
       const operationToReceiptMs = performance.now() - started;
       await save(`${name}-${step}-receipt.json`, receipt);

@@ -2,10 +2,9 @@
 import {
   addressFromHex,
   gasAmount,
+  isThruputError,
   prepareContractDeployment,
   toHex0x,
-  TransactionExecutionError,
-  TransactionObservationError,
   type ContractAddress,
   type TransactionReceipt,
 } from "@thruputchain/client";
@@ -15,7 +14,7 @@ import {
   advance,
   contractArtifact,
   deployAndInitialize,
-  referenceWorld,
+  referenceWorlds,
   type GasBudget,
 } from "../../../scripts/world";
 import { deployedEnvironment, fundedTestAccounts } from "./test-accounts";
@@ -27,6 +26,9 @@ type TestWallet = Harness["accounts"][number]["wallet"];
 const smallGas: GasBudget = { root: 50_000_000n, target: 45_000_000n };
 const smallDeposit = 100_000_000n;
 const underGassed: GasBudget = { root: 2_000_000n, target: 100_000n };
+
+// A transaction that committed and then failed on-chain.
+const COMMITTED_FAILURE = { name: "ThruputError", code: "transactionFailed" };
 
 describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
   "live atomic world",
@@ -112,7 +114,7 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
         for (const size of [0n, 99n, 101n, 10_100n]) {
           await expect(
             initialize(wallet, address, size, resizable),
-          ).rejects.toBeInstanceOf(TransactionExecutionError);
+          ).rejects.toMatchObject(COMMITTED_FAILURE);
         }
         await initialize(wallet, address, 100n, resizable);
         await pollMetadata(address).toMatchObject({
@@ -125,7 +127,7 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
         const before = await metadata(address);
         await expect(
           initialize(wallet, address, 200n, resizable),
-        ).rejects.toBeInstanceOf(TransactionExecutionError);
+        ).rejects.toMatchObject(COMMITTED_FAILURE);
         expect(await metadata(address)).toEqual(before);
 
         const reset = resize(wallet, address, 200n, smallGas);
@@ -139,7 +141,7 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
             resizable: true,
           });
         } else {
-          await expect(reset).rejects.toBeInstanceOf(TransactionExecutionError);
+          await expect(reset).rejects.toMatchObject(COMMITTED_FAILURE);
           expect(await metadata(address)).toEqual(before);
         }
       },
@@ -175,13 +177,13 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
           generations.push(
             advancedEvent(result.value.receipt, address).fields.generation,
           );
-        } else if (result.reason instanceof TransactionObservationError) {
+        } else if (isThruputError(result.reason, "transactionOutcomeUnknown")) {
           // The lock loser is dropped without a receipt. Its 64-block expiry
           // passed during the wait, so it can never commit.
-          expect(result.reason.phase).toBe("observation");
-          expect(result.reason.knownCommitment).toBeUndefined();
+          expect(result.reason.transaction?.receipt).toBeUndefined();
+          expect(result.reason.context.knownCommitment).toBeUndefined();
         } else {
-          expect(result.reason).toBeInstanceOf(TransactionExecutionError);
+          expect(isThruputError(result.reason, "transactionFailed")).toBe(true);
         }
       }
       expect(generations.length).toBeGreaterThan(0);
@@ -198,13 +200,16 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       const { account, wallet } = harness.accounts[0]!;
       const before = await metadata(deployed);
       const reference =
-        before.epoch === 0n &&
-        before.generation === 0n &&
-        before.size === BigInt(referenceWorld.size) &&
-        before.seed === BigInt(referenceWorld.seed);
+        before.epoch === 0n && before.generation === 0n
+          ? referenceWorlds.find(
+              (world) =>
+                before.size === BigInt(world.size) &&
+                before.seed === BigInt(world.seed),
+            )
+          : undefined;
       // The clean-ledger harness deploys a fresh reference world.
       if (process.env.GAME_OF_LIFE_EXPECT_REFERENCE_WORLD === "1")
-        expect(reference).toBe(true);
+        expect(reference).toBeDefined();
 
       const { receipt } = await advance(wallet, deployed, deployedGas);
       const event = advancedEvent(receipt, deployed);
@@ -213,10 +218,10 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       expect(event.fields.generation).toBe(before.generation + 1n);
       if (reference) {
         expect(event.fields.population).toBe(
-          referenceWorld.generationOne.population,
+          reference.generationOne.population,
         );
         expect(toHex0x(event.fields.state_digest)).toBe(
-          referenceWorld.generationOne.stateDigest,
+          reference.generationOne.stateDigest,
         );
       }
       await pollMetadata(deployed).toMatchObject({
@@ -232,7 +237,7 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       const before = await metadata(deployed);
       await expect(
         advance(first!.wallet, deployed, underGassed),
-      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      ).rejects.toMatchObject(COMMITTED_FAILURE);
       expect(await metadata(deployed)).toEqual(before);
 
       const { receipt } = await advance(second!.wallet, deployed, deployedGas);
@@ -250,10 +255,10 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       const { wallet } = harness.accounts[2]!;
       await expect(
         initialize(wallet, deployed, 100n, true),
-      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      ).rejects.toMatchObject(COMMITTED_FAILURE);
       await expect(
         resize(wallet, deployed, 101n, smallGas),
-      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      ).rejects.toMatchObject(COMMITTED_FAILURE);
       expect(await metadata(deployed)).toEqual(before);
 
       await resize(wallet, deployed, 100n, deployedGas);
@@ -276,7 +281,7 @@ describe.skipIf(process.env.RUN_GAME_OF_LIFE_LOCAL_INTEGRATION !== "1")(
       // Growing to full size needs far more gas than this.
       await expect(
         resize(wallet, deployed, 10_000n, smallGas),
-      ).rejects.toBeInstanceOf(TransactionExecutionError);
+      ).rejects.toMatchObject(COMMITTED_FAILURE);
       expect(await metadata(deployed)).toEqual(reset);
       expect(await chunk()).toEqual(resetChunk);
     }, 1_200_000);

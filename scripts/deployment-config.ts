@@ -8,6 +8,9 @@ import { repoPath } from "./paths.mjs";
 const GAS_LIMIT = 1_000_000_000n;
 const TARGET_GAS_LIMIT = 999_000_000n;
 
+/** The largest world side the contract accepts. */
+export const MAX_WORLD_SIZE = 11_400;
+
 export function deploymentConfig(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -37,10 +40,17 @@ export function deploymentConfig(
     mode === "configurable" || mode === "fixed",
     "Mode must be configurable or fixed",
   );
-  const size = Number(values.size ?? "10000");
+  // Futurenet runs the largest world. Local nodes default to 10,000, whose
+  // 12.5 MB advance fits a node's default 16 MiB transaction output.
+  const size = Number(
+    values.size ?? (preset === "futurenet" ? MAX_WORLD_SIZE : 10_000),
+  );
   assert(
-    Number.isInteger(size) && size >= 100 && size <= 10_000 && size % 100 === 0,
-    "Size must be a multiple of 100 between 100 and 10000",
+    Number.isInteger(size) &&
+      size >= 100 &&
+      size <= MAX_WORLD_SIZE &&
+      size % 100 === 0,
+    `Size must be a multiple of 100 between 100 and ${MAX_WORLD_SIZE}`,
   );
   assert(/^\d+$/.test(values.seed), "Seed must be an unsigned decimal integer");
   const seed = BigInt(values.seed);

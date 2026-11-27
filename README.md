@@ -1,6 +1,6 @@
 # Chain of Life
 
-Conway's Game of Life on [Thruput](https://thruput.network/): up to **100 million
+Conway's Game of Life on [Thruput](https://thruput.network/): **130 million
 cells advanced atomically in one transaction**.
 
 This developer experiment explores large on-chain workloads, with a browser
@@ -20,7 +20,7 @@ A Rust indexer reads the world from the contract, verifies its population and
 digest (a hash of the world state), and serves tiles for the browser to display.
 The browser keeps the previous world visible until the new tiles are ready.
 
-The board ranges from 100 × 100 to 10,000 × 10,000 cells. Edges wrap around.
+The board ranges from 100 × 100 to 11,400 × 11,400 cells. Edges wrap around.
 Resizing starts a new world at generation zero using the same seed.
 Each browser creates a locally funded wallet, shared across reloads and tabs.
 
@@ -44,11 +44,11 @@ sudo apt-get install build-essential cmake pkg-config libssl-dev util-linux libj
 Install the Thruput CLI:
 
 ```sh
-cargo install --version 0.45.2 --locked thruput
+cargo install --version 0.48.0 --locked thruput
 ```
 
-This demo uses **Thruput CLI 0.45.2**, which builds v6 contract artifacts.
-`thruput node` manages its compatible runtime (hog-devnode 0.1.34)
+This demo uses **Thruput CLI 0.48.0**, which builds v7 contract artifacts.
+`thruput node` manages its compatible runtime (hog-devnode 0.1.37)
 automatically. Set `THRUPUT_CLI` to select another executable.
 
 ### Start the demo
@@ -79,8 +79,13 @@ generation, or drag and release the board-size slider to resize the world.
 
 ### Node settings
 
-A full 10,000 × 10,000 update uses about 984 million gas, within the default
-1-billion transaction cap. Gas measures computation, not a token fee.
+A 10,000 × 10,000 update uses about 310 million gas, and a full 11,400 × 11,400
+update about 403 million, within the default 1-billion transaction cap. Gas
+measures computation, not a token fee.
+
+The size limit comes from storage, not gas. Each advance rewrites the whole
+world, and a node allows 16 MiB of storage output per transaction: an
+11,400 × 11,400 world writes 16.2 MB. See [benchmarks](docs/benchmarks.md).
 
 `--data-dir data` preserves the ledger in the Git-ignored `data/` directory at the
 repository root. The block flags produce blocks once per second.
@@ -106,8 +111,9 @@ npm run deploy -- --preset futurenet
 npm run dev -- --config .env.futurenet
 ```
 
-This deploys a fixed **10,000 × 10,000** world. The contract rejects size changes,
-and the app hides the size control. The indexer and app run on your machine.
+This deploys a fixed **11,400 × 11,400** world (129,960,000 cells), the largest
+the contract accepts. The contract rejects size changes, and the app hides the
+size control. The indexer and app run on your machine.
 
 For custom sizes, build configuration, and recovery, see the
 [deployment guide](docs/development.md#deployment).

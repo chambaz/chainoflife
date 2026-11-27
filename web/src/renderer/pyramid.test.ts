@@ -15,6 +15,9 @@ describe("tile pyramid", () => {
     expect(Array.from({ length: 7 }, (_, z) => tileCount(z, 10_000))).toEqual([
       1, 2, 3, 5, 10, 20, 40,
     ]);
+    expect(Array.from({ length: 7 }, (_, z) => tileCount(z, 11_400))).toEqual([
+      1, 2, 3, 6, 12, 23, 45,
+    ]);
     expect(Array.from({ length: 7 }, (_, z) => tileSpan(z))).toEqual([
       16384, 8192, 4096, 2048, 1024, 512, 256,
     ]);
