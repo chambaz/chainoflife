@@ -205,10 +205,10 @@ fn full_scale_generation_one_vector() {
 }
 
 #[test]
-#[ignore = "full 302-million-cell reference pass; run in release mode"]
+#[ignore = "full 130-million-cell reference pass; run in release mode"]
 fn largest_world_generation_vectors() {
-    // The largest world: 17,400 cells per side.
-    const SIZE: usize = 17_400;
+    // The largest world: 11,400 cells per side.
+    const SIZE: usize = 11_400;
     const ROW: usize = SIZE.div_ceil(8);
     let mut rng = SplitMix64::new(0);
     let mut world = vec![0u8; SIZE * ROW];
@@ -252,12 +252,12 @@ fn largest_world_generation_vectors() {
         (zero, one),
         (
             (
-                151_381_558,
-                "9e18a000a0a983d20f54ac56b4771b0e0ac0b1e88ead517d1427c12b057404aa".into()
+                64_978_875,
+                "cda58b9c1b8771d924c3596ba1c2afcf9d2d5ae891dfc7c32fd0db6314f8330b".into()
             ),
             (
-                82_801_343,
-                "a7c460022b26798021f3260fb96d8ff0104fb545187ec2c377834e3b9dd64266".into()
+                35_536_795,
+                "63b766df3207116dd88b0c31322db00ff1d0baecabd797535badbe2a07a03098".into()
             ),
         )
     );

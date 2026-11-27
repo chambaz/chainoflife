@@ -1,7 +1,7 @@
 # Chain of Life contract
 
 The contract stores a bit-packed square toroidal Conway world. Each side is
-100 to 17,400 cells, in steps of 100.
+100 to 11,400 cells, in steps of 100.
 
 | Method | Effect |
 | --- | --- |
@@ -37,8 +37,7 @@ Futurenet. `thruput.toml` sets it for local nodes.
 
 An advance writes a whole bank, so the network's `max_subtransaction_output_bytes`
 must exceed the world's bytes plus per-chunk overhead. The 16 MiB default allows
-worlds up to 11,400 cells per side; a full 17,400 world writes 37.8 MB, so 64 MiB
-leaves room.
+worlds up to 11,400 cells per side (16,245,000 bytes); 11,500 does not fit.
 
 The digest starts with SHA-256 of the ASCII domain `chain-of-life/world/v2`,
 followed by big-endian width (`u32`), height (`u32`), epoch (`u64`), and
@@ -62,9 +61,9 @@ receipt or effect; they expire, and their senders can submit again.
 `resize` and `initialize` emit `WorldInitialized`. Each reset increments the
 epoch, so resets to an earlier size still have a distinct digest.
 
-At full size, one advance performs 302,760,000 cell evaluations, reads the
-9,240 chunks of one bank, and writes the 9,240 chunks of the other
-(37,845,000 bytes each way). The first and last chunks are read again for the
+At full size, one advance performs 129,960,000 cell evaluations, reads the
+3,967 chunks of one bank, and writes the 3,967 chunks of the other
+(16,245,000 bytes each way). The first and last chunks are read again for the
 toroidal boundary rows. At smaller sizes, evaluations and chunk traffic scale
 with the selected grid.
 

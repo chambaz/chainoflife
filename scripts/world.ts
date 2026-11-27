@@ -44,17 +44,17 @@ export const referenceWorlds = [
     },
   },
   {
-    size: 17_400,
+    size: 11_400,
     seed: "0",
     generationZero: {
-      population: 151_381_558n,
+      population: 64_978_875n,
       stateDigest:
-        "0x9e18a000a0a983d20f54ac56b4771b0e0ac0b1e88ead517d1427c12b057404aa",
+        "0xcda58b9c1b8771d924c3596ba1c2afcf9d2d5ae891dfc7c32fd0db6314f8330b",
     },
     generationOne: {
-      population: 82_801_343n,
+      population: 35_536_795n,
       stateDigest:
-        "0xa7c460022b26798021f3260fb96d8ff0104fb545187ec2c377834e3b9dd64266",
+        "0x63b766df3207116dd88b0c31322db00ff1d0baecabd797535badbe2a07a03098",
     },
   },
 ] as const;

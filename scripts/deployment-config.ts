@@ -9,7 +9,7 @@ const GAS_LIMIT = 1_000_000_000n;
 const TARGET_GAS_LIMIT = 999_000_000n;
 
 /** The largest world side the contract accepts. */
-export const MAX_WORLD_SIZE = 17_400;
+export const MAX_WORLD_SIZE = 11_400;
 
 export function deploymentConfig(
   args: string[],

@@ -6,8 +6,8 @@ gas cap, such as Futurenet's one-billion-gas cap.
 
 ## Futurenet preset
 
-The Futurenet preset deploys a fixed **10,000 × 10,000** world (100 million
-cells). Every deployment, reset, and advance has a **1-billion** root gas budget
+The Futurenet preset deploys a fixed **11,400 × 11,400** world (130 million
+cells), the largest that fits a transaction's 16 MiB storage output limit. Every deployment, reset, and advance has a **1-billion** root gas budget
 and a **999-million** target gas budget, the full per-transaction cap.
 
 ## Results
@@ -42,15 +42,12 @@ Each world ran two or four advances.
 | 11,300 × 11,300 | 16 MiB (default)  | 395,020,416–395,020,418 |            39.5% |           141,308,662 |          1.8–2.1 s |
 | 11,400 × 11,400 | 16 MiB (default)  | 402,530,400–402,530,405 |            40.3% |           143,984,322 |          1.0–1.5 s |
 | 11,500 × 11,500 | 16 MiB (default)  |                       — |                — |   dropped, no receipt |                  — |
-| 17,400 × 17,400 | 64 MiB            | 943,295,438–943,295,443 |            94.3% |           340,443,823 |          1.8–3.1 s |
 
 The default rows used the managed hog-devnode 0.1.34. Its executor limits one
 transaction's storage output to 16 MiB, so 11,400 cells per side (16.2 MB per
 bank) is the largest world it accepts. A larger transaction is dropped like a
-conflict: it gets no receipt and expires. The 17,400 row used hog-devnode
-0.1.34 built with that limit raised to 64 MiB, standing in for a network whose
-`max_subtransaction_output_bytes` allows a 37.8 MB write. Its generation-zero
-and generation-one digests matched the core reference vectors.
+conflict: it gets no receipt and expires. Gas is not the limit: with the output
+limit raised to 64 MiB, a 17,400 × 17,400 advance used 943 million gas.
 
 On the same machine, the indexer verified and published each 17,400²
 generation in 5.6–6.1 seconds: 3.1–3.5 s to download from the local RPC,

@@ -33,7 +33,7 @@ import {
 const options = deploymentConfig(process.argv.slice(2));
 if (options.help) {
   console.log(
-    "Deploy Chain of Life: --preset local|futurenet --rpc-url URL --mode configurable|fixed --size 10000 (local) or 17400 (futurenet) --seed 0 --output FILE --state-dir DIR --runtime-manifest FILE --resume\nFlags override preset defaults. The node must already be running. Use a separate state directory for each deployment.",
+    "Deploy Chain of Life: --preset local|futurenet --rpc-url URL --mode configurable|fixed --size 10000 (local) or 11400 (futurenet) --seed 0 --output FILE --state-dir DIR --runtime-manifest FILE --resume\nFlags override preset defaults. The node must already be running. Use a separate state directory for each deployment.",
   );
   process.exit(0);
 }
