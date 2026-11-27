@@ -33,8 +33,8 @@ Each digest directory holds `tiles/{z}/{x}/{y}.bin` for zoom 0 to 6, 256 × 256
 texels per tile. Zoom 6 tiles hold exact cells, one bit each (8,192 bytes).
 Lower zooms hold the live-cell count of each texel. Zooms 3 to 5 count at most
 64 cells per texel and use one byte (65,536 bytes per tile); zooms 0 to 2 use two
-bytes, little-endian (131,072 bytes). A full 17,400-cell world publishes 6,190
-tiles, 143 MB, per generation. Building them takes about 400 MB of memory.
+bytes, little-endian (131,072 bytes). A full 11,400-cell world publishes 2,748
+tiles, 64.9 MB, per generation. Building them takes about 200 MB of memory.
 
 Artifacts from schema version 1 (`v1/` under the artifact root) are not read
 or served. Delete that directory after upgrading.

@@ -7,65 +7,47 @@ gas cap, such as Futurenet's one-billion-gas cap.
 ## Futurenet preset
 
 The Futurenet preset deploys a fixed **11,400 × 11,400** world (130 million
-cells), the largest that fits a transaction's 16 MiB storage output limit. Every deployment, reset, and advance has a **1-billion** root gas budget
-and a **999-million** target gas budget, the full per-transaction cap.
+cells), the largest that fits a transaction's 16 MiB storage output limit.
+Every deployment, reset, and advance has a **1-billion** root gas budget and a
+**999-million** target gas budget, the full per-transaction cap.
 
 ## Results
 
-Local runs on 2026-11-16 and the Futurenet run on 2026-11-17, with Thruput CLI 0.45.2, v6 artifact SHA-256
-`0e7f8387771fcbfe5314651cef8b4f339f58be511676d7b3bb4fdaa6b7c1c286`, and the
-preset budgets. Each world ran five advances.
+Runs on 2026-11-26 with Thruput CLI 0.48.0, v7 artifact SHA-256
+`a5b608353bbd0e04b95cabbdcfb0af22f4fb4a292506ed5fe317c1b32b60ecb6`, the preset
+budgets, and seed 0.
 
-### Local
+| Network   | Grid            |      Advances |    Root gas per advance | Of 1-billion cap | Deploy and initialize | Advance to receipt |
+| --------- | --------------- | ------------: | ----------------------: | ---------------: | --------------------: | -----------------: |
+| Local     | 10,000 × 10,000 | 2/2 succeeded | 309,021,479–309,021,483 |            30.9% |           109,818,733 |          2.1–2.4 s |
+| Local     | 11,400 × 11,400 | 2/2 succeeded | 401,762,492–401,762,496 |            40.2% |           143,475,598 |              2.3 s |
+| Futurenet | 11,400 × 11,400 | 5/5 succeeded | 401,762,492–401,762,496 |            40.2% |           143,475,598 |          2.0–2.6 s |
 
-Managed runtime hog-devnode 0.1.34 with its default one-billion-gas cap, seeds
-0, 1, and 42:
+The local runs used the managed hog-devnode 0.1.37 with one-second blocks. Gas
+is deterministic for the same artifact, runtime, and world size; it varies by
+4 gas between the two storage banks.
 
-| Grid            |        Advances |    Root gas per advance | Below 1-billion cap | Deploy and initialize |
-| --------------- | --------------: | ----------------------: | ------------------: | --------------------: |
-| 8,000 × 8,000   | 15/15 succeeded | 198,375,908–198,375,912 |               80.2% |            70,356,196 |
-| 10,000 × 10,000 | 15/15 succeeded | 309,622,320–309,622,324 |               69.0% |           110,162,970 |
+### The size limit
 
-Gas is deterministic for the same artifact, runtime, and world size; it
-varied by 4 gas between the two storage banks and not at all across seeds.
-Both sizes use 3.1 gas per cell. Operation-to-receipt time for one advance
-was 0.8–1.3 seconds at both sizes.
+Gas does not limit the world size; storage output does. Each advance rewrites
+the whole world, and a node limits one transaction's storage output to 16 MiB.
+An 11,400 × 11,400 world writes 16,245,000 bytes per advance and fits.
+An 11,500 × 11,500 world writes 16,537,000 bytes and does not: on a local node
+and on Futurenet, its transaction is dropped like a conflict, with status
+`retry` and no receipt. With the limit raised to 64 MiB, a 17,400 × 17,400
+advance used 943 million gas.
 
-### Larger worlds
+### Indexing and display
 
-Local runs on 2026-11-19 with Thruput CLI 0.45.2, v6 artifact SHA-256
-`62313a2278995ba321bb89d1120ac176a363f36bfaf3df72a044a0f69f22a7ad`, the preset budgets, and seed 0.
-Each world ran two or four advances.
+The indexer publishes 2,748 tiles (64.9 MB) for each 11,400 × 11,400
+generation, with a peak of about 200 MB of memory. On a local node it verified
+and published a generation in 1.8 seconds. Against Futurenet, from a
+residential connection, it took 5.7–9.2 seconds, most of it downloading the
+world from the public RPC (4.7–8.0 s).
 
-| Grid            | Node output limit |    Root gas per advance | Of 1-billion cap | Deploy and initialize | Advance to receipt |
-| --------------- | ----------------- | ----------------------: | ---------------: | --------------------: | -----------------: |
-| 11,300 × 11,300 | 16 MiB (default)  | 395,020,416–395,020,418 |            39.5% |           141,308,662 |          1.8–2.1 s |
-| 11,400 × 11,400 | 16 MiB (default)  | 402,530,400–402,530,405 |            40.3% |           143,984,322 |          1.0–1.5 s |
-| 11,500 × 11,500 | 16 MiB (default)  |                       — |                — |   dropped, no receipt |                  — |
-
-The default rows used the managed hog-devnode 0.1.34. Its executor limits one
-transaction's storage output to 16 MiB, so 11,400 cells per side (16.2 MB per
-bank) is the largest world it accepts. A larger transaction is dropped like a
-conflict: it gets no receipt and expires. Gas is not the limit: with the output
-limit raised to 64 MiB, a 17,400 × 17,400 advance used 943 million gas.
-
-On the same machine, the indexer verified and published each 17,400²
-generation in 5.6–6.1 seconds: 3.1–3.5 s to download from the local RPC,
-1.8–1.9 s to build 6,190 tiles (143 MB), and 0.6–0.8 s to publish them. The live
-advance test in Chromium with SwiftShader showed the new generation 10.1 seconds
-after the click. These are four-core sandbox timings with one-second blocks.
-
-### Futurenet
-
-The 10,000 × 10,000 world deployed with 110,162,970 gas, the same as the local
-run, and its first advance produced the reference generation-one digest
-`1ea48941caa8c1614bbb00c80ed6903855c174778d45725522439cc875ccde71`.
-
-The hosted explorer, checked with the live advance test in Chromium with
-SwiftShader, showed first content in 1.1 seconds and the first ready world in
-6.8 seconds. The advanced generation became visible 56 seconds after the click.
-Most of that time is indexing: the hosted indexer took 18 seconds to download
-the world from the public RPC and 23 seconds to publish 84 MB of tiles.
+The live advance test in Chromium with SwiftShader, with the app and indexer
+running locally against the Futurenet world, showed the first ready world in
+1.9 seconds and the advanced generation 9.0 seconds after the click.
 
 ## Method
 
